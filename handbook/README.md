@@ -13,6 +13,7 @@ feature ships.
 4. [Environment Config & Validation (Zod)](./04-environment-config-validation.md)
 5. [Logging (Winston)](./05-logging-winston.md)
 6. [User Model & Auth (Register/Login)](./06-user-model-auth.md)
+7. [JWT Access + Refresh Tokens](./07-jwt-access-refresh-tokens.md)
 
 ## Stack
 

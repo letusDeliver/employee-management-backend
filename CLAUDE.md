@@ -89,7 +89,7 @@ No skipping sections. No rushing. Stop and wait for approval after each feature 
 - [x] Environment config & validation (Zod)
 - [x] Logging (Winston)
 - [x] User model & Auth: Register/Login
-- [ ] JWT Access + Refresh Tokens
+- [x] JWT Access + Refresh Tokens
 - [ ] RBAC (roles & permissions)
 - [ ] Employee CRUD (Clean Architecture: controller/service/repository)
 - [ ] File uploads (Multer + Cloudinary)
@@ -240,3 +240,61 @@ confirmed to be a real bcrypt hash (via a throwaway script against the
 real DB, avoiding the Postgres superuser password, same approach as
 Feature 3); confirmed no request bodies/passwords appear in `logs/*.log`.
 See `planning/feature-06-user-model-auth.md` for the approved plan.)_
+
+_(Feature 7 — JWT Access + Refresh Tokens — completed, on branch
+`feature/07-jwt-access-refresh-tokens`. `jsonwebtoken@9.0.3` and
+`cookie-parser@1.4.7` installed; `jsonwebtoken`'s sign/verify API and
+exact error types (`TokenExpiredError`, `JsonWebTokenError`) verified in a
+scratch script first. `env.js` extended with `JWT_ACCESS_SECRET`/
+`JWT_ACCESS_EXPIRES_IN`/`JWT_REFRESH_SECRET`/`JWT_REFRESH_EXPIRES_IN`
+(min-32-char secrets enforced, no defaults, plus a `.refine()` cross-field
+check that the two secrets differ) — the two secrets didn't exist in the
+real `.env` yet, so they were generated with Node's `crypto.randomBytes`
+and appended directly (with explicit permission, since these are just
+random entropy the app needs, not a credential the user chooses, unlike
+the database password in Feature 3). New `RefreshToken` model (hashed
+`tokenHash` via SHA-256 — a fast hash is correct here, unlike bcrypt for
+passwords, since a token is already high-entropy random data with no
+brute-forceable guessability) with a real migration. `src/utils/jwt.js`
+(finally built — reserved by name since the original Feature 1
+architecture) provides sign/verify/decode for both token types with a
+minimal payload (`{ sub, role }` only). Confirmed decisions from the
+theory discussion: refresh token delivered via an httpOnly/Secure(prod)/
+SameSite=Lax cookie scoped to `/api/v1/auth` (not the JSON body), and
+refresh tokens are database-backed with rotation-on-use (old token
+revoked, new one issued every refresh) rather than purely stateless.
+`src/middlewares/auth.middleware.js` (new) verifies the Bearer access
+token and attaches `req.user`. New endpoints: `POST /refresh`,
+`POST /logout`, `GET /me` (this feature's proof-of-chain endpoint,
+following the `/health`→`/ready` precedent). Two real bugs surfaced during
+verification: (1) `prisma migrate dev` applied the `RefreshToken`
+migration successfully but did NOT auto-run `generate` this time either —
+missed running it explicitly, causing a `Cannot read properties of
+undefined (reading 'create')` on first registration attempt; fixed by
+running `npx prisma generate` and restarting the dev server (nodemon
+ignores `node_modules`, so a stale in-memory Prisma Client survives a
+file-only regeneration). (2) That crash exposed a real, honestly-
+documented gap: `register` isn't wrapped in a Prisma transaction, so a
+failure between user-creation and token-issuance leaves a created user
+with no valid session — not fixed in this feature, since it would require
+threading a transaction client through the repository layer, beyond this
+feature's scope; noted as a future hardening item, same treatment as the
+still-open rate-limiting gap from Feature 6. Also found another orphaned
+`nodemon`/`node` process surviving from a prior session (same Windows
+`TaskStop`-doesn't-kill-the-full-tree issue documented in Feature 4) —
+caught via `Get-CimInstance Win32_Process` and cleaned up before testing.
+Verified live end-to-end: register/login issue an `accessToken` + correct
+`Set-Cookie` flags; `/me` correctly returns `200`/`401`/`401` for
+valid/missing/garbage tokens; `/refresh` rotates the cookie and issues a
+new access token; the **old**, rotated-out refresh token is correctly
+rejected on reuse; `/logout` revokes server-side and clears the cookie;
+the stored `tokenHash` confirmed to be a real SHA-256 hex hash, not the
+raw token; no secrets or raw tokens found in `logs/*.log`. A known,
+undemonstrated gap carried over from the theory discussion: curl-based
+testing doesn't enforce `SameSite`/browser cookie policy at all (that's a
+browser-only mechanism), so successful curl verification here does not
+fully prove real cross-origin browser behavior once an actual frontend on
+a different port exists — flagged honestly, same treatment as prior
+verification-environment gaps (Windows `SIGTERM`, admin-privilege limits).
+See `planning/feature-07-jwt-access-refresh-tokens.md` for the approved
+plan.)_
