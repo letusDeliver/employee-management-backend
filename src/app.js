@@ -9,6 +9,7 @@ import logger from './config/logger.js';
 import router from './routes/index.js';
 import notFoundMiddleware from './middlewares/notFound.middleware.js';
 import errorMiddleware from './middlewares/error.middleware.js';
+import BadRequestError from './errors/BadRequestError.js';
 
 const app = express();
 
@@ -33,6 +34,17 @@ const morganStream = {
 app.use(morgan('combined', { stream: morganStream }));
 
 app.use(express.json());
+
+// express.json() forwards a raw SyntaxError (not one of our AppError
+// subclasses) when the request body isn't valid JSON. Translate it into a
+// typed 400 here so malformed JSON doesn't fall through to the generic
+// 500 path and leak an internal parser error message.
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && 'body' in err) {
+    return next(new BadRequestError('Invalid JSON in request body'));
+  }
+  next(err);
+});
 
 app.use('/api/v1', router);
 
