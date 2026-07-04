@@ -12,4 +12,8 @@ const create = (data) => {
   return prisma.user.create({ data });
 };
 
-export default { findByEmail, findById, create };
+const findAll = () => {
+  return prisma.user.findMany();
+};
+
+export default { findByEmail, findById, create, findAll };

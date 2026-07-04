@@ -18,6 +18,7 @@ feature ships.
 5. [Logging (Winston)](./05-logging-winston.md)
 6. [User Model & Auth (Register/Login)](./06-user-model-auth.md)
 7. [JWT Access + Refresh Tokens](./07-jwt-access-refresh-tokens.md)
+8. [RBAC (Roles & Permissions)](./08-rbac.md)
 
 ## Stack
 
