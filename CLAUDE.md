@@ -85,7 +85,7 @@ No skipping sections. No rushing. Stop and wait for approval after each feature 
 
 - [x] Project setup & folder structure
 - [x] Express app bootstrap (Helmet, Morgan, error handling skeleton)
-- [ ] PostgreSQL + Prisma setup
+- [x] PostgreSQL + Prisma setup
 - [ ] Environment config & validation (Zod)
 - [ ] Logging (Winston)
 - [ ] User model & Auth: Register/Login
@@ -122,4 +122,32 @@ either interactively via `Ctrl+C` (SIGINT) or later under Docker/Linux
 config & validation" feature replaces them with a Zod-validated config
 module. Error-middleware logging uses `console.error` — temporary until
 the Winston feature lands. See `planning/feature-02-express-bootstrap.md`
+for the approved plan.)_
+
+_(Feature 3 — PostgreSQL + Prisma Setup — completed, on branch
+`feature/03-postgres-prisma-setup`. `prisma@7.8.0` (dev), `@prisma/client`,
+`@prisma/adapter-pg`, and `dotenv` installed. Note: Prisma 7 requires an
+explicit driver adapter — `new PrismaClient()` no longer reads the
+datasource URL implicitly, and its default generator (`prisma-client`) now
+emits TypeScript, so we deliberately used the classic `prisma-client-js`
+provider to stay pure JS. `prisma.config.js` (plain JS, not `.ts`) added at
+the root for CLI tooling (`migrate`/`generate`/`studio`); `prisma/
+schema.prisma` holds datasource + generator blocks with deliberately zero
+models. `src/config/database.js` is the one shared `PrismaClient` singleton
+(cached on `globalThis` outside production to survive `nodemon` reloads),
+constructed via `@prisma/adapter-pg`'s `PrismaPg` — note the CJS/ESM interop
+fix required (`import pkg from '@prisma/client'; const { PrismaClient } =
+pkg;`, since Node's named-export detection isn't reliable for this
+package). `src/errors/ServiceUnavailableError.js` (503) added. `GET /ready`
+added alongside `/health`, running `$queryRaw SELECT 1` to prove real DB
+connectivity, kept as a separate readiness check per the liveness/readiness
+distinction. The app connects as a dedicated least-privilege
+`employee_management_app` role/database (created via SQL the user ran
+directly, never seen by the assistant), which needed a local-dev-only
+`CREATEDB` grant for Prisma Migrate's shadow-database mechanism. `src/
+server.js` now starts with `import 'dotenv/config'` so the running process
+(not just the Prisma CLI) can read `DATABASE_URL`. With zero models,
+`migrate dev` created no migration file at all ("already in sync") —
+connectivity was proven instead via `/ready` returning `200 { status: 'ok',
+database: 'connected' }`. See `planning/feature-03-postgres-prisma-setup.md`
 for the approved plan.)_
