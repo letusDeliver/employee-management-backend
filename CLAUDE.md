@@ -87,7 +87,7 @@ No skipping sections. No rushing. Stop and wait for approval after each feature 
 - [x] Express app bootstrap (Helmet, Morgan, error handling skeleton)
 - [x] PostgreSQL + Prisma setup
 - [x] Environment config & validation (Zod)
-- [ ] Logging (Winston)
+- [x] Logging (Winston)
 - [ ] User model & Auth: Register/Login
 - [ ] JWT Access + Refresh Tokens
 - [ ] RBAC (roles & permissions)
@@ -179,3 +179,31 @@ child `node` process, leaving an orphaned process still bound to port
 3000 — caught via `Get-CimInstance Win32_Process`, cleaned up, and worth
 checking for if a future dev-server restart behaves unexpectedly. See
 `planning/feature-04-env-config-validation.md` for the approved plan.)_
+
+_(Feature 5 — Logging (Winston) — completed, on branch
+`feature/05-logging-winston`. `winston@3.19.0` installed. `src/config/
+logger.js` is the single configured logger: timestamp + `errors({ stack:
+true })` formatting (without which logging an `Error` silently drops its
+stack — confirmed via a scratch script), colorized human-readable console
+output in development vs. JSON in production, and two size-rotated file
+transports (`logs/error.log` at `error` level only, `logs/combined.log` at
+the configured level). Two real bugs were caught and fixed before/during
+verification: (1) the originally-planned `logger.error(msg, callback)`
+flush-before-exit pattern does NOT work as documented/assumed — the
+callback never fired in testing; the correct pattern is `logger.once
+('finish', cb)` + `logger.end()`, now used via a shared `exitAfterFlush()`
+helper in `server.js` for both the graceful-shutdown and fatal-error
+paths. (2) npm log-level ordering means `production: 'info'` would have
+silently dropped Morgan's `http`-level access logs (`http` is *less*
+severe than `info`) — fixed by using `production: 'http'` instead. (3)
+Piping Morgan's colorized `'dev'` format string into the logger leaked raw
+ANSI escape codes into the JSON log files — fixed by always using Morgan's
+uncolored `'combined'` format now that Winston's own console transport
+owns presentation. `error.middleware.js` now logs operational errors
+(`NotFoundError`, etc.) at `warn` and non-operational errors at `error`
+with stack — a deliberate enhancement beyond just retiring
+`console.error`. Verified live: startup/shutdown/access logs all flow
+through the logger; `/health`, `/ready`, and a 404 all produced correct
+`http`/`warn`-level entries in both console and `logs/*.log`, with
+`error.log` correctly staying empty when no error-level event occurred.
+See `planning/feature-05-logging-winston.md` for the approved plan.)_
