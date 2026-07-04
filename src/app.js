@@ -4,6 +4,7 @@ import cors from 'cors';
 import morgan from 'morgan';
 
 import env from './config/env.js';
+import logger from './config/logger.js';
 import router from './routes/index.js';
 import notFoundMiddleware from './middlewares/notFound.middleware.js';
 import errorMiddleware from './middlewares/error.middleware.js';
@@ -18,7 +19,14 @@ app.use(
   }),
 );
 
-app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+const morganStream = {
+  write: (message) => logger.http(message.trim()),
+};
+
+// Always use 'combined' (uncolored) here - Winston's own console transport
+// decides colorized-vs-JSON presentation; Morgan's colorized 'dev' format
+// would otherwise leak raw ANSI escape codes into the JSON log files.
+app.use(morgan('combined', { stream: morganStream }));
 
 app.use(express.json());
 

@@ -1,17 +1,23 @@
 import env from './config/env.js';
+import logger from './config/logger.js';
 import app from './app.js';
 
 const PORT = env.PORT;
 
+const exitAfterFlush = (code) => {
+  logger.once('finish', () => process.exit(code));
+  logger.end();
+};
+
 const server = app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  logger.info(`Server running on port ${PORT}`);
 });
 
 const shutdown = (signal) => {
-  console.log(`${signal} received: closing server gracefully`);
+  logger.info(`${signal} received: closing server gracefully`);
   server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
+    logger.info('Server closed');
+    exitAfterFlush(0);
   });
 };
 
@@ -19,11 +25,11 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
 process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled Rejection:', reason);
-  process.exit(1);
+  logger.error(reason instanceof Error ? reason : new Error(String(reason)));
+  exitAfterFlush(1);
 });
 
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-  process.exit(1);
+  logger.error(err);
+  exitAfterFlush(1);
 });
