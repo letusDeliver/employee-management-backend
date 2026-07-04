@@ -5,6 +5,10 @@ doubles as senior backend interview preparation material. One chapter is
 written per completed feature, in build order, immediately after that
 feature ships.
 
+## Overview
+
+- [Progress Summary & Interview Prep (Features 1–7)](./00-progress-summary-and-interview-prep.md) — cumulative recap, every real bug/surprise found, and a consolidated interview Q&A sheet. Updated periodically, not after every single feature.
+
 ## Chapters
 
 1. [Project Setup & Folder Structure](./01-project-setup-and-folder-structure.md)
