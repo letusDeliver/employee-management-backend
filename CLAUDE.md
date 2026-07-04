@@ -30,6 +30,7 @@ I am acting as a **Principal Backend Architect, Senior Node.js Engineer, and Tec
 13. **Handle errors properly** — centralized error handling, no silent failures.
 14. **Follow REST API best practices** (proper HTTP verbs, status codes, resource naming).
 15. **Keep the project scalable and maintainable.**
+16. **Keep the root `README.md` in sync with the project.** Before pushing any feature (or any other change) to git, check whether `README.md` needs updating — new endpoints, new scripts, new setup steps, tech stack additions, or roadmap checkboxes — and update it first, in the same commit/push, not as an afterthought.
 
 ## Technology Stack
 
