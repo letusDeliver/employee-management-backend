@@ -12,6 +12,7 @@ feature ships.
 3. [PostgreSQL + Prisma Setup](./03-postgresql-prisma-setup.md)
 4. [Environment Config & Validation (Zod)](./04-environment-config-validation.md)
 5. [Logging (Winston)](./05-logging-winston.md)
+6. [User Model & Auth (Register/Login)](./06-user-model-auth.md)
 
 ## Stack
 

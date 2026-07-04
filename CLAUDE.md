@@ -88,7 +88,7 @@ No skipping sections. No rushing. Stop and wait for approval after each feature 
 - [x] PostgreSQL + Prisma setup
 - [x] Environment config & validation (Zod)
 - [x] Logging (Winston)
-- [ ] User model & Auth: Register/Login
+- [x] User model & Auth: Register/Login
 - [ ] JWT Access + Refresh Tokens
 - [ ] RBAC (roles & permissions)
 - [ ] Employee CRUD (Clean Architecture: controller/service/repository)
@@ -207,3 +207,36 @@ through the logger; `/health`, `/ready`, and a 404 all produced correct
 `http`/`warn`-level entries in both console and `logs/*.log`, with
 `error.log` correctly staying empty when no error-level event occurred.
 See `planning/feature-05-logging-winston.md` for the approved plan.)_
+
+_(Feature 6 — User Model & Auth (Register/Login) — completed, on branch
+`feature/06-user-model-auth`. First real Prisma model: `User` (`id`
+UUID, `email` unique, `password` hashed, `name`, `role` enum
+`ADMIN`/`MANAGER`/`EMPLOYEE` defaulting to `EMPLOYEE` — added now per
+confirmed decision, even though RBAC enforcement is a separate future
+feature) plus a real migration (`add_user_model`), unlike Feature 3's
+empty one. `bcryptjs` (not `bcrypt`) chosen for Windows-friendly install
+(no native compilation) — its async/sync `hash`/`compare` API verified in
+a scratch script first, matched expectations exactly. `src/middlewares/
+validate.middleware.js` (NEW) is the generic Zod-schema-runner middleware
+reserved since the original architecture but never built until now.
+First full Clean Architecture slice: `modules/users/user.repository.js`
+(Prisma only) + `modules/auth/{auth.validation,auth.service,
+auth.controller,auth.routes}.js`, mounted at `/auth` in `routes/index.js`.
+`auth.service.js` implements two security-critical patterns: (1)
+enumeration-safety — "email not found" and "wrong password" both throw
+the exact same generic `UnauthorizedError('Invalid credentials')`; (2)
+timing-attack mitigation — a dummy `bcrypt.compare` against a precomputed
+hash runs even when no user is found, so both failure paths take
+comparable time. Register/login responses always strip `password` via
+`const { password, ...safeUser } = user` — this recurring omit-a-sensitive-
+field pattern needed a small `eslint.config.js` addition
+(`ignoreRestSiblings: true`) to avoid a false-positive unused-var warning.
+JWT issuance is explicitly deferred to the next feature — `/login`
+currently returns `200` with a sanitized user object, no token. Verified
+live: register → `201` (no password field, UUID id, role defaulted);
+duplicate email → `409`; correct login → `200`; wrong password and
+nonexistent email → identical `401 Invalid credentials`; stored password
+confirmed to be a real bcrypt hash (via a throwaway script against the
+real DB, avoiding the Postgres superuser password, same approach as
+Feature 3); confirmed no request bodies/passwords appear in `logs/*.log`.
+See `planning/feature-06-user-model-auth.md` for the approved plan.)_
