@@ -10,6 +10,7 @@ feature ships.
 1. [Project Setup & Folder Structure](./01-project-setup-and-folder-structure.md)
 2. [Express App Bootstrap](./02-express-app-bootstrap.md)
 3. [PostgreSQL + Prisma Setup](./03-postgresql-prisma-setup.md)
+4. [Environment Config & Validation (Zod)](./04-environment-config-validation.md)
 
 ## Stack
 

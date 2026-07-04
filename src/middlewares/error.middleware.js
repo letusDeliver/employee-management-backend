@@ -1,3 +1,5 @@
+import env from '../config/env.js';
+
 const errorMiddleware = (err, req, res, _next) => {
   const statusCode = err.isOperational ? err.statusCode : 500;
   const message = err.isOperational ? err.message : 'Internal Server Error';
@@ -8,7 +10,7 @@ const errorMiddleware = (err, req, res, _next) => {
 
   const response = { status: 'error', message };
 
-  if (process.env.NODE_ENV !== 'production') {
+  if (env.NODE_ENV !== 'production') {
     response.stack = err.stack;
   }
 

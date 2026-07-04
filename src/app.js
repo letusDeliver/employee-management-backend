@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import morgan from 'morgan';
 
+import env from './config/env.js';
 import router from './routes/index.js';
 import notFoundMiddleware from './middlewares/notFound.middleware.js';
 import errorMiddleware from './middlewares/error.middleware.js';
@@ -13,11 +14,11 @@ app.use(helmet());
 
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:4200',
+    origin: env.CORS_ORIGIN,
   }),
 );
 
-app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 app.use(express.json());
 
