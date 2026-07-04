@@ -89,15 +89,16 @@ progress log.
 
 All routes are mounted under `/api/v1`.
 
-| Method | Path             | Auth Required         | Description                                                       |
-| ------ | ---------------- | --------------------- | ----------------------------------------------------------------- |
-| `GET`  | `/health`        | No                    | Liveness check — is the process running                           |
-| `GET`  | `/ready`         | No                    | Readiness check — is the database reachable                       |
-| `POST` | `/auth/register` | No                    | Create an account, receive an access token + refresh-token cookie |
-| `POST` | `/auth/login`    | No                    | Authenticate, receive an access token + refresh-token cookie      |
-| `POST` | `/auth/refresh`  | Refresh-token cookie  | Rotate the refresh token, issue a new access token                |
-| `POST` | `/auth/logout`   | Refresh-token cookie  | Revoke the refresh token server-side                              |
-| `GET`  | `/auth/me`       | Access token (Bearer) | Return the current authenticated user                             |
+| Method | Path             | Auth Required              | Description                                                       |
+| ------ | ---------------- | -------------------------- | ----------------------------------------------------------------- |
+| `GET`  | `/health`        | No                         | Liveness check — is the process running                           |
+| `GET`  | `/ready`         | No                         | Readiness check — is the database reachable                       |
+| `POST` | `/auth/register` | No                         | Create an account, receive an access token + refresh-token cookie |
+| `POST` | `/auth/login`    | No                         | Authenticate, receive an access token + refresh-token cookie      |
+| `POST` | `/auth/refresh`  | Refresh-token cookie       | Rotate the refresh token, issue a new access token                |
+| `POST` | `/auth/logout`   | Refresh-token cookie       | Revoke the refresh token server-side                              |
+| `GET`  | `/auth/me`       | Access token (Bearer)      | Return the current authenticated user                             |
+| `GET`  | `/users`         | Access token, `ADMIN` role | List all registered users                                         |
 
 ## Project Structure
 
@@ -131,7 +132,7 @@ planning/                     # Approved action plan for each feature
 - [x] Logging (Winston)
 - [x] User model & Auth: Register/Login
 - [x] JWT Access + Refresh Tokens
-- [ ] RBAC (roles & permissions)
+- [x] RBAC (roles & permissions)
 - [ ] Employee CRUD
 - [ ] File uploads (Multer + Cloudinary)
 - [ ] Swagger API docs

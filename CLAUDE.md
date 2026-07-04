@@ -91,7 +91,7 @@ No skipping sections. No rushing. Stop and wait for approval after each feature 
 - [x] Logging (Winston)
 - [x] User model & Auth: Register/Login
 - [x] JWT Access + Refresh Tokens
-- [ ] RBAC (roles & permissions)
+- [x] RBAC (roles & permissions)
 - [ ] Employee CRUD (Clean Architecture: controller/service/repository)
 - [ ] File uploads (Multer + Cloudinary)
 - [ ] Swagger API docs
@@ -299,3 +299,30 @@ a different port exists — flagged honestly, same treatment as prior
 verification-environment gaps (Windows `SIGTERM`, admin-privilege limits).
 See `planning/feature-07-jwt-access-refresh-tokens.md` for the approved
 plan.)_
+
+_(Feature 8 — RBAC (roles & permissions) — completed, on branch
+`feature/08-rbac`. `src/middlewares/rbac.middleware.js` (new) —
+`requireRole(...allowedRoles)`, reserved by name since the original
+Feature 1 architecture; fails closed if `req.user`/`role` is missing,
+throws the previously-unused `ForbiddenError` (403) on a role mismatch.
+Confirmed decision: coarse-grained role checks, not a full database-backed
+permission system — no new tables, revisit only if Employee CRUD's real
+needs demand finer granularity. `modules/users/` grew its own
+service/controller/routes for the first time (previously only had
+`user.repository.js`, consumed by `auth.service.js`); added `findAll()` to
+the repository. New endpoint: `GET /api/v1/users` (admin-only) — this
+feature's `/health`/`/ready`/`/me`-style proof-of-chain endpoint, listing
+all users with `password` stripped. Small DRY refactor: extracted the
+`sanitizeUser` helper (previously duplicated) into `user.service.js` as a
+named export, reused by `auth.service.js` instead of keeping its own
+copy. Verified live: no token → `401`; correct token but `EMPLOYEE` role →
+`403`; promoted a test user to `ADMIN` via a throwaway DB script (this
+project has no self-service "become admin" endpoint, by design — the
+"first admin" bootstrapping problem is real and unsolved here, same
+treatment as other named-but-deferred gaps) — the user's *existing* access
+token still carried the stale `EMPLOYEE` role until a fresh login re-
+issued one with the updated role from the database, a direct and expected
+consequence of Feature 7's stateless-access-token design; after that,
+`GET /users` returned `200` with all users, no `password` field on any
+entry; confirmed no secrets/passwords in `logs/*.log`. See
+`planning/feature-08-rbac.md` for the approved plan.)_

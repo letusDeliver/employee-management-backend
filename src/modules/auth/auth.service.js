@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 
 import userRepository from '../users/user.repository.js';
+import { sanitizeUser } from '../users/user.service.js';
 import refreshTokenRepository from './refreshToken.repository.js';
 import jwt from '../../utils/jwt.js';
 import ConflictError from '../../errors/ConflictError.js';
@@ -10,11 +11,6 @@ import UnauthorizedError from '../../errors/UnauthorizedError.js';
 
 const SALT_ROUNDS = 10;
 const DUMMY_HASH = bcrypt.hashSync('dummy-password-for-timing-safety', SALT_ROUNDS);
-
-const sanitizeUser = (user) => {
-  const { password, ...safeUser } = user;
-  return safeUser;
-};
 
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
