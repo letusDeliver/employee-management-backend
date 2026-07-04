@@ -86,7 +86,7 @@ No skipping sections. No rushing. Stop and wait for approval after each feature 
 - [x] Project setup & folder structure
 - [x] Express app bootstrap (Helmet, Morgan, error handling skeleton)
 - [x] PostgreSQL + Prisma setup
-- [ ] Environment config & validation (Zod)
+- [x] Environment config & validation (Zod)
 - [ ] Logging (Winston)
 - [ ] User model & Auth: Register/Login
 - [ ] JWT Access + Refresh Tokens
@@ -151,3 +151,31 @@ server.js` now starts with `import 'dotenv/config'` so the running process
 connectivity was proven instead via `/ready` returning `200 { status: 'ok',
 database: 'connected' }`. See `planning/feature-03-postgres-prisma-setup.md`
 for the approved plan.)_
+
+_(Feature 4 — Environment Config & Validation (Zod) — completed, on branch
+`feature/04-env-config-validation` (branched from `main` after Feature 3
+was merged via PR). `zod@4.4.3` installed and its actual v4 API verified in
+a scratch script before writing real code (`safeParse`, `z.coerce.number()`,
+`.default()`, and the `.error.issues` shape all matched what was planned —
+no surprises this time). `src/config/env.js` is now the only file that
+reads `process.env` directly: it loads `dotenv/config` itself, validates
+`NODE_ENV` (enum, default `development`), `PORT` (coerced to a real
+number, default `3000`), `CORS_ORIGIN` (must be a valid URL, default
+`http://localhost:4200`), and `DATABASE_URL` (required, no default) via a
+Zod schema, `safeParse`s `process.env`, and `process.exit(1)`s with a clear
+per-field message on failure instead of throwing a raw exception.
+`JWT_*`/`CLOUDINARY_*` are deliberately NOT validated yet — deferred to
+their own future features. `server.js`, `app.js`, `config/database.js`,
+and `middlewares/error.middleware.js` all updated to import and read from
+`env.js` instead of `process.env` directly, retiring every temporary
+inline fallback from Features 2 and 3. Verified live: renaming `.env`
+produces a clean `DATABASE_URL: Invalid input: expected string, received
+undefined` error and exit code 1 (fail-fast confirmed); with `.env`
+restored, `/health` and `/ready` both still return `200` through the new
+config path. Also discovered and worked around a Windows-specific
+operational quirk unrelated to this feature's code: `TaskStop` on a
+background `npm run dev` task did not reliably kill nodemon's underlying
+child `node` process, leaving an orphaned process still bound to port
+3000 — caught via `Get-CimInstance Win32_Process`, cleaned up, and worth
+checking for if a future dev-server restart behaves unexpectedly. See
+`planning/feature-04-env-config-validation.md` for the approved plan.)_
