@@ -1,0 +1,29 @@
+# Backend Engineering Handbook
+
+Internal engineering handbook for the Employee Management App backend —
+doubles as senior backend interview preparation material. One chapter is
+written per completed feature, in build order, immediately after that
+feature ships.
+
+## Chapters
+
+1. [Project Setup & Folder Structure](./01-project-setup-and-folder-structure.md)
+2. [Express App Bootstrap](./02-express-app-bootstrap.md)
+
+## Stack
+
+Node.js · Express · JavaScript (ES Modules) · PostgreSQL · Prisma · JWT +
+Refresh Tokens · RBAC · Cloudinary · Multer · Docker · Swagger · Winston ·
+Morgan · Helmet · Zod
+
+## Architecture
+
+Clean Architecture + Feature-First organization:
+
+```
+HTTP Request → Route → Controller (thin) → Service (business logic)
+             → Repository (DB access) → Prisma → PostgreSQL
+```
+
+See each chapter's Architecture section for how that feature slots into
+this pipeline.

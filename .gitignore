@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+.env.*.local
+
+# Logs
+logs/*
+!logs/.gitkeep
+*.log
+npm-debug.log*
+
+# Build output
+dist/
+build/
+
+# Test coverage
+coverage/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
