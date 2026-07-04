@@ -1,6 +1,10 @@
+import crypto from 'node:crypto';
+
 import bcrypt from 'bcryptjs';
 
 import userRepository from '../users/user.repository.js';
+import refreshTokenRepository from './refreshToken.repository.js';
+import jwt from '../../utils/jwt.js';
 import ConflictError from '../../errors/ConflictError.js';
 import UnauthorizedError from '../../errors/UnauthorizedError.js';
 
@@ -12,6 +16,24 @@ const sanitizeUser = (user) => {
   return safeUser;
 };
 
+const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
+
+const issueTokenPair = async (user) => {
+  const payload = { sub: user.id, role: user.role };
+  const accessToken = jwt.signAccessToken(payload);
+  const refreshToken = jwt.signRefreshToken(payload);
+
+  const { exp } = jwt.decode(refreshToken);
+
+  await refreshTokenRepository.create({
+    tokenHash: hashToken(refreshToken),
+    userId: user.id,
+    expiresAt: new Date(exp * 1000),
+  });
+
+  return { accessToken, refreshToken };
+};
+
 const register = async ({ email, password, name }) => {
   const existingUser = await userRepository.findByEmail(email);
 
@@ -21,8 +43,9 @@ const register = async ({ email, password, name }) => {
 
   const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
   const user = await userRepository.create({ email, password: hashedPassword, name });
+  const tokens = await issueTokenPair(user);
 
-  return sanitizeUser(user);
+  return { user: sanitizeUser(user), ...tokens };
 };
 
 const login = async ({ email, password }) => {
@@ -39,7 +62,53 @@ const login = async ({ email, password }) => {
     throw new UnauthorizedError('Invalid credentials');
   }
 
+  const tokens = await issueTokenPair(user);
+
+  return { user: sanitizeUser(user), ...tokens };
+};
+
+const refresh = async (refreshToken) => {
+  let payload;
+
+  try {
+    payload = jwt.verifyRefreshToken(refreshToken);
+  } catch {
+    throw new UnauthorizedError('Invalid refresh token');
+  }
+
+  const storedToken = await refreshTokenRepository.findValidByHash(hashToken(refreshToken));
+
+  if (!storedToken) {
+    throw new UnauthorizedError('Invalid refresh token');
+  }
+
+  await refreshTokenRepository.revoke(storedToken.id);
+
+  const user = await userRepository.findById(payload.sub);
+
+  if (!user) {
+    throw new UnauthorizedError('Invalid refresh token');
+  }
+
+  return issueTokenPair(user);
+};
+
+const logout = async (refreshToken) => {
+  const storedToken = await refreshTokenRepository.findValidByHash(hashToken(refreshToken));
+
+  if (storedToken) {
+    await refreshTokenRepository.revoke(storedToken.id);
+  }
+};
+
+const getCurrentUser = async (userId) => {
+  const user = await userRepository.findById(userId);
+
+  if (!user) {
+    throw new UnauthorizedError('User no longer exists');
+  }
+
   return sanitizeUser(user);
 };
 
-export default { register, login };
+export default { register, login, refresh, logout, getCurrentUser };
