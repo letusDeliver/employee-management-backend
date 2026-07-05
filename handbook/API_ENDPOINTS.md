@@ -6,10 +6,12 @@ API. Updated after every feature that adds or modifies an endpoint (see
 from the actual running server — not hand-written from memory — so it can
 be used to test the API in Postman without reading any source code.
 
-**Last synchronized with**: Feature 10 (Employee search, pagination,
-filtering, sorting). Same 13 endpoints as Feature 9 — this feature only
-changes `GET /employees`'s query parameters, response shape, and
-underlying query; no endpoints added or removed.
+**Last synchronized with**: Feature 11 (Audit logs). Same 13 endpoints as
+Feature 9/10 — no endpoints added or removed. This feature only adds a
+backend-only `AuditLog` write (inside the same transaction as the
+mutation) to `POST /employees`, `PATCH /employees/:id`, and
+`DELETE /employees/:id` — invisible to API consumers, no request/response
+shape changes anywhere.
 
 ---
 
@@ -145,10 +147,18 @@ in Postman's cookie jar once register/login/refresh sets it.
 /employees` had before Feature 10 closed it there; out of scope for
   Feature 10, a candidate for its own future pass if the user count ever
   grows large enough to matter.
-- **`Employee` records ship with no audit trail** — creates, updates, and
-  soft-deletes are not logged anywhere yet. Deliberately deferred to
-  **Feature 11** (`AuditLog`), which will retrofit audit-log calls into
-  the service methods built in Feature 9.
+- **No way to view the `AuditLog` table via the API** — Feature 11 added
+  the write path only (every `Employee` create/update/soft-delete is
+  now logged, inside the same transaction as the mutation), by confirmed
+  decision. A `GET /audit-logs` read endpoint (with its own permission
+  and pagination questions) is a deliberately separate, deferred future
+  feature — query the table directly for now.
+- **Only `Employee` mutations are audited** — `User`/auth events
+  (register, login, role assignment) are not. Role assignment
+  specifically has no API endpoint at all today (a direct-database
+  script), so there's no request-lifecycle hook to attach an audit write
+  to without inventing new scope. A deliberate, narrower scope for
+  Feature 11, not an oversight.
 - **No self-service editing of one's own Employee record** — the
   `EMPLOYEE` role is only ever granted `employee:read:own`, never an
   `:update:own` permission. Changing department/salary/job title is an
@@ -2157,10 +2167,19 @@ Enforced by `src/modules/employees/employee.validation.js`'s
 
 ## 14. Database Impact
 
-- **Tables affected**: `Employee` (insert).
-- **Rows inserted**: exactly 1, on success.
-- **Transactions**: none — a single insert needs no transaction wrapper.
-- **Cascade/rollback behavior**: N/A (no cascading writes on create).
+- **Tables affected**: `Employee` (insert), `AuditLog` (insert, as of
+  Feature 11).
+- **Rows inserted**: exactly 1 `Employee` row and exactly 1 `AuditLog`
+  row (`action: 'CREATE'`), on success.
+- **Transactions**: **as of Feature 11**, the `Employee` insert and the
+  `AuditLog` insert happen inside one `prisma.$transaction` — either both
+  succeed or neither does, so a mutation can never exist without a
+  matching audit entry (or vice versa).
+- **Cascade/rollback behavior**: if the transaction fails partway (e.g.
+  the duplicate-`userId` race condition), both inserts roll back
+  together — no orphaned `Employee` row, no orphaned audit entry.
+  Verified live: forcing `400`/`409` failures produces zero new
+  `AuditLog` rows.
 
 ## 15. Request Lifecycle
 
@@ -2177,10 +2196,12 @@ validateMiddleware(createEmployeeSchema)
     ↓ (400 on Zod failure)
 employee.controller.create (asyncHandler-wrapped)
     ↓
-employee.service.createEmployee
+employee.service.createEmployee(data, { id: req.user.id, ipAddress: req.ip })
     ├─ userId provided? → employeeRepository.findByUserId → exists? → 409
-    ├─ employeeRepository.create(data)
-    └─ (catch) Prisma P2002 → 409 (race-condition fallback)
+    └─ prisma.$transaction:
+         ├─ employeeRepository.create(data, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', ... }, tx)
+    └─ (catch) Prisma P2002 → 409 (race-condition fallback, transaction rolled back)
     ↓
 201 { employee }
 ```
@@ -2188,7 +2209,9 @@ employee.service.createEmployee
 ## 16. Performance Notes
 
 - `findByUserId` uses the `@unique` index on `Employee.userId`.
-- No transaction overhead — single insert.
+- **As of Feature 11**: one additional `AuditLog` insert per request,
+  inside the same transaction as the `Employee` insert — a second
+  round-trip cost in exchange for the atomicity guarantee above.
 - Permission resolution for `employee:create` benefits from the same
   in-memory cache as every other permission-gated route.
 
@@ -2906,9 +2929,14 @@ behave identically, applied to whichever fields are sent.
 
 ## 14. Database Impact
 
-- **Tables affected**: `Employee` (update).
-- **Rows updated**: exactly 1, on success.
-- **Transactions**: none — a single update needs no wrapper.
+- **Tables affected**: `Employee` (update), `AuditLog` (insert, as of
+  Feature 11).
+- **Rows updated**: exactly 1 `Employee` row; exactly 1 `AuditLog` row
+  inserted (`action: 'UPDATE'`), on success.
+- **Transactions**: **as of Feature 11**, the `Employee` update and the
+  `AuditLog` insert happen inside one `prisma.$transaction` — the audit
+  entry's `beforeData` is the record as fetched just before the update,
+  `afterData` is the record just after.
 
 ## 15. Request Lifecycle
 
@@ -2921,10 +2949,12 @@ requirePermission('employee:update:any')
     ↓ (403 if not granted)
 validateMiddleware(updateEmployeeSchema)
     ↓ (400 on Zod failure)
-employee.controller.update → employee.service.updateEmployee(id, data)
+employee.controller.update → employee.service.updateEmployee(id, data, { id: req.user.id, ipAddress: req.ip })
     ├─ employeeRepository.findById(id) → not found → 404
     ├─ assertNotSelfManaged(id, data.managerId) → 400 if equal
-    └─ employeeRepository.update(id, data)
+    └─ prisma.$transaction:
+         ├─ employeeRepository.update(id, data, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', beforeData, afterData, ... }, tx)
     ↓
 200 { employee }
 ```
@@ -2932,7 +2962,8 @@ employee.controller.update → employee.service.updateEmployee(id, data)
 ## 16. Performance Notes
 
 Same profile as `GET /employees/:id` plus one additional `UPDATE`
-statement — no notable performance concerns at this scale.
+statement and, **as of Feature 11**, one `AuditLog` insert in the same
+transaction — no notable performance concerns at this scale.
 
 ## 17. Interview Notes
 
@@ -3086,9 +3117,13 @@ shape simple and consistent.
 ## 14. Database Impact
 
 - **Tables affected**: `Employee` (update — `deletedAt` set, row not
-  removed).
-- **Rows updated**: exactly 1, on success. **Zero rows deleted** — this
-  is the entire point of a soft delete.
+  removed), `AuditLog` (insert, as of Feature 11).
+- **Rows updated**: exactly 1 `Employee` row, on success. **Zero rows
+  deleted** — this is the entire point of a soft delete. Exactly 1
+  `AuditLog` row inserted (`action: 'DELETE'`, `beforeData` the
+  pre-delete record, `afterData: null`).
+- **Transactions**: **as of Feature 11**, the `Employee` update and the
+  `AuditLog` insert happen inside one `prisma.$transaction`.
 - **Cascade/rollback behavior**: **does not** trigger the `managerId`
   `ON DELETE SET NULL` FK rule — see the Edge Cases finding above. That
   rule only fires on an actual `DELETE` statement, which this endpoint
@@ -3103,16 +3138,19 @@ authMiddleware
     ↓
 requirePermission('employee:delete:any')
     ↓ (403 if not granted)
-employee.controller.remove → employee.service.softDeleteEmployee(id)
+employee.controller.remove → employee.service.softDeleteEmployee(id, { id: req.user.id, ipAddress: req.ip })
     ├─ employeeRepository.findById(id) → not found → 404
-    └─ employeeRepository.softDelete(id)   [UPDATE ... SET deletedAt = now()]
+    └─ prisma.$transaction:
+         ├─ employeeRepository.softDelete(id, tx)   [UPDATE ... SET deletedAt = now()]
+         └─ auditLogRepository.create({ action: 'DELETE', beforeData, afterData: null, ... }, tx)
     ↓
 200 { message: "Employee deleted successfully" }
 ```
 
 ## 16. Performance Notes
 
-Single indexed lookup plus single indexed update — no notable
+Single indexed lookup plus single indexed update, plus, **as of Feature
+11**, one `AuditLog` insert in the same transaction — no notable
 performance concerns at this scale.
 
 ## 17. Interview Notes

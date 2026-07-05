@@ -95,7 +95,7 @@ No skipping sections. No rushing. Stop and wait for approval after each feature 
 - [x] RBAC (roles & permissions) — redesigned in Feature 9 from coarse-grained roles to a full Role/Permission model
 - [x] Employee CRUD (Clean Architecture: controller/service/repository)
 - [x] Employee search, pagination, filtering, sorting
-- [ ] Audit logs
+- [x] Audit logs
 - [ ] File uploads (Multer + Cloudinary)
 - [ ] Swagger API docs
 - [ ] Dockerization
@@ -424,3 +424,37 @@ sort-order reversal, and repeat-call ordering stability all confirmed
 against the real running server. See
 `planning/feature-10-employee-search-pagination-filtering-sorting.md`
 for the approved plan.)_
+
+_(Feature 11 — Audit Logs — completed, on branch `feature/11-audit-logs`.
+Scope confirmed narrower than the original design sketch: `Employee`
+mutations only (`create`/`update`/soft-`delete`), write-only (no
+`GET /audit-logs` endpoint) — both explicitly confirmed decisions, not
+defaults. New `AuditLog` model (`actorId` nullable FK → `User.id`,
+`ON DELETE SET NULL` so audit history survives even a removed actor;
+`action`/`entityType`/`entityId`/`beforeData`/`afterData`/`ipAddress`;
+indexed on `[entityType, entityId]` and `[actorId, createdAt]`). New
+`src/modules/audit/` (`auditLog.constants.js` — `AUDIT_ACTIONS`/
+`AUDIT_ENTITY_TYPES` as frozen objects, not magic strings, per your
+suggestion; `auditLog.repository.js` — Prisma-only, same optional-
+transaction-client pattern as `rbac.repository.js`). `employee.repository.js`'s
+`create`/`update`/`softDelete` gained an optional `client = prisma`
+parameter; `employee.service.js`'s three mutating functions now take an
+`actor: { id, ipAddress }` and wrap their mutation + one audit-log write
+in a single `prisma.$transaction` — a mutation can never succeed without
+a matching audit entry, or vice versa. A real, verified-before-relying-on-
+it finding shaped the implementation: a raw Prisma `Employee` record
+contains a `Decimal` (`salary`) and `Date` instances, neither safe to
+pass directly into a `Json` column — confirmed live, fixed with a small
+`normalizeForAudit()` helper (`JSON.parse(JSON.stringify(record))`),
+producing the same plain shape the API's own JSON responses already
+render. Verified live end-to-end: create → one `AuditLog` row
+(`beforeData: null`, `afterData` the new record); update → a second row
+(`beforeData`/`afterData` correctly reflecting the pre/post state);
+soft-delete → a third row (`beforeData` populated, `afterData: null`);
+forcing a `409` (duplicate `userId`), a `400` (self-management), and a
+`400` (invalid FK) all produced **zero** new `AuditLog` rows — confirming
+the transaction rolls back correctly on failure. `actorId`'s `SET NULL`
+survival was verified by schema/constraint inspection rather than a live
+request, honestly noted as such (no user hard-delete path exists to
+trigger it for real). See `planning/feature-11-audit-logs.md` for the
+approved plan.)_

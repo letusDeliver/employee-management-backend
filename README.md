@@ -125,7 +125,7 @@ src/
 ├── config/                  # env.js, database.js, logger.js — one shared instance each
 ├── errors/                  # Typed AppError hierarchy
 ├── middlewares/              # auth, permission (RBAC), validate, error, notFound
-├── modules/                  # Feature-first domain modules (auth, users, rbac, employees)
+├── modules/                  # Feature-first domain modules (auth, users, rbac, employees, audit)
 ├── routes/                   # Router aggregation
 └── utils/                    # asyncHandler, jwt
 
@@ -152,7 +152,7 @@ planning/                     # Approved action plan for each feature
 - [x] RBAC (roles & permissions)
 - [x] Employee CRUD
 - [x] Employee search, pagination, filtering, sorting
-- [ ] Audit logs
+- [x] Audit logs
 - [ ] File uploads (Multer + Cloudinary)
 - [ ] Swagger API docs
 - [ ] Dockerization

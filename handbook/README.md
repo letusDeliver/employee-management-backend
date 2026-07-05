@@ -22,6 +22,7 @@ feature ships.
 8. [RBAC (Roles & Permissions)](./08-rbac.md)
 9. [RBAC Redesign + Employee CRUD](./09-rbac-redesign-and-employee-crud.md)
 10. [Employee Search, Pagination, Filtering, Sorting](./10-employee-search-pagination-filtering-sorting.md)
+11. [Audit Logs](./11-audit-logs.md)
 
 ## Stack
 
