@@ -7,16 +7,19 @@ datasource db {
 }
 
 model User {
-  id            String         @id @default(uuid())
-  email         String         @unique
-  password      String
-  name          String
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  refreshTokens RefreshToken[]
-  userRoles     UserRole[]
-  employees     Employee[]
-  auditLogs     AuditLog[]
+  id                   String             @id @default(uuid())
+  email                String             @unique
+  password             String
+  name                 String
+  profileImageUrl      String?
+  profileImagePublicId String?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  refreshTokens        RefreshToken[]
+  userRoles            UserRole[]
+  employees            Employee[]
+  auditLogs            AuditLog[]
+  uploadedDocuments    EmployeeDocument[]
 }
 
 model RefreshToken {
@@ -73,19 +76,20 @@ model RolePermission {
 }
 
 model Employee {
-  id            String     @id @default(uuid())
+  id            String             @id @default(uuid())
   userId        String?
-  user          User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
   department    String
   jobTitle      String
   salary        Decimal
   dateOfJoining DateTime
   managerId     String?
-  manager       Employee?  @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: SetNull)
-  reports       Employee[] @relation("EmployeeManager")
+  manager       Employee?          @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: SetNull)
+  reports       Employee[]         @relation("EmployeeManager")
   deletedAt     DateTime?
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  documents     EmployeeDocument[]
 
   // No @unique on userId: Prisma's schema DSL can't express a *partial*
   // unique constraint (scoped to non-deleted rows), so the real
@@ -96,6 +100,29 @@ model Employee {
   // soft-deleted, which contradicts the soft-delete design.
   @@index([userId])
   @@index([managerId])
+}
+
+model EmployeeDocument {
+  id           String   @id @default(uuid())
+  employeeId   String
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  url          String
+  publicId     String
+  // Cloudinary's OWN classification of the upload (from its response, not
+  // guessed from mimeType) - required to delete the correct asset later.
+  // cloudinary.uploader.destroy() defaults to resource_type "image" and
+  // silently no-ops (returns {result: "not found"}, not an error) for any
+  // other type - discovered live while verifying this feature's delete
+  // flow, not by code review.
+  resourceType String
+  fileName     String
+  mimeType     String
+  size         Int
+  uploadedBy   String?
+  uploader     User?    @relation(fields: [uploadedBy], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+
+  @@index([employeeId])
 }
 
 model AuditLog {

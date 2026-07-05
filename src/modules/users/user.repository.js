@@ -16,4 +16,18 @@ const findAll = (client = prisma) => {
   return client.user.findMany();
 };
 
-export default { findByEmail, findById, create, findAll };
+const updateProfileImage = (userId, { url, publicId }, client = prisma) => {
+  return client.user.update({
+    where: { id: userId },
+    data: { profileImageUrl: url, profileImagePublicId: publicId },
+  });
+};
+
+const clearProfileImage = (userId, client = prisma) => {
+  return client.user.update({
+    where: { id: userId },
+    data: { profileImageUrl: null, profileImagePublicId: null },
+  });
+};
+
+export default { findByEmail, findById, create, findAll, updateProfileImage, clearProfileImage };

@@ -6,12 +6,12 @@ API. Updated after every feature that adds or modifies an endpoint (see
 from the actual running server — not hand-written from memory — so it can
 be used to test the API in Postman without reading any source code.
 
-**Last synchronized with**: Feature 11 (Audit logs). Same 13 endpoints as
-Feature 9/10 — no endpoints added or removed. This feature only adds a
-backend-only `AuditLog` write (inside the same transaction as the
-mutation) to `POST /employees`, `PATCH /employees/:id`, and
-`DELETE /employees/:id` — invisible to API consumers, no request/response
-shape changes anywhere.
+**Last synchronized with**: Feature 12 (File uploads — profile pictures +
+employee documents). Covers all 18 endpoints that exist as of this
+feature — the 13 from Feature 9/10/11 plus 5 new ones: `POST`/`DELETE
+/users/me/profile-picture` and `POST`/`GET`/`DELETE
+/employees/:id/documents`. `GET /auth/me` and `GET /users` also now
+include `profileImageUrl`/`profileImagePublicId` in the `user` shape.
 
 ---
 
@@ -153,40 +153,65 @@ in Postman's cookie jar once register/login/refresh sets it.
   decision. A `GET /audit-logs` read endpoint (with its own permission
   and pagination questions) is a deliberately separate, deferred future
   feature — query the table directly for now.
-- **Only `Employee` mutations are audited** — `User`/auth events
-  (register, login, role assignment) are not. Role assignment
-  specifically has no API endpoint at all today (a direct-database
-  script), so there's no request-lifecycle hook to attach an audit write
-  to without inventing new scope. A deliberate, narrower scope for
-  Feature 11, not an oversight.
+- **Audited entities as of Feature 12**: `Employee` (Feature 11),
+  `User` (profile-picture uploads/deletes only — not registration, login,
+  or role assignment), and `EmployeeDocument`. Role assignment still has
+  no API endpoint at all (a direct-database script), so there's no
+  request-lifecycle hook to attach an audit write to without inventing
+  new scope.
 - **No self-service editing of one's own Employee record** — the
   `EMPLOYEE` role is only ever granted `employee:read:own`, never an
   `:update:own` permission. Changing department/salary/job title is an
-  `ADMIN`/`MANAGER` action, by design.
+  `ADMIN`/`MANAGER` action, by design. (Profile pictures are the one
+  exception — self-service by design, since an avatar isn't HR data.)
 - **Soft-deleted `Employee` rows are invisible everywhere, including to
   the person who deleted them** — there is no "restore" endpoint. A
   soft-deleted record can currently only be un-deleted via a direct
   database update (`deletedAt: null`).
+- **No MIME-type sniffing from file content** (Feature 12) — only the
+  client-supplied `Content-Type` (Multer's `file.mimetype`) is checked
+  against a whitelist; the actual file bytes are never inspected.
+- **No cap on the number of documents per employee** — unbounded, for now.
+- **No admin-on-behalf-of-others profile picture management** — profile
+  pictures are self-service only; an `ADMIN` cannot set or remove another
+  user's avatar.
+- **No document-download-proxy endpoint** — clients use the returned
+  Cloudinary URL directly, not a route on this API.
+- **Orphaned Cloudinary assets can accumulate** — e.g. if a database
+  transaction fails after a successful Cloudinary upload, or a best-effort
+  post-commit Cloudinary delete fails. Harmless (nothing references the
+  orphan) but not automatically reconciled; a periodic cleanup job is the
+  natural future remedy if this ever becomes a real operational cost.
+- **Concurrent profile-picture replacement/document deletion is
+  last-write-wins, not verified under true concurrency** — worst case is
+  one extra orphaned/stale Cloudinary asset, never data corruption. Same
+  honest treatment as other concurrency caveats already accepted
+  elsewhere in this project.
 
 ---
 
 ## Endpoint Index
 
-| #   | Feature   | Method   | Path             | Auth                      | Required Permission                        | Public/Protected   |
-| --- | --------- | -------- | ---------------- | ------------------------- | ------------------------------------------ | ------------------ |
-| 1   | Health    | `GET`    | `/health`        | No                        | —                                          | Public             |
-| 2   | Readiness | `GET`    | `/ready`         | No                        | —                                          | Public             |
-| 3   | Auth      | `POST`   | `/auth/register` | No                        | —                                          | Public             |
-| 4   | Auth      | `POST`   | `/auth/login`    | No                        | —                                          | Public             |
-| 5   | Auth      | `POST`   | `/auth/refresh`  | Refresh cookie            | —                                          | Protected (cookie) |
-| 6   | Auth      | `POST`   | `/auth/logout`   | Refresh cookie (optional) | —                                          | Protected (cookie) |
-| 7   | Auth      | `GET`    | `/auth/me`       | Access token              | Any authenticated                          | Protected          |
-| 8   | Users     | `GET`    | `/users`         | Access token              | `user:list`                                | Protected          |
-| 9   | Employees | `POST`   | `/employees`     | Access token              | `employee:create`                          | Protected          |
-| 10  | Employees | `GET`    | `/employees`     | Access token              | `employee:read:any`                        | Protected          |
-| 11  | Employees | `GET`    | `/employees/:id` | Access token              | `employee:read:any` OR `employee:read:own` | Protected          |
-| 12  | Employees | `PATCH`  | `/employees/:id` | Access token              | `employee:update:any`                      | Protected          |
-| 13  | Employees | `DELETE` | `/employees/:id` | Access token              | `employee:delete:any`                      | Protected          |
+| #   | Feature   | Method   | Path                                   | Auth                      | Required Permission                            | Public/Protected   |
+| --- | --------- | -------- | -------------------------------------- | ------------------------- | ---------------------------------------------- | ------------------ |
+| 1   | Health    | `GET`    | `/health`                              | No                        | —                                              | Public             |
+| 2   | Readiness | `GET`    | `/ready`                               | No                        | —                                              | Public             |
+| 3   | Auth      | `POST`   | `/auth/register`                       | No                        | —                                              | Public             |
+| 4   | Auth      | `POST`   | `/auth/login`                          | No                        | —                                              | Public             |
+| 5   | Auth      | `POST`   | `/auth/refresh`                        | Refresh cookie            | —                                              | Protected (cookie) |
+| 6   | Auth      | `POST`   | `/auth/logout`                         | Refresh cookie (optional) | —                                              | Protected (cookie) |
+| 7   | Auth      | `GET`    | `/auth/me`                             | Access token              | Any authenticated                              | Protected          |
+| 8   | Users     | `GET`    | `/users`                               | Access token              | `user:list`                                    | Protected          |
+| 9   | Employees | `POST`   | `/employees`                           | Access token              | `employee:create`                              | Protected          |
+| 10  | Employees | `GET`    | `/employees`                           | Access token              | `employee:read:any`                            | Protected          |
+| 11  | Employees | `GET`    | `/employees/:id`                       | Access token              | `employee:read:any` OR `employee:read:own`     | Protected          |
+| 12  | Employees | `PATCH`  | `/employees/:id`                       | Access token              | `employee:update:any`                          | Protected          |
+| 13  | Employees | `DELETE` | `/employees/:id`                       | Access token              | `employee:delete:any`                          | Protected          |
+| 14  | Users     | `POST`   | `/users/me/profile-picture`            | Access token              | Authenticated (self only, no permission check) | Protected          |
+| 15  | Users     | `DELETE` | `/users/me/profile-picture`            | Access token              | Authenticated (self only, no permission check) | Protected          |
+| 16  | Employees | `POST`   | `/employees/:id/documents`             | Access token              | `employee:update:any`                          | Protected          |
+| 17  | Employees | `GET`    | `/employees/:id/documents`             | Access token              | `employee:read:any` OR `employee:read:own`     | Protected          |
+| 18  | Employees | `DELETE` | `/employees/:id/documents/:documentId` | Access token              | `employee:update:any`                          | Protected          |
 
 **As of Feature 9**, authorization is permission-based, not role-based —
 `ADMIN`/`MANAGER`/`EMPLOYEE` are just role _names_ that happen to be
@@ -1568,15 +1593,21 @@ token's signature and expiry, performed by `authMiddleware`.
 
 {
   "user": {
-    "id": "cc5d98db-0a0a-49bb-ab80-1d18d295bbf8",
-    "email": "stale-check-1783226574582@example.com",
-    "name": "Stale Check",
-    "createdAt": "2026-07-05T04:42:54.720Z",
-    "updatedAt": "2026-07-05T04:42:54.720Z",
-    "roles": ["ADMIN"]
+    "id": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
+    "email": "docs-example@example.com",
+    "name": "Docs Example",
+    "profileImageUrl": null,
+    "profileImagePublicId": null,
+    "createdAt": "2026-07-05T04:41:20.891Z",
+    "updatedAt": "2026-07-05T12:32:25.983Z",
+    "roles": ["EMPLOYEE"]
   }
 }
 ```
+
+**As of Feature 12**: `user.profileImageUrl`/`user.profileImagePublicId`
+are `null` until the user uploads a profile picture via `POST
+/users/me/profile-picture` — see that endpoint's own documentation below.
 
 Same field meanings as register/login's `user` object — see Endpoint 3.
 `password` is never present. **`roles` here is always fresh from the
@@ -1790,21 +1821,29 @@ permission set and confirms `user:list` is granted.
       "id": "52f83ced-efa7-4f6e-acb5-f82f19e0768e",
       "email": "jane.doe@example.com",
       "name": "Jane Doe",
+      "profileImageUrl": null,
+      "profileImagePublicId": null,
       "createdAt": "2026-07-04T13:56:29.996Z",
       "updatedAt": "2026-07-04T13:56:29.996Z",
       "roles": []
     },
     {
-      "id": "e1b07e0b-3c8d-4f7d-aa1f-fffec7648b21",
-      "email": "stagea-test1@example.com",
-      "name": "Stage A Test",
-      "createdAt": "2026-07-05T04:35:57.265Z",
-      "updatedAt": "2026-07-05T04:35:57.265Z",
-      "roles": ["ADMIN"]
+      "id": "ebea9f2d-f331-40b8-968a-386dd88d4576",
+      "email": "jwt.test@example.com",
+      "name": "JWT Test",
+      "profileImageUrl": null,
+      "profileImagePublicId": null,
+      "createdAt": "2026-07-04T14:42:46.216Z",
+      "updatedAt": "2026-07-04T14:42:46.216Z",
+      "roles": []
     }
   ]
 }
 ```
+
+**As of Feature 12**: every user entry now includes
+`profileImageUrl`/`profileImagePublicId`, `null` until that user uploads
+a profile picture.
 
 | Field   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -3188,4 +3227,1023 @@ Run this **last** in any test sequence involving a given `{{employeeId}}`
 - ✅ `403` as `EMPLOYEE`, `401` with no token
 - ✅ Confirmed: soft delete does **not** clean up dependent `managerId`
   references (documented gap, not silently ignored)
+- ✅ No sensitive data leaked
+
+---
+
+---
+
+# 14. `POST /users/me/profile-picture`
+
+## 1. Endpoint Information
+
+```
+Feature:            File Uploads (Feature 12)
+Endpoint:           Upload/Replace Profile Picture
+Description:        Uploads a new avatar for the authenticated user, replacing any existing one
+Method:             POST
+URL:                /api/v1/users/me/profile-picture
+API Version:        v1
+Module:             modules/users
+Authentication:     Yes (Bearer access token)
+Authorization:      None beyond authentication — always operates on the caller's own record
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: lets any user set/change their own avatar — a
+  self-service action, unlike Employee HR data.
+- **Business problem solved**: profile personalization.
+- **Expected callers**: any authenticated user, for themselves only —
+  there is no way to set another user's picture via this API.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                     |
+| ------------------------------------- | -------- | --------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Identifies whose picture is being set — always the caller |
+| `Content-Type: multipart/form-data`   | **Yes**  | Set automatically by any HTTP client sending a file field |
+
+## 4. Path Parameters
+
+None — always operates on `req.user.id`, never a client-supplied id.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+`multipart/form-data` with a single field:
+
+| Field  | Type | Required | Notes                                            |
+| ------ | ---- | -------- | ------------------------------------------------ |
+| `file` | file | **Yes**  | The image to upload — see Validation Rules below |
+
+## 7. Validation Rules
+
+- **File presence**: Multer does not reject a request with no file field
+  on its own — an explicit `if (!req.file)` check in the service throws
+  `400 "A file is required"`.
+- **MIME type whitelist**: `image/jpeg`, `image/png`, `image/webp` only —
+  enforced by Multer's `fileFilter`, which rejects with our own
+  `BadRequestError` directly (a specific message naming the received
+  type), not Multer's generic `LIMIT_UNEXPECTED_FILE`.
+- **Size limit**: 5 MB, enforced by Multer's `limits.fileSize` — aborts
+  mid-stream, not after buffering the full file.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "user": {
+    "id": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
+    "email": "docs-example@example.com",
+    "name": "Docs Example",
+    "profileImageUrl": "https://res.cloudinary.com/dhfxv7gdp/image/upload/v1783253883/emp-mgmt/development/users/283a2b17-b05d-49aa-8915-d58c5658f2bb/profile-picture.png",
+    "profileImagePublicId": "emp-mgmt/development/users/283a2b17-b05d-49aa-8915-d58c5658f2bb/profile-picture",
+    "createdAt": "2026-07-05T04:41:20.891Z",
+    "updatedAt": "2026-07-05T12:18:04.579Z",
+    "roles": ["EMPLOYEE"]
+  }
+}
+```
+
+| Field                       | Description                                                                                                                                                                  |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `user.profileImageUrl`      | Cloudinary's delivery URL. Includes a version segment (`v1783253883`) that changes on every replacement — cache-busted via `invalidate: true` (see Interview Notes).         |
+| `user.profileImagePublicId` | **Fixed and deterministic** — `emp-mgmt/{env}/users/{userId}/profile-picture`, identical across every upload for this user, verified live across 3 consecutive replacements. |
+
+## 9. Error Responses
+
+| Status | Reason                          | Response (`message`)                                                         | When                                                                                                     |
+| ------ | ------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `400`  | No file provided                | `"A file is required"`                                                       | `file` field missing entirely                                                                            |
+| `400`  | Invalid MIME type               | `"file: must be one of image/jpeg, image/png, image/webp (received <type>)"` | Wrong file type                                                                                          |
+| `400`  | File too large                  | `"File exceeds the maximum allowed size"`                                    | File over 5 MB                                                                                           |
+| `401`  | No/invalid/expired access token | Same as every other protected endpoint                                       | `authMiddleware` failure                                                                                 |
+| `500`  | Cloudinary upload failure       | Generic `"Internal Server Error"`, logged server-side with context           | Cloudinary outage/credential failure — verified: no `User`/`AuditLog` row is created for a failed upload |
+
+## 10. Postman Test Cases
+
+| #   | Case                        | Expected                                     |
+| --- | --------------------------- | -------------------------------------------- |
+| 1   | Valid image upload          | `200`, `profileImageUrl` populated           |
+| 2   | Replace an existing picture | `200`, same `profileImagePublicId` as before |
+| 3   | Invalid MIME type           | `400`                                        |
+| 4   | Oversized file (> 5 MB)     | `400`                                        |
+| 5   | No file field               | `400`                                        |
+| 6   | No token                    | `401`                                        |
+
+## 11. Negative Testing
+
+| Scenario                                                 | Expected                                                                                                       |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| SQL/NoSQL injection attempt in the filename              | Irrelevant — the filename is never stored for profile pictures, and the `public_id` is always server-generated |
+| Attempting to target another user via a body/query param | No effect — there is no `userId` parameter anywhere on this route; it always operates on `req.user.id`         |
+| Malformed multipart body                                 | `400` (Multer/Busboy parsing failure surfaces as a generic request error)                                      |
+| Tampered/expired JWT                                     | `401`                                                                                                          |
+
+## 12. Edge Cases
+
+| Scenario                                                      | Expected Behavior                                                                                                                                                                                                              |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Replacing the picture 3 times in a row                        | Exactly one asset ever exists at the fixed `public_id` — verified live, no accumulation, no orphaned intermediate uploads.                                                                                                     |
+| Cloudinary upload succeeds but the database transaction fails | The new image is live at Cloudinary; the database briefly shows the previous version's URL until retried — a documented, accepted residual inconsistency (see the planning doc's Cloudinary Consistency Model), not data loss. |
+| Concurrent replacement requests for the same user             | Last-write-wins; not independently verified under true concurrency — an honestly-documented limitation, same treatment as other concurrency caveats in this project.                                                           |
+
+## 13. Security Testing
+
+- **Authentication**: the only real gate on this endpoint — confirm `401`
+  with no/invalid token.
+- **No authorization/permission check by design**: confirm there is no
+  way to reach any `userId` other than the caller's own — there's no
+  parameter that could even be manipulated (BOLA is structurally
+  impossible here, not just permission-gated).
+- **File-type/size enforcement**: confirmed via the whitelist and size
+  cap; magic-byte sniffing is **not** performed — an honestly-documented
+  gap (see the Global Reference's Known Gaps).
+- **Sensitive data exposure**: confirm the `AuditLog` entry this endpoint
+  creates never contains a `password` field — the one non-negotiable
+  check for this feature, verified live across every replacement.
+
+## 14. Database Impact
+
+- **Tables affected**: `User` (update — two columns), `AuditLog` (insert).
+- **Transactions**: the `User` update and the `AuditLog` insert commit
+  together in one `prisma.$transaction`. The Cloudinary upload happens
+  **before** this transaction (not inside it — Cloudinary can't
+  participate in a Postgres transaction); if the upload fails, nothing
+  in the database is touched.
+- **Cascade/rollback behavior**: N/A — no cascading writes.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/users/me/profile-picture
+    ↓
+authMiddleware
+    ↓
+uploadProfilePicture.single('file')   [Multer, memory storage]
+    ↓ (400 on MIME rejection via fileFilter, or MulterError → 400 via error.middleware.js)
+user.controller.uploadProfilePicture
+    ↓
+user.service.uploadProfilePicture(userId, file, actor)
+    ├─ !file → 400 "A file is required"
+    ├─ userRepository.findById(userId)   [captures beforeData for the audit entry]
+    ├─ cloudinaryStorage.uploadBuffer(file.buffer, { publicId: fixed, overwrite: true, invalidate: true })
+    └─ prisma.$transaction:
+         ├─ userRepository.updateProfileImage(userId, { url, publicId }, tx)
+         └─ auditLogRepository.create({ entityType: 'User', action: 'UPDATE', beforeData: sanitizeUser(...), afterData: sanitizeUser(...) }, tx)
+    ↓
+200 { user }
+```
+
+## 16. Performance Notes
+
+- Request latency is directly coupled to Cloudinary's own upload latency
+  — a deliberate, documented trade-off of server-mediated uploads (see
+  the planning doc).
+- The fixed `public_id` + `overwrite`/`invalidate` design means no
+  separate "find and delete the old asset" round-trip is needed for this
+  flow at all — one upload call handles the replacement.
+
+## 17. Interview Notes
+
+- **Q: Why a fixed `public_id` instead of a fresh one per upload?**
+  A `User` has exactly one avatar — `overwrite: true` on a deterministic
+  path replaces it in place at Cloudinary, removing an entire class of
+  "find and delete the old asset" failure mode that a fresh-id-per-upload
+  design would need to handle explicitly.
+- **Q: Why does `profileImageUrl` change on every upload even though
+  `public_id` doesn't?** Cloudinary increments an internal version
+  segment in the delivery URL on every `overwrite`, specifically so CDNs
+  don't keep serving stale cached content — `invalidate: true` actively
+  busts that cache too. **This was verified live, not assumed**: an
+  earlier version of this endpoint's delete flow omitted `invalidate`,
+  and a deleted asset's URL kept returning `200` from the CDN for a
+  period after the origin copy was already gone (confirmed via
+  Cloudinary's Admin API) — fixed by adding `invalidate: true`
+  everywhere a Cloudinary asset is removed, not just on upload.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/users/me/profile-picture \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -F "file=@/path/to/avatar.png"
+```
+
+## 19. Postman Collection Notes
+
+Use Postman's `form-data` body type with a `file`-type field named
+`file`. No environment variables needed beyond `{{accessToken}}`.
+
+## 20. Testing Checklist
+
+- ✅ Valid upload, replacement (same `public_id`, new versioned URL)
+- ✅ `400` on invalid MIME type, oversized file, missing file field
+- ✅ `401` with no token
+- ✅ Real Cloudinary asset confirmed present after upload (not just a
+  non-error response)
+- ✅ `AuditLog` entry created, `entityType: 'User'`, **no `password`
+  field anywhere in `beforeData`/`afterData`**
+- ✅ No sensitive data leaked
+
+---
+
+---
+
+# 15. `DELETE /users/me/profile-picture`
+
+## 1. Endpoint Information
+
+```
+Feature:            File Uploads (Feature 12)
+Endpoint:           Delete Profile Picture
+Description:        Removes the authenticated user's avatar
+Method:             DELETE
+URL:                /api/v1/users/me/profile-picture
+API Version:        v1
+Module:             modules/users
+Authentication:     Yes (Bearer access token)
+Authorization:      None beyond authentication — always operates on the caller's own record
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: lets a user remove their avatar entirely, reverting
+  to no picture.
+- **Expected callers**: any authenticated user, for themselves only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                 |
+| ------------------------------------- | -------- | --------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Identifies the caller |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body to validate — only the existence check described below.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "user": {
+    "id": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
+    "email": "docs-example@example.com",
+    "name": "Docs Example",
+    "profileImageUrl": null,
+    "profileImagePublicId": null,
+    "createdAt": "2026-07-05T04:41:20.891Z",
+    "updatedAt": "2026-07-05T12:20:05.674Z",
+    "roles": ["EMPLOYEE"]
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                           | Response (`message`)                   | When                                     |
+| ------ | -------------------------------- | -------------------------------------- | ---------------------------------------- |
+| `401`  | No/invalid/expired access token  | Same as every other protected endpoint | `authMiddleware` failure                 |
+| `404`  | No profile picture currently set | `"No profile picture to delete"`       | `profileImagePublicId` is already `null` |
+
+## 10. Postman Test Cases
+
+| #   | Case                       | Expected |
+| --- | -------------------------- | -------- |
+| 1   | Delete an existing picture | `200`    |
+| 2   | Delete again (nothing set) | `404`    |
+| 3   | No token                   | `401`    |
+
+## 11. Negative Testing
+
+Same category as every other endpoint taking no body: tampered/expired
+JWT → `401`; wrong method/URL → `404`/routed elsewhere.
+
+## 12. Edge Cases
+
+| Scenario                                                         | Expected Behavior                                                                                                                                                                                            |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Delete succeeds in the database but the Cloudinary cleanup fails | The client still gets `200` — the database (source of truth for "does this user have a picture") is already consistent; the orphaned Cloudinary asset is logged at `warn` level, not surfaced to the client. |
+| Immediately re-fetching the old `profileImageUrl` after deletion | `404` from Cloudinary's CDN, confirmed live — requires `invalidate: true` on the delete call, not just the origin delete (see Interview Notes on the sibling upload endpoint).                               |
+
+## 13. Security Testing
+
+- **Authentication**: the only gate — confirm `401` with no/invalid token.
+- **No BOLA risk**: structurally impossible, same reasoning as the
+  upload endpoint — no parameter identifies a target user.
+- **Idempotency under retry**: a client retrying after a timeout gets a
+  safe `404` on the second attempt, not an error implying something went
+  wrong.
+
+## 14. Database Impact
+
+- **Tables affected**: `User` (update — nulls two columns), `AuditLog`
+  (insert).
+- **Transactions**: the `User` update and `AuditLog` insert commit
+  together first; the Cloudinary delete happens **after**, best-effort —
+  a failure there is logged, not thrown, and does not fail the request.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/users/me/profile-picture
+    ↓
+authMiddleware
+    ↓
+user.controller.deleteProfilePicture
+    ↓
+user.service.deleteProfilePicture(userId, actor)
+    ├─ userRepository.findById(userId) → no profileImagePublicId → 404
+    ├─ prisma.$transaction:
+    │    ├─ userRepository.clearProfileImage(userId, tx)
+    │    └─ auditLogRepository.create({ entityType: 'User', action: 'UPDATE', ... }, tx)
+    └─ cloudinaryStorage.deleteAsset(publicId, 'image', context)   [after commit, best-effort]
+    ↓
+200 { user }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup, single update, one best-effort external call after
+the response-determining work is already done — no notable performance
+concerns.
+
+## 17. Interview Notes
+
+**Q: Why does the database transaction commit _before_ the Cloudinary
+delete, rather than after?** The database is this API's source of truth
+for "does this user have a profile picture." Committing the DB change
+first means the client's `200` response is honest the moment it's sent;
+the Cloudinary delete is cleanup of now-unreferenced storage, not
+something the response needs to wait on. If the order were reversed and
+the DB write failed after a successful Cloudinary delete, the database
+would still point at an asset that no longer exists — a user-visible
+broken image, not just a harmless orphan.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/users/me/profile-picture \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+No special setup beyond `{{accessToken}}`.
+
+## 20. Testing Checklist
+
+- ✅ Delete an existing picture → `200`
+- ✅ Delete again → `404`
+- ✅ `401` with no token
+- ✅ Real Cloudinary asset confirmed gone (via CDN fetch, not just a
+  non-error response) — required adding `invalidate: true`, a real fix
+  found during this feature's own verification
+- ✅ No sensitive data leaked
+
+---
+
+---
+
+# 16. `POST /employees/:id/documents`
+
+## 1. Endpoint Information
+
+```
+Feature:            File Uploads (Feature 12)
+Endpoint:           Upload Employee Document
+Description:        Uploads a document (resume, ID proof, contract, certificate) attached to an Employee record
+Method:             POST
+URL:                /api/v1/employees/:id/documents
+API Version:        v1
+Module:             modules/employees
+Authentication:     Yes (Bearer access token)
+Authorization:      `employee:update:any` permission required (ADMIN, MANAGER as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: attaches HR documents to an Employee record — a
+  genuine one-to-many, unlike the single-slot profile picture.
+- **Expected callers**: `ADMIN`/`MANAGER` only — no self-service upload
+  path for the employee themselves, consistent with Feature 9's decision
+  that `EMPLOYEE` never gets a write path to their own HR record.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                |
+| ------------------------------------- | -------- | ---------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `employee:update:any` permission |
+| `Content-Type: multipart/form-data`   | **Yes**  | Set automatically by any HTTP client sending a file  |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description              | Example                                |
+| ---- | ------------- | -------- | ------------------------ | -------------------------------------- |
+| `id` | string (UUID) | **Yes**  | The Employee record's id | `ecb69110-8183-4769-a98b-8b0f69bf2f6a` |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+`multipart/form-data` with a single field:
+
+| Field  | Type | Required | Notes                               |
+| ------ | ---- | -------- | ----------------------------------- |
+| `file` | file | **Yes**  | The document — see Validation Rules |
+
+## 7. Validation Rules
+
+- **File presence**: same explicit `!file` check as the profile-picture
+  endpoint — `400 "A file is required"` if the field is missing.
+- **MIME type whitelist**: `application/pdf`, `image/jpeg`, `image/png`,
+  `image/webp`.
+- **Size limit**: 10 MB.
+- **Employee existence**: the target employee must exist and not be
+  soft-deleted — checked **before** any Cloudinary call, so an invalid
+  `id` never wastes upload quota on a request that's going to be
+  rejected anyway.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "document": {
+    "id": "0279b82f-16da-4de3-9d46-91efd07fcbd6",
+    "employeeId": "ecb69110-8183-4769-a98b-8b0f69bf2f6a",
+    "url": "https://res.cloudinary.com/dhfxv7gdp/raw/upload/v1783254636/emp-mgmt/development/employees/ecb69110-8183-4769-a98b-8b0f69bf2f6a/documents/4f0a2ca2-194d-4b71-9a76-24286153f357",
+    "publicId": "emp-mgmt/development/employees/ecb69110-8183-4769-a98b-8b0f69bf2f6a/documents/4f0a2ca2-194d-4b71-9a76-24286153f357",
+    "resourceType": "raw",
+    "fileName": "resume.pdf",
+    "mimeType": "application/pdf",
+    "size": 500,
+    "uploadedBy": "e1b07e0b-3c8d-4f7d-aa1f-fffec7648b21",
+    "createdAt": "2026-07-05T12:30:37.008Z"
+  }
+}
+```
+
+| Field                   | Description                                                                                                                                                                                                                                                          |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `document.publicId`     | A fresh, server-generated UUID per document (`crypto.randomUUID()`) — **never** derived from the original filename, which closes off any path-traversal-style concern on the Cloudinary side.                                                                        |
+| `document.resourceType` | Cloudinary's **own** classification of the upload (from its response, not guessed from `mimeType`) — a PDF becomes `"raw"`; a genuine image stays `"image"`. Required later to actually delete the correct asset (see Interview Notes — a real bug was caught here). |
+| `document.fileName`     | The original filename, stored for display only — never used to build a storage path.                                                                                                                                                                                 |
+| `document.uploadedBy`   | The uploading `ADMIN`/`MANAGER`'s user id.                                                                                                                                                                                                                           |
+
+## 9. Error Responses
+
+| Status | Reason                                  | Response (`message`)                                                                          | When                                                                          |
+| ------ | --------------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `400`  | No file provided                        | `"A file is required"`                                                                        | `file` field missing                                                          |
+| `400`  | Invalid MIME type                       | `"file: must be one of application/pdf, image/jpeg, image/png, image/webp (received <type>)"` | Wrong file type                                                               |
+| `400`  | File too large                          | `"File exceeds the maximum allowed size"`                                                     | File over 10 MB                                                               |
+| `401`  | No/invalid/expired access token         | Same as every other protected endpoint                                                        | `authMiddleware` failure                                                      |
+| `403`  | Roles don't grant `employee:update:any` | `"You do not have permission to perform this action"`                                         | Authenticated as plain `EMPLOYEE`                                             |
+| `404`  | Nonexistent/soft-deleted employee       | `"Employee not found"`                                                                        | Invalid `id`, checked before any Cloudinary call                              |
+| `500`  | Cloudinary upload failure               | Generic `"Internal Server Error"`, logged server-side with context                            | Verified: no `EmployeeDocument`/`AuditLog` row is created for a failed upload |
+
+## 10. Postman Test Cases
+
+| #   | Case                            | Expected                                                                           |
+| --- | ------------------------------- | ---------------------------------------------------------------------------------- |
+| 1   | Valid PDF upload                | `201`                                                                              |
+| 2   | Valid image upload              | `201`                                                                              |
+| 3   | Upload the identical file twice | `201` both times — two separate rows, no dedup logic (a deliberate, tested choice) |
+| 4   | Invalid file type (e.g. `.exe`) | `400`                                                                              |
+| 5   | Oversized file (> 10 MB)        | `400`                                                                              |
+| 6   | As `EMPLOYEE` token             | `403`                                                                              |
+| 7   | Nonexistent employee `id`       | `404`                                                                              |
+| 8   | No token                        | `401`                                                                              |
+
+## 11. Negative Testing
+
+| Scenario                                                       | Expected                                                                                                                                                                      |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SQL injection attempt in the filename                          | Stored as a literal string in `fileName` only — never interpolated into a query or a Cloudinary path                                                                          |
+| A crafted filename containing `../` or path-traversal segments | No effect whatsoever — `fileName` is display-only; the storage `publicId` is always a fresh, server-generated UUID                                                            |
+| Malformed multipart body                                       | `400`                                                                                                                                                                         |
+| Tampered/expired JWT                                           | `401`                                                                                                                                                                         |
+| Uploading a PDF containing embedded JavaScript                 | Accepted — PDF content is never sanitized (a known, accepted risk category common to any system accepting PDF uploads, real overengineering to solve at this project's scale) |
+
+## 12. Edge Cases
+
+| Scenario                                                      | Expected Behavior                                                                                                                                                          |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Uploading to a soft-deleted employee                          | `404` — same treatment as a nonexistent employee, since soft-deleted records are invisible everywhere.                                                                     |
+| Cloudinary upload succeeds but the database transaction fails | An orphaned Cloudinary asset (unreferenced by any `EmployeeDocument` row) — harmless, not automatically reconciled. Verified by code inspection, not live fault injection. |
+| Concurrent uploads for the same employee                      | Both succeed independently — documents aren't a single slot, so there's no race to resolve, unlike the profile picture.                                                    |
+
+## 13. Security Testing
+
+- **Authorization**: confirm every non-`employee:update:any` caller is
+  rejected, including the employee the document is _about_ (no
+  self-service upload path exists).
+- **BOLA**: N/A for creation (no existing resource is looked up by
+  client-supplied id beyond the employee existence check itself).
+- **Path traversal**: closed by construction — `publicId` is always
+  `emp-mgmt/{env}/employees/{employeeId}/documents/{uuid}`, built only
+  from server-generated values, never the original filename.
+- **Mass assignment**: confirm no field beyond `file` (e.g. `id`,
+  `uploadedBy`, `resourceType`) can be client-supplied and honored.
+
+## 14. Database Impact
+
+- **Tables affected**: `EmployeeDocument` (insert), `AuditLog` (insert).
+- **Transactions**: the `EmployeeDocument` insert and the `AuditLog`
+  insert commit together in one `prisma.$transaction`. The Cloudinary
+  upload happens **before** this transaction — a failed upload touches
+  no database row at all.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/employees/:id/documents
+    ↓
+authMiddleware
+    ↓
+requirePermission('employee:update:any')
+    ↓ (403 if not granted)
+uploadDocument.single('file')   [Multer, memory storage]
+    ↓ (400 on MIME rejection, or MulterError → 400)
+employeeDocument.controller.upload
+    ↓
+employeeDocument.service.uploadDocument(employeeId, file, actor)
+    ├─ !file → 400 "A file is required"
+    ├─ employeeRepository.findById(employeeId) → not found → 404
+    ├─ cloudinaryStorage.uploadBuffer(file.buffer, { publicId: freshUuid, resourceType: 'auto' })
+    └─ prisma.$transaction:
+         ├─ employeeDocumentRepository.create({ ...file metadata, resourceType }, tx)
+         └─ auditLogRepository.create({ entityType: 'EmployeeDocument', action: 'CREATE', ... }, tx)
+    ↓
+201 { document }
+```
+
+## 16. Performance Notes
+
+- Employee-existence check runs before the Cloudinary call, bounding
+  wasted upload quota on an invalid `id` to Multer's in-memory buffering
+  only (unavoidable — the body must be parsed before business rules can
+  run).
+- `resourceType: 'auto'` costs Cloudinary a content-inspection step but
+  removes any need for us to guess the correct type from `mimeType`
+  ourselves — and that Cloudinary-determined value is exactly what's
+  needed later to delete the asset correctly (see Interview Notes).
+
+## 17. Interview Notes
+
+- **Q: Why store `resourceType` on the `EmployeeDocument` row instead of
+  deriving it from `mimeType` when needed?** Because a real bug was
+  found doing exactly that during this feature's own verification:
+  `cloudinary.uploader.destroy()` defaults to `resource_type: "image"`
+  and **silently no-ops** (`{result: "not found"}`, not a thrown error)
+  for any asset of a different type. A PDF uploaded via
+  `resourceType: 'auto'` is classified by Cloudinary as `"raw"` — guessing
+  `"image"` from `mimeType: application/pdf` would be wrong, and the
+  delete call would appear to succeed while never actually removing the
+  asset. Storing Cloudinary's own classification at upload time is what
+  makes the later delete call reliable.
+- **Q: Why UUID-based `public_id`s for documents but a fixed one for the
+  profile picture?** Cardinality: a `User` has exactly one avatar (fixed
+  slot, safe to overwrite in place); an `Employee` can have arbitrarily
+  many documents, so each needs its own unique identity — a fresh UUID
+  per upload, never reused, never derived from user input.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/employees/$EMPLOYEE_ID/documents \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -F "file=@/path/to/resume.pdf"
+```
+
+## 19. Postman Collection Notes
+
+Requires `{{accessToken}}` to resolve to `employee:update:any`
+(`ADMIN`/`MANAGER`). Use `form-data` with a `file`-type field named
+`file`.
+
+## 20. Testing Checklist
+
+- ✅ Valid PDF and image upload → `201`
+- ✅ Duplicate file upload allowed (no dedup)
+- ✅ `400` on invalid type, oversized file, missing file
+- ✅ `403` as `EMPLOYEE`, `404` for nonexistent/soft-deleted employee,
+  `401` with no token
+- ✅ Real Cloudinary asset confirmed present after upload
+- ✅ `resourceType` correctly recorded from Cloudinary's own response
+- ✅ `AuditLog` entry created, `entityType: 'EmployeeDocument'`
+- ✅ No sensitive data leaked
+
+---
+
+---
+
+# 17. `GET /employees/:id/documents`
+
+## 1. Endpoint Information
+
+```
+Feature:            File Uploads (Feature 12)
+Endpoint:           List Employee Documents
+Description:        Returns every document attached to an Employee record
+Method:             GET
+URL:                /api/v1/employees/:id/documents
+API Version:        v1
+Module:             modules/employees
+Authentication:     Yes (Bearer access token)
+Authorization:      `employee:read:any` OR `employee:read:own` permission
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: lets HR/management review an employee's documents,
+  and lets the employee themselves view their own.
+- **Expected callers**: `ADMIN`/`MANAGER` for any employee; a plain
+  `EMPLOYEE` only for their own record — the same two-layer
+  authorization shape as `GET /employees/:id`.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                      |
+| ------------------------------------- | -------- | ---------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `employee:read:any` or `employee:read:own` |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description              | Example                                |
+| ---- | ------------- | -------- | ------------------------ | -------------------------------------- |
+| `id` | string (UUID) | **Yes**  | The Employee record's id | `ecb69110-8183-4769-a98b-8b0f69bf2f6a` |
+
+## 5. Query Parameters
+
+None — no pagination/search/filter/sort on this list (a real, honestly
+acknowledged gap; unbounded number of documents per employee, same
+treatment as Feature 10's deferred pagination on other lists before they
+were built out).
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body/query to validate. Authorization follows `GET
+/employees/:id`'s exact two-layer shape: `requirePermission` gates on
+"does the caller have either key at all"; the service then compares
+`employee.userId` against the caller's own id if only `:own` was granted.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "documents": [
+    {
+      "id": "0279b82f-16da-4de3-9d46-91efd07fcbd6",
+      "employeeId": "ecb69110-8183-4769-a98b-8b0f69bf2f6a",
+      "url": "https://res.cloudinary.com/dhfxv7gdp/raw/upload/v1783254636/emp-mgmt/development/employees/ecb69110-8183-4769-a98b-8b0f69bf2f6a/documents/4f0a2ca2-194d-4b71-9a76-24286153f357",
+      "publicId": "emp-mgmt/development/employees/ecb69110-8183-4769-a98b-8b0f69bf2f6a/documents/4f0a2ca2-194d-4b71-9a76-24286153f357",
+      "resourceType": "raw",
+      "fileName": "resume.pdf",
+      "mimeType": "application/pdf",
+      "size": 500,
+      "uploadedBy": "e1b07e0b-3c8d-4f7d-aa1f-fffec7648b21",
+      "createdAt": "2026-07-05T12:30:37.008Z"
+    }
+  ]
+}
+```
+
+`documents` is ordered newest-first (`createdAt DESC`), scoped to
+non-soft-deleted employees only.
+
+## 9. Error Responses
+
+| Status | Reason                                                          | Response (`message`)                                        | When                               |
+| ------ | --------------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------- |
+| `401`  | No/invalid/expired access token                                 | Same as every other protected endpoint                      | `authMiddleware` failure           |
+| `403`  | Roles grant neither `employee:read:any` nor `employee:read:own` | `"You do not have permission to perform this action"`       | No relevant permission at all      |
+| `403`  | Caller only has `employee:read:own`, and it isn't their record  | `"You do not have permission to view this employee record"` | Different, record-specific message |
+| `404`  | Nonexistent/soft-deleted employee                               | `"Employee not found"`                                      | Invalid `id`                       |
+
+## 10. Postman Test Cases
+
+| #   | Case                            | Expected |
+| --- | ------------------------------- | -------- |
+| 1   | `ADMIN`/`MANAGER`, any employee | `200`    |
+| 2   | Owning `EMPLOYEE`               | `200`    |
+| 3   | A _different_ `EMPLOYEE`        | `403`    |
+| 4   | Nonexistent employee `id`       | `404`    |
+| 5   | No token                        | `401`    |
+
+## 11. Negative Testing
+
+Same category as `GET /employees/:id`: malformed/non-UUID `id` → `404`
+(no `500`); tampered JWT → `401`; wrong method → `404`.
+
+## 12. Edge Cases
+
+| Scenario                                                                                    | Expected Behavior                                                                                     |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Employee with zero documents                                                                | `200`, `{ "documents": [] }` — not an error                                                           |
+| A document whose Cloudinary asset was orphaned (DB row exists, Cloudinary delete never ran) | Still listed normally — this endpoint only reads the database, never verifies against Cloudinary live |
+
+## 13. Security Testing
+
+- **BOLA**: the primary test here, identical in shape to `GET
+/employees/:id` — confirm an `employee:read:own`-only caller cannot
+  list a _different_ employee's documents by id.
+- **Sensitive data exposure**: document URLs may point to sensitive HR
+  documents (ID proof, contracts) — confirm the permission gate is the
+  only thing standing between a caller and this list, and that it's
+  enforced correctly on every test.
+
+## 14. Database Impact
+
+- **Tables affected**: `EmployeeDocument` (read), `Employee` (read, for
+  the existence/ownership check).
+- **Rows affected**: none inserted/updated/deleted.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/employees/:id/documents
+    ↓
+authMiddleware
+    ↓
+requirePermission('employee:read:any', 'employee:read:own')
+    ↓ (403 if neither granted)
+employeeDocument.controller.list
+    ↓
+employeeDocument.service.listDocuments(employeeId, { id: req.user.id, grantedPermissions })
+    ├─ employeeRepository.findById(employeeId) → not found → 404
+    ├─ grantedPermissions includes 'employee:read:any'? → skip ownership check
+    ├─ else: employee.userId !== requester.id → 403
+    └─ employeeDocumentRepository.findAllByEmployeeId(employeeId)
+    ↓
+200 { documents: [...] }
+```
+
+## 16. Performance Notes
+
+Unfiltered `SELECT ... WHERE employeeId = ? AND employee.deletedAt IS
+NULL`, indexed on `employeeId` — fine at this feature's current, small
+per-employee document counts; pagination is a natural future addition if
+that ever changes, not built now.
+
+## 17. Interview Notes
+
+**Q: Why does this list have no pagination when `GET /employees` does
+(since Feature 10)?** Document counts per employee are expected to stay
+small (a handful of HR documents, not thousands) — pagination here would
+be solving a problem that doesn't exist yet. Documented as a deliberate,
+honestly-acknowledged simplification, not an oversight, the same
+treatment `GET /employees` itself received before Feature 10 closed that
+gap for a workload that actually needed it.
+
+## 18. cURL Examples
+
+```bash
+curl -i http://localhost:3000/api/v1/employees/$EMPLOYEE_ID/documents \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Needs both an `{{adminAccessToken}}` and an `{{employeeAccessToken}}`
+(belonging to the target employee's linked user) to exercise both
+authorization paths, same as `GET /employees/:id`.
+
+## 20. Testing Checklist
+
+- ✅ `200` as `ADMIN`/`MANAGER` for any employee
+- ✅ `200` as the owning `EMPLOYEE`, `403` as a different `EMPLOYEE`
+- ✅ `404` for nonexistent/soft-deleted employee
+- ✅ `401` with no token
+- ✅ Empty array (not an error) when no documents exist
+- ✅ No sensitive data leaked beyond intended fields
+
+---
+
+---
+
+# 18. `DELETE /employees/:id/documents/:documentId`
+
+## 1. Endpoint Information
+
+```
+Feature:            File Uploads (Feature 12)
+Endpoint:           Delete Employee Document
+Description:        Permanently removes a document from an Employee record
+Method:             DELETE
+URL:                /api/v1/employees/:id/documents/:documentId
+API Version:        v1
+Module:             modules/employees
+Authentication:     Yes (Bearer access token)
+Authorization:      `employee:update:any` permission required (ADMIN, MANAGER as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: removes an incorrectly-uploaded or no-longer-needed
+  document.
+- **Expected callers**: `ADMIN`/`MANAGER` only — same as upload.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                |
+| ------------------------------------- | -------- | ---------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `employee:update:any` permission |
+
+## 4. Path Parameters
+
+| Name         | Type          | Required | Description              | Example                                |
+| ------------ | ------------- | -------- | ------------------------ | -------------------------------------- |
+| `id`         | string (UUID) | **Yes**  | The Employee record's id | `ecb69110-8183-4769-a98b-8b0f69bf2f6a` |
+| `documentId` | string (UUID) | **Yes**  | The document's id        | `0279b82f-16da-4de3-9d46-91efd07fcbd6` |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body to validate — only the employee and document existence checks
+described in the Request Lifecycle below. A `documentId` that exists but
+belongs to a _different_ employee is treated identically to a
+nonexistent one (`404`), since the repository's lookup is always scoped
+to `(documentId, employeeId)` together.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Document deleted successfully"
+}
+```
+
+Deliberately doesn't echo the deleted document — nothing further the
+caller needs, same convention as `DELETE /employees/:id`.
+
+## 9. Error Responses
+
+| Status | Reason                                                   | Response (`message`)                                  | When                                                                 |
+| ------ | -------------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------- |
+| `401`  | No/invalid/expired access token                          | Same as every other protected endpoint                | `authMiddleware` failure                                             |
+| `403`  | Roles don't grant `employee:update:any`                  | `"You do not have permission to perform this action"` | Any `EMPLOYEE`                                                       |
+| `404`  | Nonexistent/soft-deleted employee                        | `"Employee not found"`                                | Invalid `id`                                                         |
+| `404`  | Nonexistent document, or belongs to a different employee | `"Document not found"`                                | Invalid `documentId`, or a real document id under the wrong employee |
+
+## 10. Postman Test Cases
+
+| #   | Case                               | Expected         |
+| --- | ---------------------------------- | ---------------- |
+| 1   | Valid delete                       | `200`            |
+| 2   | Delete the same `documentId` again | `404`, not `409` |
+| 3   | Nonexistent `documentId`           | `404`            |
+| 4   | Nonexistent employee `id`          | `404`            |
+| 5   | As `EMPLOYEE` token                | `403`            |
+| 6   | No token                           | `401`            |
+
+## 11. Negative Testing
+
+Same category as `DELETE /employees/:id`: malformed/non-UUID ids → `404`;
+tampered JWT → `401`; wrong method → `404`.
+
+## 12. Edge Cases
+
+| Scenario                                                            | Expected Behavior                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /employees/:id/documents` immediately after deleting one       | The deleted document no longer appears — hard delete, not soft (the `AuditLog`'s `beforeData` already preserves its historical metadata, making a parallel soft-delete on `EmployeeDocument` redundant).                              |
+| Database delete succeeds but the Cloudinary cleanup fails afterward | The client still gets `200`; the orphaned Cloudinary asset is logged, not surfaced — the database is already consistent by the time the response is sent.                                                                             |
+| Re-fetching the deleted document's URL immediately after deletion   | `404` from Cloudinary's CDN, confirmed live — requires both the correct `resource_type` on the delete call **and** `invalidate: true` (see Interview Notes — two real bugs, both found and fixed during this feature's verification). |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `EMPLOYEE` cannot delete any document,
+  including one attached to their own record — there is no
+  `employee:update:own` permission at all (Feature 9's decision).
+- **Idempotency under retry**: a retried `DELETE` after a timeout gets a
+  safe `404` on the second attempt.
+- **Mass assignment**: N/A — no request body.
+
+## 14. Database Impact
+
+- **Tables affected**: `EmployeeDocument` (hard delete), `AuditLog`
+  (insert).
+- **Transactions**: the `EmployeeDocument` delete and the `AuditLog`
+  insert commit together first; the Cloudinary delete happens **after**,
+  best-effort, never blocking or failing the response.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/employees/:id/documents/:documentId
+    ↓
+authMiddleware
+    ↓
+requirePermission('employee:update:any')
+    ↓ (403 if not granted)
+employeeDocument.controller.remove
+    ↓
+employeeDocument.service.deleteDocument(employeeId, documentId, actor)
+    ├─ employeeRepository.findById(employeeId) → not found → 404
+    ├─ employeeDocumentRepository.findById(documentId, employeeId) → not found → 404
+    ├─ prisma.$transaction:
+    │    ├─ employeeDocumentRepository.deleteById(documentId, tx)
+    │    └─ auditLogRepository.create({ entityType: 'EmployeeDocument', action: 'DELETE', beforeData, afterData: null, ... }, tx)
+    └─ cloudinaryStorage.deleteAsset(document.publicId, document.resourceType, context)   [after commit, best-effort]
+    ↓
+200 { message: "Document deleted successfully" }
+```
+
+## 16. Performance Notes
+
+Two indexed lookups plus one delete plus one best-effort external call —
+no notable performance concerns at this scale.
+
+## 17. Interview Notes
+
+- **Q: Walk through the two real bugs found while verifying this
+  specific endpoint.** (1) `cloudinary.uploader.destroy()` defaults to
+  `resource_type: "image"` and silently returns `{result: "not found"}` —
+  not an error — for any other type. A PDF document (Cloudinary's own
+  classification: `"raw"`) appeared to delete successfully (the API
+  returned `200`) but the asset was still live on Cloudinary, confirmed
+  by re-fetching its URL. Fixed by storing `resourceType` on the
+  `EmployeeDocument` row at upload time (from Cloudinary's response, not
+  guessed from `mimeType`) and passing it explicitly to every `destroy()`
+  call. (2) Even after fixing that, a re-fetch of the just-deleted
+  asset's URL still returned `200` — the origin asset _was_ actually gone
+  (confirmed via Cloudinary's Admin API), but the CDN kept serving a
+  stale cached copy. Fixed by adding `invalidate: true` to every
+  `destroy()` call, not just uploads. Both were caught by testing the
+  actual deletion against the real Cloudinary account, not by trusting
+  that "no error was thrown" meant "the asset is gone."
+- **Q: Why is `EmployeeDocument` a hard delete when `Employee` is soft?**
+  The `AuditLog`'s `beforeData` already captures the document's full
+  metadata at the moment of deletion — exactly what a soft-delete flag
+  would otherwise exist to preserve. Adding a parallel soft-delete
+  mechanism here would duplicate what Feature 11's audit trail already
+  provides.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/employees/$EMPLOYEE_ID/documents/$DOCUMENT_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this **after** `POST /employees/:id/documents` in any test sequence
+— save the returned `document.id` as `{{documentId}}` beforehand.
+
+## 20. Testing Checklist
+
+- ✅ Valid delete → `200`
+- ✅ Second delete on the same `documentId` → `404`, not `409`
+- ✅ `GET /employees/:id/documents` no longer lists the deleted document
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `404` for nonexistent employee, nonexistent document, and a document
+  under the wrong employee
+- ✅ Real Cloudinary asset confirmed gone (verified via Cloudinary's
+  Admin API, not just a non-error response) — required both the
+  `resourceType` fix and the `invalidate: true` fix, both caught live
 - ✅ No sensitive data leaked
