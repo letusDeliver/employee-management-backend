@@ -22,6 +22,7 @@ progress log.
 - **Logging**: Winston (leveled, environment-aware) + Morgan (HTTP access logs)
 - **Security**: Helmet, CORS, bcrypt-hashed passwords, httpOnly cookies
 - **File uploads**: Multer (memory storage) + Cloudinary (profile pictures, Employee documents)
+- **API docs**: Swagger UI (`swagger-ui-express`) + OpenAPI 3.0, generated from the same Zod validation schemas that enforce requests (`@asteasolutions/zod-to-openapi`)
 - **Tooling**: ESLint (flat config) + Prettier, nodemon
 
 ## Getting Started
@@ -67,6 +68,9 @@ progress log.
      validates these at boot the same as the JWT secrets and refuses to
      start without them, since profile pictures and Employee documents
      depend on a real Cloudinary connection.
+   - `ENABLE_SWAGGER` — optional, defaults to `false` in every environment.
+     Set to `true` to serve the interactive API docs locally (see
+     [API Documentation](#api-documentation) below).
 
 4. **Run database migrations**
 
@@ -128,12 +132,28 @@ Authorization is permission-based (see `handbook/API_ENDPOINTS.md`), not
 role-based — `ADMIN`/`MANAGER`/`EMPLOYEE` are role names seeded with a
 specific set of permissions, not hard-coded checks.
 
+## API Documentation
+
+Two complementary references, kept in sync (see `CLAUDE.md` Rule 17):
+
+- **[`handbook/API_ENDPOINTS.md`](./handbook/API_ENDPOINTS.md)** — the
+  deep, implementation-accurate reference (every status code, security/
+  negative testing, edge cases, cURL examples).
+- **Swagger UI** — an interactive, machine-readable reference generated
+  from the same Zod validation schemas that enforce requests, with a
+  JWT **Authorize** button so protected endpoints can be tried directly
+  in the browser. Off by default in every environment; set
+  `ENABLE_SWAGGER=true` to enable it locally, then visit:
+  - `http://localhost:3000/api-docs` — the interactive UI
+  - `http://localhost:3000/api-docs.json` — the raw OpenAPI 3.0 document
+
 ## Project Structure
 
 ```
 src/
 ├── app.js, server.js        # Express app assembly + process lifecycle
 ├── config/                  # env.js, database.js, logger.js — one shared instance each
+├── docs/                     # OpenAPI registry/generator/security + Swagger UI mounting
 ├── errors/                  # Typed AppError hierarchy
 ├── middlewares/              # auth, permission (RBAC), validate, upload (Multer), error, notFound
 ├── modules/                  # Feature-first domain modules (auth, users, rbac, employees, audit)
@@ -165,6 +185,6 @@ planning/                     # Approved action plan for each feature
 - [x] Employee search, pagination, filtering, sorting
 - [x] Audit logs
 - [x] File uploads (Multer + Cloudinary)
-- [ ] Swagger API docs
+- [x] Swagger API docs
 - [ ] Dockerization
 - [ ] Testing strategy
