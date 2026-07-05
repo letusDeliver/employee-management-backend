@@ -9,6 +9,7 @@ feature ships.
 
 - [Progress Summary & Interview Prep (Features 1–7)](./00-progress-summary-and-interview-prep.md) — cumulative recap, every real bug/surprise found, and a consolidated interview Q&A sheet. Updated periodically, not after every single feature.
 - [API Endpoints Handbook](./API_ENDPOINTS.md) — a living, implementation-accurate reference for every endpoint (headers, validation, every status code, Postman/cURL examples, security/negative testing, request lifecycle). Updated after every feature that touches an endpoint — see `CLAUDE.md` Rule 17.
+- [Manual Testing Guide](./TESTING_GUIDE.md) — a sequential, end-to-end runbook: every endpoint paired with the database query (Prisma + raw SQL) that verifies the resulting state actually changed correctly. The interim manual QA process until automated tests land.
 
 ## Chapters
 

@@ -169,6 +169,7 @@ planning/                     # Approved action plan for each feature
 
 - **[`CLAUDE.md`](./CLAUDE.md)** — project context, architecture decisions, and the running feature progress log.
 - **[`handbook/`](./handbook)** — one deep-dive chapter per feature (theory, architecture, security, common mistakes, interview prep), plus a [cumulative progress summary and interview-prep sheet](./handbook/00-progress-summary-and-interview-prep.md).
+- **[`handbook/TESTING_GUIDE.md`](./handbook/TESTING_GUIDE.md)** — a sequential, end-to-end manual test runbook: every endpoint paired with a database query (Prisma + raw SQL) that verifies the resulting state.
 - **[`planning/`](./planning)** — the approved action plan for each feature, written and reviewed before implementation.
 
 ## Roadmap
