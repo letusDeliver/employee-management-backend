@@ -21,6 +21,7 @@ feature ships.
 7. [JWT Access + Refresh Tokens](./07-jwt-access-refresh-tokens.md)
 8. [RBAC (Roles & Permissions)](./08-rbac.md)
 9. [RBAC Redesign + Employee CRUD](./09-rbac-redesign-and-employee-crud.md)
+10. [Employee Search, Pagination, Filtering, Sorting](./10-employee-search-pagination-filtering-sorting.md)
 
 ## Stack
 

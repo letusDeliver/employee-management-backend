@@ -12,8 +12,17 @@ const findByUserId = (userId) => {
   return prisma.employee.findFirst({ where: { userId, deletedAt: null } });
 };
 
-const findAll = () => {
-  return prisma.employee.findMany({ where: { deletedAt: null } });
+const findAll = ({ where = {}, orderBy, skip, take }) => {
+  return prisma.employee.findMany({
+    where: { ...where, deletedAt: null },
+    orderBy,
+    skip,
+    take,
+  });
+};
+
+const count = (where = {}) => {
+  return prisma.employee.count({ where: { ...where, deletedAt: null } });
 };
 
 const update = (id, data) => {
@@ -24,4 +33,4 @@ const softDelete = (id) => {
   return prisma.employee.update({ where: { id }, data: { deletedAt: new Date() } });
 };
 
-export default { create, findById, findByUserId, findAll, update, softDelete };
+export default { create, findById, findByUserId, findAll, count, update, softDelete };

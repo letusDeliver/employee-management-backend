@@ -1,7 +1,11 @@
 import { Router } from 'express';
 
 import employeeController from './employee.controller.js';
-import { createEmployeeSchema, updateEmployeeSchema } from './employee.validation.js';
+import {
+  createEmployeeSchema,
+  updateEmployeeSchema,
+  listEmployeesQuerySchema,
+} from './employee.validation.js';
 import validateMiddleware from '../../middlewares/validate.middleware.js';
 import authMiddleware from '../../middlewares/auth.middleware.js';
 import requirePermission from '../../middlewares/permission.middleware.js';
@@ -18,7 +22,12 @@ router.post(
   asyncHandler(employeeController.create),
 );
 
-router.get('/', requirePermission('employee:read:any'), asyncHandler(employeeController.list));
+router.get(
+  '/',
+  requirePermission('employee:read:any'),
+  validateMiddleware(listEmployeesQuerySchema, 'query'),
+  asyncHandler(employeeController.list),
+);
 
 router.get(
   '/:id',

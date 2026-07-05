@@ -12,3 +12,19 @@ export const createEmployeeSchema = z.object({
 });
 
 export const updateEmployeeSchema = createEmployeeSchema.partial();
+
+const SORTABLE_FIELDS = ['department', 'jobTitle', 'salary', 'dateOfJoining', 'createdAt'];
+
+export const listEmployeesQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  search: z
+    .string()
+    .optional()
+    .transform((value) => (value === '' ? undefined : value)),
+  department: z.string().optional(),
+  jobTitle: z.string().optional(),
+  managerId: z.string().uuid().optional(),
+  sortBy: z.enum(SORTABLE_FIELDS).default('createdAt'),
+  order: z.enum(['asc', 'desc']).default('desc'),
+});

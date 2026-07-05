@@ -69,8 +69,54 @@ const getEmployeeById = async (id, requester) => {
   return employee;
 };
 
-const listEmployees = async () => {
-  return employeeRepository.findAll();
+const buildEmployeeWhere = ({ search, department, jobTitle, managerId }) => {
+  const where = {};
+
+  if (search) {
+    where.OR = [
+      { department: { contains: search, mode: 'insensitive' } },
+      { jobTitle: { contains: search, mode: 'insensitive' } },
+      { user: { name: { contains: search, mode: 'insensitive' } } },
+      { user: { email: { contains: search, mode: 'insensitive' } } },
+    ];
+  }
+
+  if (department) {
+    where.department = { equals: department, mode: 'insensitive' };
+  }
+
+  if (jobTitle) {
+    where.jobTitle = { equals: jobTitle, mode: 'insensitive' };
+  }
+
+  if (managerId) {
+    where.managerId = managerId;
+  }
+
+  return where;
+};
+
+const listEmployees = async (query) => {
+  const { page, limit, sortBy, order, ...filters } = query;
+  const where = buildEmployeeWhere(filters);
+
+  // A trailing `id` tiebreaker makes ordering deterministic across pages
+  // and repeated calls whenever multiple rows share the same sortBy value
+  // - unconditional, since id is always unique regardless of what sortBy is.
+  const [employees, total] = await Promise.all([
+    employeeRepository.findAll({
+      where,
+      orderBy: [{ [sortBy]: order }, { id: 'asc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    employeeRepository.count(where),
+  ]);
+
+  return {
+    employees,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
 };
 
 const updateEmployee = async (id, data) => {

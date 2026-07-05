@@ -94,6 +94,8 @@ No skipping sections. No rushing. Stop and wait for approval after each feature 
 - [x] JWT Access + Refresh Tokens
 - [x] RBAC (roles & permissions) — redesigned in Feature 9 from coarse-grained roles to a full Role/Permission model
 - [x] Employee CRUD (Clean Architecture: controller/service/repository)
+- [x] Employee search, pagination, filtering, sorting
+- [ ] Audit logs
 - [ ] File uploads (Multer + Cloudinary)
 - [ ] Swagger API docs
 - [ ] Dockerization
@@ -392,3 +394,33 @@ self-management `400`, double-delete `404` (not `409`), and soft-deleted
 records disappearing from every read path immediately. See
 `planning/feature-09-rbac-redesign-and-employee-crud.md` for the approved
 plan, including the rollback plan.)_
+
+_(Feature 10 — Employee Search, Pagination, Filtering, Sorting —
+completed, on branch
+`feature/10-employee-search-pagination-filtering-sorting`. Only
+`GET /employees` changed — no new endpoints, no new permissions, still
+gated by `employee:read:any`. Confirmed decision: `search` matches both
+`Employee`'s own fields (`department`, `jobTitle`) and the linked
+`User`'s `name`/`email` via a Prisma relation filter, not just Employee's
+own columns — otherwise "find this person" wouldn't work for anyone
+whose HR record is linked to a login account. `src/middlewares/
+validate.middleware.js` generalized to `validateMiddleware(schema,
+target = 'body')` — the first query-parameter validation in this API. A
+real finding changed its design: `req.query = {...}` **throws** under
+Express 5 in this project's strict-mode ES modules (`req.query` is a
+getter-only accessor, confirmed by direct test), so validated query
+results land on a new `req.validatedQuery` property instead of
+overwriting `req.query`. `employee.repository.js` gained a paired
+`count()` alongside `findAll()`, run via `Promise.all` (not a
+`$transaction`) — a deliberate, documented trade-off for an HR
+application, not an oversight. Every query gets an unconditional
+secondary `ORDER BY id ASC` after whatever `sortBy`/`order` was
+requested, for deterministic ordering when rows tie on the primary sort
+column. `sortBy` is whitelisted to five known columns; `limit` is capped
+at 100, both enforced by Zod, never passed through to Prisma unvalidated.
+Verified live: pagination math, empty-`search=`-equals-no-search,
+case-insensitive exact filters, search matching via the `User` join,
+sort-order reversal, and repeat-call ordering stability all confirmed
+against the real running server. See
+`planning/feature-10-employee-search-pagination-filtering-sorting.md`
+for the approved plan.)_
