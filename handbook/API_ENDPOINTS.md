@@ -6,8 +6,12 @@ API. Updated after every feature that adds or modifies an endpoint (see
 from the actual running server — not hand-written from memory — so it can
 be used to test the API in Postman without reading any source code.
 
-**Last synchronized with**: Feature 8 (RBAC). Covers all 8 endpoints that
-exist as of this feature.
+**Last synchronized with**: Feature 9, Stage A (RBAC redesign). Covers all
+8 endpoints that exist as of this feature. Stage A did not add or remove
+any endpoints — it replaced the authorization mechanism underneath four
+of them (`/auth/register`, `/auth/login`, `/auth/me`, `/users`). Stage B
+(Employee CRUD) will add five new endpoints in a follow-up update to this
+document.
 
 ---
 
@@ -62,7 +66,18 @@ centralized error handler (`src/middlewares/error.middleware.js`):
 - **Access token**: a JWT, returned in the JSON response body on
   register/login/refresh. Short-lived (`15m` by default). Sent via the
   `Authorization: Bearer <token>` header. Verified statelessly (signature
-  - expiry only — no database call).
+  - expiry only — no database call). **As of Feature 9**, its payload is
+    `{ sub: userId, roles: [roleName, ...] }` — an array of role names, not
+    the single `role` string used before Feature 9. A permission-requiring
+    route then resolves `roles` to a set of permission keys (via
+    `src/utils/permissionCache.js`, backed by the `Role`/`Permission`/
+    `RolePermission` tables) on every request — this resolution step, not
+    the JWT itself, is what actually decides access. This means a role's
+    _permissions_ can be changed at any time and take effect on the very
+    next request (no re-login needed), but a _user's_ role assignment is
+    still only reflected the next time they log in — same
+    stale-until-relogin behavior documented in Feature 8, just one layer
+    removed from where the caching now happens.
 - **Refresh token**: a JWT, delivered **only** as an httpOnly cookie
   (`refreshToken`), never in a JSON body. Long-lived (`7d` by default).
   Tracked (hashed) in the database — revocable, and rotated on every use.
@@ -100,29 +115,49 @@ in Postman's cookie jar once register/login/refresh sets it.
 - **No rate limiting exists yet** on any endpoint, including `/auth/login`
   and `/auth/refresh` — a real brute-force-protection gap, acknowledged
   since Feature 6, not yet closed.
-- **`POST /auth/register` is not transactional** — a crash between
-  creating the user and issuing tokens (rare, but has happened once during
-  this project's own development) can leave a real user account with no
-  valid session. Documented since Feature 7.
+- **`POST /auth/register`'s transactionality was narrowed, not fully
+  closed, in Feature 9** — user creation and default-role assignment now
+  happen in one `prisma.$transaction` (so a user can never exist with zero
+  roles), but issuing the refresh/access token pair still happens as a
+  separate step afterward. A crash between the transaction commit and
+  token issuance now just means "the account exists correctly, log in
+  again" — no longer the "account exists but is structurally broken" gap
+  documented since Feature 7.
 - **`GET /users` has no pagination** — fine at current scale, a natural
   future improvement once the user count grows.
 - **No self-service way to change a user's role** — by design (see
-  `GET /users`'s Security Testing section).
+  `GET /users`'s Security Testing section). Role assignment is a
+  direct-database operation for testing purposes, same as every prior
+  feature.
+- **Pre-existing accounts created before Feature 9's migration lost their
+  role entirely** — the `User.role` enum column was dropped without a
+  data-migration step (a deliberate "clean cut-over" decision for this dev
+  database, backed by a pre-migration `pg_dump`). Any account that existed
+  before this migration now has an empty `roles: []` array until a `Role`
+  is manually assigned to it via a direct database script — accounts
+  registered after the migration are unaffected, since `register()` always
+  assigns the default `EMPLOYEE` role.
 
 ---
 
 ## Endpoint Index
 
-| #   | Feature   | Method | Path             | Auth                      | Roles             | Public/Protected   |
-| --- | --------- | ------ | ---------------- | ------------------------- | ----------------- | ------------------ |
-| 1   | Health    | `GET`  | `/health`        | No                        | —                 | Public             |
-| 2   | Readiness | `GET`  | `/ready`         | No                        | —                 | Public             |
-| 3   | Auth      | `POST` | `/auth/register` | No                        | —                 | Public             |
-| 4   | Auth      | `POST` | `/auth/login`    | No                        | —                 | Public             |
-| 5   | Auth      | `POST` | `/auth/refresh`  | Refresh cookie            | —                 | Protected (cookie) |
-| 6   | Auth      | `POST` | `/auth/logout`   | Refresh cookie (optional) | —                 | Protected (cookie) |
-| 7   | Auth      | `GET`  | `/auth/me`       | Access token              | Any authenticated | Protected          |
-| 8   | Users     | `GET`  | `/users`         | Access token              | `ADMIN`           | Protected          |
+| #   | Feature   | Method | Path             | Auth                      | Required Permission | Public/Protected   |
+| --- | --------- | ------ | ---------------- | ------------------------- | ------------------- | ------------------ |
+| 1   | Health    | `GET`  | `/health`        | No                        | —                   | Public             |
+| 2   | Readiness | `GET`  | `/ready`         | No                        | —                   | Public             |
+| 3   | Auth      | `POST` | `/auth/register` | No                        | —                   | Public             |
+| 4   | Auth      | `POST` | `/auth/login`    | No                        | —                   | Public             |
+| 5   | Auth      | `POST` | `/auth/refresh`  | Refresh cookie            | —                   | Protected (cookie) |
+| 6   | Auth      | `POST` | `/auth/logout`   | Refresh cookie (optional) | —                   | Protected (cookie) |
+| 7   | Auth      | `GET`  | `/auth/me`       | Access token              | Any authenticated   | Protected          |
+| 8   | Users     | `GET`  | `/users`         | Access token              | `user:list`         | Protected          |
+
+**As of Feature 9**, authorization is permission-based, not role-based —
+`ADMIN`/`MANAGER`/`EMPLOYEE` are just role _names_ that happen to be
+granted certain permissions (seeded in `prisma/seed.js`); routes check
+permission keys (`requirePermission('user:list')`), not role names
+directly (`requireRole('ADMIN')`, the retired Feature 8 mechanism).
 
 ---
 
@@ -540,16 +575,22 @@ via the generic `validateMiddleware`, **before** the controller ever runs.
 {
   "message": "User registered successfully",
   "user": {
-    "id": "178e6fbb-e1ef-4e20-b564-665b91691aaf",
-    "email": "jane.doe@example.com",
-    "name": "Jane Doe",
-    "role": "EMPLOYEE",
-    "createdAt": "2026-07-04T18:07:34.179Z",
-    "updatedAt": "2026-07-04T18:07:34.179Z"
+    "id": "e1b07e0b-3c8d-4f7d-aa1f-fffec7648b21",
+    "email": "stagea-test1@example.com",
+    "name": "Stage A Test",
+    "createdAt": "2026-07-05T04:35:57.265Z",
+    "updatedAt": "2026-07-05T04:35:57.265Z",
+    "roles": ["EMPLOYEE"]
   },
   "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...."
 }
 ```
+
+**As of Feature 9**: `user.role` (a single string) is now `user.roles` (an
+array of role names). Every new registration is assigned exactly one role
+— `EMPLOYEE` — via a `UserRole` row created in the same database
+transaction as the user itself (see Request Lifecycle below), so
+`roles` is never empty for a freshly registered account.
 
 Response headers also include:
 
@@ -559,17 +600,17 @@ Set-Cookie: refreshToken=eyJ...; Max-Age=604799; Path=/api/v1/auth;
   (Secure flag present only when NODE_ENV=production)
 ```
 
-| Field                                | Description                                                                                                             |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `message`                            | Fixed confirmation string.                                                                                              |
-| `user.id`                            | UUID, not sequential — see `handbook/06-user-model-auth.md` for why.                                                    |
-| `user.email`                         | Echoes the registered email.                                                                                            |
-| `user.name`                          | Echoes the registered name.                                                                                             |
-| `user.role`                          | Always `"EMPLOYEE"` for a self-registered account — there is no way to register as `ADMIN`/`MANAGER` via this endpoint. |
-| `user.createdAt` / `updatedAt`       | ISO 8601 timestamps, identical on creation.                                                                             |
-| **`user.password` is never present** | Stripped by `sanitizeUser` before the response is built — verify this on every test.                                    |
-| `accessToken`                        | A signed JWT, `15m` default lifetime. Use in `Authorization: Bearer <accessToken>` for subsequent requests.             |
-| `refreshToken` (cookie only)         | Never appears in the JSON body — only as the `Set-Cookie` header.                                                       |
+| Field                                | Description                                                                                                                                                                                                                      |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `message`                            | Fixed confirmation string.                                                                                                                                                                                                       |
+| `user.id`                            | UUID, not sequential — see `handbook/06-user-model-auth.md` for why.                                                                                                                                                             |
+| `user.email`                         | Echoes the registered email.                                                                                                                                                                                                     |
+| `user.name`                          | Echoes the registered name.                                                                                                                                                                                                      |
+| `user.roles`                         | Always `["EMPLOYEE"]` for a self-registered account — there is no way to register as `ADMIN`/`MANAGER` via this endpoint. An array (not a single string) since Feature 9, since a user can in principle hold more than one role. |
+| `user.createdAt` / `updatedAt`       | ISO 8601 timestamps, identical on creation.                                                                                                                                                                                      |
+| **`user.password` is never present** | Stripped by `sanitizeUser` before the response is built — verify this on every test.                                                                                                                                             |
+| `accessToken`                        | A signed JWT, `15m` default lifetime. Use in `Authorization: Bearer <accessToken>` for subsequent requests.                                                                                                                      |
+| `refreshToken` (cookie only)         | Never appears in the JSON body — only as the `Set-Cookie` header.                                                                                                                                                                |
 
 ## 9. Error Responses
 
@@ -618,12 +659,12 @@ no _specific_ documented trigger for this endpoint beyond the general
 
 ## 12. Edge Cases
 
-| Scenario                                                                             | Expected Behavior                                                                                                                                                                                                                                                                                                             |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Duplicate/concurrent registration attempts with the same email, fired simultaneously | Only one will succeed (`201`); the other should hit the database's unique constraint on `email` and receive `409` — **not independently verified under true concurrency in this project**, flagged honestly as an untested race window                                                                                        |
-| Registering immediately after a crashed prior attempt for the same email             | Real, observed behavior (Feature 7): if a prior request crashed _after_ creating the user but _before_ issuing tokens, retrying registration with the same email correctly returns `409` (proves the user does exist), but that account has no valid session from the failed attempt — use `/auth/login` instead in that case |
-| Very long `email`/`name` values                                                      | Currently accepted with no upper bound — see Negative Testing above                                                                                                                                                                                                                                                           |
-| Unicode/special characters in `name` (e.g. `"名前"`, emoji)                          | Accepted — no character-set restriction on `name`                                                                                                                                                                                                                                                                             |
+| Scenario                                                                             | Expected Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Duplicate/concurrent registration attempts with the same email, fired simultaneously | Only one will succeed (`201`); the other should hit the database's unique constraint on `email` and receive `409` — **not independently verified under true concurrency in this project**, flagged honestly as an untested race window                                                                                                                                                                                                                                                      |
+| Registering immediately after a crashed prior attempt for the same email             | If a prior request crashed _after_ the user+role transaction committed but _before_ token issuance, retrying registration with the same email correctly returns `409` (proves the user does exist, and — as of Feature 9 — correctly has a role); use `/auth/login` instead to obtain a session in that case. This is a narrower, less severe version of the Feature 7 gap: the account is never structurally broken (no user can exist without a role now), only momentarily session-less. |
+| Very long `email`/`name` values                                                      | Currently accepted with no upper bound — see Negative Testing above                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Unicode/special characters in `name` (e.g. `"名前"`, emoji)                          | Accepted — no character-set restriction on `name`                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ## 13. Security Testing
 
@@ -633,17 +674,20 @@ no _specific_ documented trigger for this endpoint beyond the general
   repeatedly to enumerate whether emails exist (via the `409` response) or
   to spam account creation. A known, acknowledged gap.
 - **JWT validation**: N/A on the way in; the JWT issued on the way out
-  should be verified to actually decode correctly and carry `{sub, role}`
-  — inspect it at [jwt.io](https://jwt.io) or similar to confirm structure
-  (do this only with test tokens, never a real production token).
+  should be verified to actually decode correctly and carry
+  `{sub, roles}` (an array, since Feature 9 — previously a single `role`
+  string) — inspect it at [jwt.io](https://jwt.io) or similar to confirm
+  structure (do this only with test tokens, never a real production
+  token).
 - **Sensitive data exposure / password exposure**: verify manually that
   the response body's `user` object **never** contains a `password` field,
   on every single test run, not just once.
-- **Role escalation**: verify a `role` field sent in the request body is
-  simply ignored — `registerSchema` doesn't even define a `role` field, so
-  Zod strips/ignores any extra property sent (Zod's default is to strip
+- **Role escalation**: verify a `role`/`roles` field sent in the request
+  body is simply ignored — `registerSchema` doesn't define either field,
+  so Zod strips/ignores any extra property sent (Zod's default is to strip
   unrecognized keys, not reject the request) — confirm a submitted
-  `"role": "ADMIN"` does **not** result in an admin account.
+  `"roles": ["ADMIN"]` does **not** result in an admin account; every
+  registration is hard-coded server-side to the `EMPLOYEE` role.
 - **Mass assignment**: directly related to the above — confirm no
   unexpected field (e.g. `id`, `createdAt`) can be client-supplied and
   honored.
@@ -652,16 +696,23 @@ no _specific_ documented trigger for this endpoint beyond the general
 
 ## 14. Database Impact
 
-- **Tables affected**: `User` (insert), `RefreshToken` (insert).
-- **Rows inserted**: exactly 1 `User` row, exactly 1 `RefreshToken` row,
-  on success.
+- **Tables affected**: `User` (insert), `UserRole` (insert), `RefreshToken`
+  (insert).
+- **Rows inserted**: exactly 1 `User` row, exactly 1 `UserRole` row (the
+  default `EMPLOYEE` grant), exactly 1 `RefreshToken` row, on success.
 - **Rows updated/deleted**: none.
-- **Transactions**: **none** — these are two separate, non-atomic writes.
-  A known, documented gap (Feature 7): a failure between the two leaves a
-  real user with no session. See `handbook/07-jwt-access-refresh-tokens.md`.
-- **Cascade/rollback behavior**: since there's no transaction, there is
-  no rollback if the second write fails — the first write's effect
-  (the created user) persists regardless.
+- **Transactions**: **as of Feature 9**, the `User` insert and the
+  `UserRole` insert happen inside one `prisma.$transaction` — either both
+  succeed or neither does, so a user can never exist without a role. The
+  `RefreshToken` insert (token issuance) still happens as a separate step
+  _after_ that transaction commits — a narrower, deliberately scoped fix
+  to the Feature 7 gap, not a full "everything in one transaction"
+  rewrite. See the Feature 9 planning doc for the reasoning.
+- **Cascade/rollback behavior**: if the `User`/`UserRole` transaction
+  fails partway, both inserts roll back together — no orphaned user, no
+  orphaned role grant. If token issuance fails afterward, the user+role
+  data persists correctly; the client just needs to call `/auth/login`
+  instead.
 
 ## 15. Request Lifecycle
 
@@ -677,9 +728,13 @@ auth.controller.register (asyncHandler-wrapped)
 auth.service.register
     ├─ userRepository.findByEmail(email)   → exists? → 409 ConflictError
     ├─ bcrypt.hash(password, 10)
-    ├─ userRepository.create(...)
+    ├─ prisma.$transaction:
+    │    ├─ userRepository.create(..., tx)
+    │    ├─ rbacRepository.findRoleByName('EMPLOYEE', tx)
+    │    └─ rbacRepository.assignRoleToUser(userId, roleId, tx)
     └─ issueTokenPair(user)
-         ├─ jwt.signAccessToken / signRefreshToken
+         ├─ rbacRepository.getRoleNamesForUser(user.id)
+         ├─ jwt.signAccessToken / signRefreshToken  ({ sub, roles })
          └─ refreshTokenRepository.create(...)
     ↓
 controller sets refreshToken cookie, responds 201
@@ -688,7 +743,7 @@ controller sets refreshToken cookie, responds 201
 **Middleware that runs for this endpoint**: `helmet`, `cors`, `morgan`
 (→ `logger.http`), `cookieParser`, `express.json()`, the JSON-syntax-error
 translator, `validateMiddleware(registerSchema)`. **No** `authMiddleware`
-or `requireRole` — this route is public.
+or `requirePermission` — this route is public.
 
 ## 16. Performance Notes
 
@@ -697,9 +752,10 @@ or `requireRole` — this route is public.
 - `bcrypt.hash` is deliberately slow (cost factor 10) — expect tens of
   milliseconds here specifically; this is the single most expensive step
   in the request, by design (see `handbook/06-user-model-auth.md`).
-- Two sequential database writes (no batching/transaction) — a second
-  round-trip cost that a transaction would not eliminate, but _would_
-  make atomic.
+- Three sequential database writes now (was two before Feature 9): the
+  `User`+`UserRole` transaction, then the `RefreshToken` insert. The
+  transaction adds a small additional round-trip cost in exchange for the
+  atomicity guarantee above.
 
 ## 17. Interview Notes
 
@@ -843,19 +899,23 @@ bcrypt comparison.
 {
   "message": "Login successful",
   "user": {
-    "id": "ebea9f2d-f331-40b8-968a-386dd88d4576",
-    "email": "jane.doe@example.com",
-    "name": "Jane Doe",
-    "role": "EMPLOYEE",
-    "createdAt": "2026-07-04T14:42:46.216Z",
-    "updatedAt": "2026-07-04T14:42:46.216Z"
+    "id": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
+    "email": "docs-example@example.com",
+    "name": "Docs Example",
+    "createdAt": "2026-07-05T04:41:20.891Z",
+    "updatedAt": "2026-07-05T04:41:20.891Z",
+    "roles": ["EMPLOYEE"]
   },
   "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...."
 }
 ```
 
 Same `Set-Cookie` behavior as register. Field meanings are identical to
-register's response — see that section.
+register's response — see that section. `user.roles` reflects the
+account's **current** role assignments at the moment of login (read fresh
+from `UserRole`), not whatever it was at registration — this is precisely
+what makes logging in again the fix for the "stale role" scenario
+documented in `GET /users`'s Edge Cases/Security Testing sections.
 
 ## 9. Error Responses
 
@@ -910,9 +970,10 @@ every time this endpoint changes.
   important endpoint to eventually rate-limit, given credential-stuffing
   risk. A known, acknowledged gap.
 - **JWT validation**: verify the issued `accessToken` actually decodes to
-  `{ sub, role, iat, exp }` and nothing more (no `email`/`name` in the
+  `{ sub, roles, iat, exp }` and nothing more (no `email`/`name` in the
   payload — see `handbook/07-jwt-access-refresh-tokens.md` for why the
-  payload is deliberately minimal).
+  payload is deliberately minimal; `roles` became an array in Feature 9,
+  previously a single `role` string).
 - **Sensitive data exposure**: confirm `password` never appears in the
   response, and confirm the submitted password never appears in
   `logs/*.log` (Morgan doesn't log bodies by default — verify this
@@ -923,7 +984,8 @@ every time this endpoint changes.
 
 ## 14. Database Impact
 
-- **Tables affected**: `User` (read only), `RefreshToken` (insert).
+- **Tables affected**: `User` (read), `UserRole`/`Role` (read, to build
+  the token payload's `roles` array), `RefreshToken` (insert).
 - **Rows inserted**: exactly 1 `RefreshToken` row on success; zero on
   failure.
 - **Rows updated/deleted**: none.
@@ -947,11 +1009,13 @@ auth.service.login
     │    └─ found → bcrypt.compare(password, user.password)
     │                 ├─ mismatch → 401 Invalid credentials
     │                 └─ match    → issueTokenPair(user)
+    │                                 ├─ rbacRepository.getRoleNamesForUser(user.id)
+    │                                 └─ jwt.signAccessToken/signRefreshToken ({ sub, roles })
     ↓
 controller sets refreshToken cookie, responds 200
 ```
 
-**No** `authMiddleware`/`requireRole` — public route.
+**No** `authMiddleware`/`requirePermission` — public route.
 
 ## 16. Performance Notes
 
@@ -1173,7 +1237,7 @@ controller sets the NEW refreshToken cookie, responds 200 { accessToken }
 ```
 
 **No** `authMiddleware` (this route has its own, cookie-based auth check,
-not the Bearer-token one) and **no** `requireRole`.
+not the Bearer-token one) and **no** `requirePermission`.
 
 ## 16. Performance Notes
 
@@ -1469,18 +1533,23 @@ token's signature and expiry, performed by `authMiddleware`.
 
 {
   "user": {
-    "id": "ebea9f2d-f331-40b8-968a-386dd88d4576",
-    "email": "jane.doe@example.com",
-    "name": "Jane Doe",
-    "role": "EMPLOYEE",
-    "createdAt": "2026-07-04T14:42:46.216Z",
-    "updatedAt": "2026-07-04T14:42:46.216Z"
+    "id": "cc5d98db-0a0a-49bb-ab80-1d18d295bbf8",
+    "email": "stale-check-1783226574582@example.com",
+    "name": "Stale Check",
+    "createdAt": "2026-07-05T04:42:54.720Z",
+    "updatedAt": "2026-07-05T04:42:54.720Z",
+    "roles": ["ADMIN"]
   }
 }
 ```
 
 Same field meanings as register/login's `user` object — see Endpoint 3.
-`password` is never present.
+`password` is never present. **`roles` here is always fresh from the
+database** — `getCurrentUser` re-queries `UserRole` on every call rather
+than trusting the access token's embedded `roles` claim (verified live:
+calling `/me` with a token issued _before_ a role change still correctly
+shows the _new_ role — see the edge case below for why this is a
+narrower guarantee than it sounds).
 
 ## 9. Error Responses
 
@@ -1511,10 +1580,10 @@ Same field meanings as register/login's `user` object — see Endpoint 3.
 
 ## 12. Edge Cases
 
-| Scenario                                                     | Expected Behavior                                                                                                                                                                                                                                                             |
-| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Token valid but issued for a role that has since changed     | Returns the **stale** role from the token payload, not the current database value — the response reflects what the _token_ says, not necessarily today's database state; see Endpoint 8 and `handbook/08-rbac.md` for the full explanation of this propagation-delay behavior |
-| Calling this immediately after `/refresh` with the new token | `200`, works exactly like any other valid access token — no special-casing                                                                                                                                                                                                    |
+| Scenario                                                          | Expected Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Token valid but the user's role has since changed in the database | Returns the **current** database role, not the token's stale claim — corrected in Feature 9 after being verified live (a prior version of this doc, written during Feature 8, incorrectly stated the opposite). `getCurrentUser` does its own `UserRole` lookup by `userId`; it never reads `req.user.roles` from the token at all. **This is specific to `/me`** — it does not mean role changes take effect immediately everywhere. `requirePermission` (used by `/users` and, from Stage B onward, the Employee routes) checks `req.user.roles`, which _is_ the token's embedded, stale-until-relogin claim — see Endpoint 8's edge case for that distinct, still-true behavior. |
+| Calling this immediately after `/refresh` with the new token      | `200`, works exactly like any other valid access token — no special-casing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## 13. Security Testing
 
@@ -1548,17 +1617,18 @@ Authorization: Bearer <accessToken>
 authMiddleware
     ├─ no/malformed header → 401 Authentication required
     ├─ jwt.verifyAccessToken throws → 401 Invalid or expired token
-    └─ valid → req.user = { id, role }
+    └─ valid → req.user = { id, roles }   (roles unused by this route)
     ↓
 auth.controller.me → auth.service.getCurrentUser(req.user.id)
     ├─ userRepository.findById → not found → 401 User no longer exists
-    └─ found → sanitizeUser(user)
+    ├─ rbacRepository.getRoleNamesForUser(userId)   [fresh DB read]
+    └─ sanitizeUser(user, roles)
     ↓
 200 { user }
 ```
 
-**No** `requireRole` on this route — any authenticated user, regardless
-of role, can call it.
+**No** `requirePermission` on this route — any authenticated user,
+regardless of role, can call it.
 
 ## 16. Performance Notes
 
@@ -1571,11 +1641,14 @@ of role, can call it.
 
 **Q: Why does this endpoint re-fetch the user from the database instead
 of just returning the token's payload directly?** The token's payload is
-intentionally minimal (`sub`, `role` only) — it doesn't carry `email` or
+intentionally minimal (`sub`, `roles` only) — it doesn't carry `email` or
 `name` at all, so there's nothing to "just return" from the token; a
-database read is required to get the full profile. This also means `/me`
-always reflects the _current_ `name`/`email` (just not necessarily the
-current `role`, which is baked into the token — see the edge case above).
+database read is required to get the full profile. Since Feature 9,
+`getCurrentUser` also re-resolves `roles` from `UserRole` rather than
+reusing `req.user.roles`, so `/me` reflects the current `name`/`email`
+**and** the current roles — the one place in this API where a role
+change is visible without a fresh login (see the edge case above for why
+that doesn't extend to authorization decisions elsewhere).
 
 ## 18. cURL Examples
 
@@ -1621,32 +1694,34 @@ I'm authenticated" check.
 ## 1. Endpoint Information
 
 ```
-Feature:            RBAC (roles & permissions)
+Feature:            RBAC Redesign (Feature 9)
 Endpoint:           List All Users
-Description:        Returns every registered user (admin-only)
+Description:        Returns every registered user (requires the `user:list` permission)
 Method:             GET
 URL:                /api/v1/users
 API Version:        v1
 Module:             modules/users
 Authentication:     Yes (Bearer access token)
-Authorization:      ADMIN role required
+Authorization:      `user:list` permission required (granted to ADMIN only, as seeded)
 Public/Protected:   Protected
 ```
 
 ## 2. Purpose
 
 - **Why it exists**: gives an administrator visibility into all
-  registered accounts — this project's first real, concrete use of the
-  `role` field and the first authorization-gated endpoint.
+  registered accounts — this project's first real, concrete use of a
+  permission check and the first authorization-gated endpoint.
 - **Business problem solved**: user management/oversight — "who is
   registered in this system."
-- **Expected callers**: only users with the `ADMIN` role.
+- **Expected callers**: any user whose roles resolve to the `user:list`
+  permission — only `ADMIN`, per the seeded `RolePermission` grants, not a
+  hard-coded role-name check anymore.
 
 ## 3. Request Headers
 
-| Header                                | Required | Notes                                                         |
-| ------------------------------------- | -------- | ------------------------------------------------------------- |
-| `Authorization: Bearer <accessToken>` | **Yes**  | Must belong to a user whose token payload has `role: "ADMIN"` |
+| Header                                | Required | Notes                                                                   |
+| ------------------------------------- | -------- | ----------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must belong to a user whose roles resolve to the `user:list` permission |
 
 ## 4. Path Parameters
 
@@ -1666,7 +1741,8 @@ None.
 ## 7. Validation Rules
 
 No body/query to validate. The only check is authorization —
-`req.user.role === 'ADMIN'`.
+`requirePermission('user:list')` resolves the caller's roles to a
+permission set and confirms `user:list` is granted.
 
 ## 8. Successful Response
 
@@ -1679,32 +1755,32 @@ No body/query to validate. The only check is authorization —
       "id": "52f83ced-efa7-4f6e-acb5-f82f19e0768e",
       "email": "jane.doe@example.com",
       "name": "Jane Doe",
-      "role": "EMPLOYEE",
       "createdAt": "2026-07-04T13:56:29.996Z",
-      "updatedAt": "2026-07-04T13:56:29.996Z"
+      "updatedAt": "2026-07-04T13:56:29.996Z",
+      "roles": []
     },
     {
-      "id": "178e6fbb-e1ef-4e20-b564-665b91691aaf",
-      "email": "rbac.employee@example.com",
-      "name": "RBAC Employee",
-      "role": "ADMIN",
-      "createdAt": "2026-07-04T18:07:34.179Z",
-      "updatedAt": "2026-07-04T18:09:00.275Z"
+      "id": "e1b07e0b-3c8d-4f7d-aa1f-fffec7648b21",
+      "email": "stagea-test1@example.com",
+      "name": "Stage A Test",
+      "createdAt": "2026-07-05T04:35:57.265Z",
+      "updatedAt": "2026-07-05T04:35:57.265Z",
+      "roles": ["ADMIN"]
     }
   ]
 }
 ```
 
-| Field   | Description                                                                                                                                                                                              |
-| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `users` | An array of every `User` row in the database, each sanitized (no `password`). Order is whatever the database returns by default (no explicit `ORDER BY` is applied — do not rely on a particular order). |
+| Field   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users` | An array of every `User` row in the database, each sanitized (no `password`), each with a `roles` array. Order is whatever the database returns by default (no explicit `ORDER BY` — do not rely on a particular order). Note `jane.doe@example.com` above: an account created **before** the Feature 9 migration, now showing `roles: []` — its old `role` enum value was dropped, not migrated, per the "clean cut-over" decision (see the Global Reference's Known Gaps). |
 
 ## 9. Error Responses
 
-| Status | Reason                                | Response (`message`)                                                                      | When                                                                    |
-| ------ | ------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `401`  | No/invalid/expired access token       | Same messages as `/auth/me` (`"Authentication required"` or `"Invalid or expired token"`) | `authMiddleware` runs first, identically to every other protected route |
-| `403`  | Valid token, but `role` isn't `ADMIN` | `"You do not have permission to perform this action"`                                     | Any authenticated `EMPLOYEE` or `MANAGER`                               |
+| Status | Reason                                         | Response (`message`)                                                                      | When                                                                    |
+| ------ | ---------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `401`  | No/invalid/expired access token                | Same messages as `/auth/me` (`"Authentication required"` or `"Invalid or expired token"`) | `authMiddleware` runs first, identically to every other protected route |
+| `403`  | Valid token, but roles don't grant `user:list` | `"You do not have permission to perform this action"`                                     | Any authenticated `EMPLOYEE` or `MANAGER`                               |
 
 ## 10. Postman Test Cases
 
@@ -1717,19 +1793,19 @@ No body/query to validate. The only check is authorization —
 
 ## 11. Negative Testing
 
-| Scenario                                                                         | Expected                                                                                                                                         |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| A `role` claim manually crafted into a forged JWT (signed with the wrong secret) | `401` — fails signature verification before authorization is even checked                                                                        |
-| Wrong HTTP method (`POST /users`)                                                | `404` — no route registered for `POST` on this path                                                                                              |
-| Attempting to pass `role=ADMIN` as a query string (`?role=ADMIN`)                | No effect — this endpoint reads `req.user.role` from the verified token exclusively; query parameters are not consulted for authorization at all |
+| Scenario                                                                          | Expected                                                                                                                                                            |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A `roles` claim manually crafted into a forged JWT (signed with the wrong secret) | `401` — fails signature verification before authorization is even checked                                                                                           |
+| Wrong HTTP method (`POST /users`)                                                 | `404` — no route registered for `POST` on this path                                                                                                                 |
+| Attempting to pass `role=ADMIN` as a query string (`?role=ADMIN`)                 | No effect — this endpoint resolves permissions from `req.user.roles` on the verified token exclusively; query parameters are not consulted for authorization at all |
 
 ## 12. Edge Cases
 
-| Scenario                                                                                                                   | Expected Behavior                                                                                                                                                                                                               |
-| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A user is promoted to `ADMIN` in the database, but calls this endpoint using their still-valid, pre-promotion access token | `403` — the token's `role` claim is frozen at issuance; a fresh login or `/refresh` is required before the promotion takes effect. **Directly observed and verified live** during Feature 8's own testing — not a hypothetical. |
-| Empty `User` table (no users registered at all — unlikely in practice since an `ADMIN` had to register first)              | `200`, `{ "users": [] }`                                                                                                                                                                                                        |
-| Very large number of users                                                                                                 | Currently returns all of them in one response — no pagination; a real scalability limit worth knowing before this table grows large                                                                                             |
+| Scenario                                                                                                                   | Expected Behavior                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A user is promoted to `ADMIN` in the database, but calls this endpoint using their still-valid, pre-promotion access token | `403` — the token's `roles` claim is frozen at issuance; a fresh login or `/refresh` is required before the promotion takes effect. **Directly observed and verified live**, both during Feature 8's original testing and again after the Feature 9 permission-based rewrite — the specific mechanism changed (role → permission resolution), but the stale-token propagation delay behaves identically. |
+| Empty `User` table (no users registered at all — unlikely in practice since an `ADMIN` had to register first)              | `200`, `{ "users": [] }`                                                                                                                                                                                                                                                                                                                                                                                 |
+| Very large number of users                                                                                                 | Currently returns all of them in one response — no pagination; a real scalability limit worth knowing before this table grows large                                                                                                                                                                                                                                                                      |
 
 ## 13. Security Testing
 
@@ -1759,7 +1835,11 @@ No body/query to validate. The only check is authorization —
 
 ## 14. Database Impact
 
-- **Tables affected**: `User` (read only, all rows).
+- **Tables affected**: `User` (read, all rows), `UserRole`+`Role` (read,
+  once per distinct role name to build the `roles` array for every user
+  in the list), `Role`/`Permission`/`RolePermission` (read, once per
+  distinct role name in `req.user.roles`, via the permission cache, to
+  authorize the request itself).
 - **Rows affected**: none inserted/updated/deleted.
 - **Transactions**: N/A.
 
@@ -1773,38 +1853,53 @@ Authorization: Bearer <accessToken>
     ↓
 authMiddleware
     ├─ fails → 401
-    └─ succeeds → req.user = { id, role }
+    └─ succeeds → req.user = { id, roles }
     ↓
-requireRole('ADMIN')
-    ├─ req.user.role !== 'ADMIN' → 403
-    └─ req.user.role === 'ADMIN' → next()
+requirePermission('user:list')
+    ├─ permissionCache.getPermissionKeysForRoles(req.user.roles)
+    │    └─ cache miss → rbacRepository.getPermissionKeysForRoles(...)
+    ├─ 'user:list' not granted → 403
+    └─ 'user:list' granted → next()
     ↓
 user.controller.list → user.service.listUsers()
     ↓
-user.repository.findAll() → sanitizeUser() applied to every record
+user.repository.findAll()
+    ├─ rbacRepository.getRoleNamesForUsers(userIds)   [one batched query]
+    └─ sanitizeUser(user, roles) applied to every record
     ↓
 200 { users: [...] }
 ```
 
 **Middleware for this endpoint specifically**: `authMiddleware` **then**
-`requireRole('ADMIN')` — the order is the entire security model of this
-route (see `handbook/08-rbac.md`).
+`requirePermission('user:list')` — the order is the entire security model
+of this route, same principle as Feature 8's `requireRole('ADMIN')`, now
+resolved through the permission tables instead of a hard-coded role name.
 
 ## 16. Performance Notes
 
 - `findAll()` is an unfiltered `SELECT *` — fine at current scale, but the
   first endpoint in this API where pagination will eventually matter.
-- No caching.
+- Role-name-to-permission resolution is cached in-memory (a few minutes'
+  TTL — see `src/utils/permissionCache.js`) — most requests hit the cache,
+  not the database, for the authorization check itself.
+- `listUsers()` batches its role lookup into one query for all users
+  (`getRoleNamesForUsers`), not one query per user — avoids an N+1 query
+  pattern that would otherwise scale linearly with the user count.
 - No index concern here since there's no `WHERE` clause at all (a full
   table scan is unavoidable for "return everyone," regardless of
   indexing).
 
 ## 17. Interview Notes
 
-See `handbook/08-rbac.md` in full. The single most important question for
-this endpoint: _"A user was just promoted to `ADMIN` — why can't they
-access this endpoint yet with their current session?"_ — answered fully
-there, and directly observed during this endpoint's own development.
+See `handbook/08-rbac.md` and the Feature 9 planning doc in full. The
+single most important question for this endpoint: _"A user was just
+promoted to `ADMIN` — why can't they access this endpoint yet with their
+current session?"_ — answered fully there, and directly observed during
+both this endpoint's original development and its Feature 9 rewrite. A
+second, Feature-9-specific question: _"Why check a permission key instead
+of a role name directly?"_ — because the set of things `ADMIN` can do is
+now data (`RolePermission` rows), not code; granting `MANAGER` the same
+`user:list` access later is a seed-data change, not a code change.
 
 ## 18. cURL Examples
 

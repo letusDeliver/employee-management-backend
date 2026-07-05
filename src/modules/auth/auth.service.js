@@ -2,20 +2,24 @@ import crypto from 'node:crypto';
 
 import bcrypt from 'bcryptjs';
 
+import prisma from '../../config/database.js';
 import userRepository from '../users/user.repository.js';
 import { sanitizeUser } from '../users/user.service.js';
+import rbacRepository from '../rbac/rbac.repository.js';
 import refreshTokenRepository from './refreshToken.repository.js';
 import jwt from '../../utils/jwt.js';
 import ConflictError from '../../errors/ConflictError.js';
 import UnauthorizedError from '../../errors/UnauthorizedError.js';
 
 const SALT_ROUNDS = 10;
+const DEFAULT_ROLE_NAME = 'EMPLOYEE';
 const DUMMY_HASH = bcrypt.hashSync('dummy-password-for-timing-safety', SALT_ROUNDS);
 
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
 const issueTokenPair = async (user) => {
-  const payload = { sub: user.id, role: user.role };
+  const roles = await rbacRepository.getRoleNamesForUser(user.id);
+  const payload = { sub: user.id, roles };
   const accessToken = jwt.signAccessToken(payload);
   const refreshToken = jwt.signRefreshToken(payload);
 
@@ -27,7 +31,7 @@ const issueTokenPair = async (user) => {
     expiresAt: new Date(exp * 1000),
   });
 
-  return { accessToken, refreshToken };
+  return { accessToken, refreshToken, roles };
 };
 
 const register = async ({ email, password, name }) => {
@@ -38,10 +42,23 @@ const register = async ({ email, password, name }) => {
   }
 
   const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
-  const user = await userRepository.create({ email, password: hashedPassword, name });
-  const tokens = await issueTokenPair(user);
 
-  return { user: sanitizeUser(user), ...tokens };
+  // User creation and default-role assignment happen in one transaction so
+  // a user can never exist without a role - an account with zero roles
+  // could pass no permission check, ever, which is a broken state, not
+  // just an inconvenience (unlike the token-issuance step below, which
+  // stays outside the transaction on purpose - see the Feature 9 planning
+  // doc for why that failure mode is acceptable and this one isn't).
+  const user = await prisma.$transaction(async (tx) => {
+    const createdUser = await userRepository.create({ email, password: hashedPassword, name }, tx);
+    const defaultRole = await rbacRepository.findRoleByName(DEFAULT_ROLE_NAME, tx);
+    await rbacRepository.assignRoleToUser(createdUser.id, defaultRole.id, tx);
+    return createdUser;
+  });
+
+  const { roles, ...tokens } = await issueTokenPair(user);
+
+  return { user: sanitizeUser(user, roles), ...tokens };
 };
 
 const login = async ({ email, password }) => {
@@ -58,9 +75,9 @@ const login = async ({ email, password }) => {
     throw new UnauthorizedError('Invalid credentials');
   }
 
-  const tokens = await issueTokenPair(user);
+  const { roles, ...tokens } = await issueTokenPair(user);
 
-  return { user: sanitizeUser(user), ...tokens };
+  return { user: sanitizeUser(user, roles), ...tokens };
 };
 
 const refresh = async (refreshToken) => {
@@ -104,7 +121,9 @@ const getCurrentUser = async (userId) => {
     throw new UnauthorizedError('User no longer exists');
   }
 
-  return sanitizeUser(user);
+  const roles = await rbacRepository.getRoleNamesForUser(userId);
+
+  return sanitizeUser(user, roles);
 };
 
 export default { register, login, refresh, logout, getCurrentUser };
