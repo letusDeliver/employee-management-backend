@@ -16,6 +16,7 @@ model User {
   refreshTokens RefreshToken[]
   userRoles     UserRole[]
   employees     Employee[]
+  auditLogs     AuditLog[]
 }
 
 model RefreshToken {
@@ -95,4 +96,20 @@ model Employee {
   // soft-deleted, which contradicts the soft-delete design.
   @@index([userId])
   @@index([managerId])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String
+  beforeData Json?
+  afterData  Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
 }

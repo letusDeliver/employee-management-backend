@@ -1,4 +1,7 @@
+import prisma from '../../config/database.js';
 import employeeRepository from './employee.repository.js';
+import auditLogRepository from '../audit/auditLog.repository.js';
+import { AUDIT_ACTIONS, AUDIT_ENTITY_TYPES } from '../audit/auditLog.constants.js';
 import ConflictError from '../../errors/ConflictError.js';
 import NotFoundError from '../../errors/NotFoundError.js';
 import ForbiddenError from '../../errors/ForbiddenError.js';
@@ -12,6 +15,12 @@ const assertNotSelfManaged = (employeeId, managerId) => {
     throw new BadRequestError('An employee cannot be their own manager');
   }
 };
+
+// Raw Prisma records contain a Decimal (salary) and Date instances -
+// neither is safe to pass directly into a Json column (verified live).
+// This produces the same plain, JSON-safe shape the API's own responses
+// already render (Decimal -> string, Date -> ISO string).
+const normalizeForAudit = (record) => JSON.parse(JSON.stringify(record));
 
 // Translates a Prisma foreign-key-violation (P2003) - e.g. a userId or
 // managerId that doesn't reference any real row - into a client-safe 400
@@ -29,7 +38,7 @@ const rethrowForeignKeyViolationAsBadRequest = (error) => {
   throw new BadRequestError(`${field}: references a record that does not exist`);
 };
 
-const createEmployee = async (data) => {
+const createEmployee = async (data, actor) => {
   if (data.userId) {
     const existing = await employeeRepository.findByUserId(data.userId);
 
@@ -39,7 +48,24 @@ const createEmployee = async (data) => {
   }
 
   try {
-    return await employeeRepository.create(data);
+    return await prisma.$transaction(async (tx) => {
+      const employee = await employeeRepository.create(data, tx);
+
+      await auditLogRepository.create(
+        {
+          actorId: actor.id,
+          action: AUDIT_ACTIONS.CREATE,
+          entityType: AUDIT_ENTITY_TYPES.EMPLOYEE,
+          entityId: employee.id,
+          beforeData: null,
+          afterData: normalizeForAudit(employee),
+          ipAddress: actor.ipAddress ?? null,
+        },
+        tx,
+      );
+
+      return employee;
+    });
   } catch (error) {
     // A concurrent request could slip past the pre-check above between the
     // read and the write - the database's own unique constraint on userId
@@ -119,7 +145,7 @@ const listEmployees = async (query) => {
   };
 };
 
-const updateEmployee = async (id, data) => {
+const updateEmployee = async (id, data, actor) => {
   const employee = await employeeRepository.findById(id);
 
   if (!employee) {
@@ -129,20 +155,52 @@ const updateEmployee = async (id, data) => {
   assertNotSelfManaged(id, data.managerId);
 
   try {
-    return await employeeRepository.update(id, data);
+    return await prisma.$transaction(async (tx) => {
+      const updated = await employeeRepository.update(id, data, tx);
+
+      await auditLogRepository.create(
+        {
+          actorId: actor.id,
+          action: AUDIT_ACTIONS.UPDATE,
+          entityType: AUDIT_ENTITY_TYPES.EMPLOYEE,
+          entityId: id,
+          beforeData: normalizeForAudit(employee),
+          afterData: normalizeForAudit(updated),
+          ipAddress: actor.ipAddress ?? null,
+        },
+        tx,
+      );
+
+      return updated;
+    });
   } catch (error) {
     rethrowForeignKeyViolationAsBadRequest(error);
   }
 };
 
-const softDeleteEmployee = async (id) => {
+const softDeleteEmployee = async (id, actor) => {
   const employee = await employeeRepository.findById(id);
 
   if (!employee) {
     throw new NotFoundError('Employee not found');
   }
 
-  await employeeRepository.softDelete(id);
+  await prisma.$transaction(async (tx) => {
+    await employeeRepository.softDelete(id, tx);
+
+    await auditLogRepository.create(
+      {
+        actorId: actor.id,
+        action: AUDIT_ACTIONS.DELETE,
+        entityType: AUDIT_ENTITY_TYPES.EMPLOYEE,
+        entityId: id,
+        beforeData: normalizeForAudit(employee),
+        afterData: null,
+        ipAddress: actor.ipAddress ?? null,
+      },
+      tx,
+    );
+  });
 };
 
 export default {

@@ -1,7 +1,10 @@
 import employeeService from './employee.service.js';
 
 const create = async (req, res) => {
-  const employee = await employeeService.createEmployee(req.body);
+  const employee = await employeeService.createEmployee(req.body, {
+    id: req.user.id,
+    ipAddress: req.ip,
+  });
   res.status(201).json({ employee });
 };
 
@@ -19,12 +22,15 @@ const getById = async (req, res) => {
 };
 
 const update = async (req, res) => {
-  const employee = await employeeService.updateEmployee(req.params.id, req.body);
+  const employee = await employeeService.updateEmployee(req.params.id, req.body, {
+    id: req.user.id,
+    ipAddress: req.ip,
+  });
   res.status(200).json({ employee });
 };
 
 const remove = async (req, res) => {
-  await employeeService.softDeleteEmployee(req.params.id);
+  await employeeService.softDeleteEmployee(req.params.id, { id: req.user.id, ipAddress: req.ip });
   res.status(200).json({ message: 'Employee deleted successfully' });
 };
 
