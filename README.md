@@ -68,7 +68,15 @@ progress log.
    npx prisma migrate dev
    ```
 
-5. **Start the dev server**
+5. **Seed roles and permissions** — required for RBAC to work at all
+   (registration assigns a default `EMPLOYEE` role, which must already
+   exist):
+
+   ```bash
+   npx prisma db seed
+   ```
+
+6. **Start the dev server**
    ```bash
    npm run dev
    ```
@@ -89,16 +97,25 @@ progress log.
 
 All routes are mounted under `/api/v1`.
 
-| Method | Path             | Auth Required              | Description                                                       |
-| ------ | ---------------- | -------------------------- | ----------------------------------------------------------------- |
-| `GET`  | `/health`        | No                         | Liveness check — is the process running                           |
-| `GET`  | `/ready`         | No                         | Readiness check — is the database reachable                       |
-| `POST` | `/auth/register` | No                         | Create an account, receive an access token + refresh-token cookie |
-| `POST` | `/auth/login`    | No                         | Authenticate, receive an access token + refresh-token cookie      |
-| `POST` | `/auth/refresh`  | Refresh-token cookie       | Rotate the refresh token, issue a new access token                |
-| `POST` | `/auth/logout`   | Refresh-token cookie       | Revoke the refresh token server-side                              |
-| `GET`  | `/auth/me`       | Access token (Bearer)      | Return the current authenticated user                             |
-| `GET`  | `/users`         | Access token, `ADMIN` role | List all registered users                                         |
+| Method   | Path             | Auth Required                                          | Description                                                       |
+| -------- | ---------------- | ------------------------------------------------------ | ----------------------------------------------------------------- |
+| `GET`    | `/health`        | No                                                     | Liveness check — is the process running                           |
+| `GET`    | `/ready`         | No                                                     | Readiness check — is the database reachable                       |
+| `POST`   | `/auth/register` | No                                                     | Create an account, receive an access token + refresh-token cookie |
+| `POST`   | `/auth/login`    | No                                                     | Authenticate, receive an access token + refresh-token cookie      |
+| `POST`   | `/auth/refresh`  | Refresh-token cookie                                   | Rotate the refresh token, issue a new access token                |
+| `POST`   | `/auth/logout`   | Refresh-token cookie                                   | Revoke the refresh token server-side                              |
+| `GET`    | `/auth/me`       | Access token (Bearer)                                  | Return the current authenticated user                             |
+| `GET`    | `/users`         | Access token, `user:list` permission                   | List all registered users                                         |
+| `POST`   | `/employees`     | Access token, `employee:create` permission             | Create an Employee (HR) record                                    |
+| `GET`    | `/employees`     | Access token, `employee:read:any` permission           | List all non-deleted Employee records                             |
+| `GET`    | `/employees/:id` | Access token, `employee:read:any` or `:own` permission | Get one Employee record (own record allowed for `EMPLOYEE`)       |
+| `PATCH`  | `/employees/:id` | Access token, `employee:update:any` permission         | Partially update an Employee record                               |
+| `DELETE` | `/employees/:id` | Access token, `employee:delete:any` permission         | Soft-delete an Employee record                                    |
+
+Authorization is permission-based (see `handbook/API_ENDPOINTS.md`), not
+role-based — `ADMIN`/`MANAGER`/`EMPLOYEE` are role names seeded with a
+specific set of permissions, not hard-coded checks.
 
 ## Project Structure
 
@@ -107,8 +124,8 @@ src/
 ├── app.js, server.js        # Express app assembly + process lifecycle
 ├── config/                  # env.js, database.js, logger.js — one shared instance each
 ├── errors/                  # Typed AppError hierarchy
-├── middlewares/              # auth, validate, error, notFound
-├── modules/                  # Feature-first domain modules (auth, users, employees)
+├── middlewares/              # auth, permission (RBAC), validate, error, notFound
+├── modules/                  # Feature-first domain modules (auth, users, rbac, employees)
 ├── routes/                   # Router aggregation
 └── utils/                    # asyncHandler, jwt
 
@@ -133,7 +150,9 @@ planning/                     # Approved action plan for each feature
 - [x] User model & Auth: Register/Login
 - [x] JWT Access + Refresh Tokens
 - [x] RBAC (roles & permissions)
-- [ ] Employee CRUD
+- [x] Employee CRUD
+- [ ] Employee search, pagination, filtering, sorting
+- [ ] Audit logs
 - [ ] File uploads (Multer + Cloudinary)
 - [ ] Swagger API docs
 - [ ] Dockerization

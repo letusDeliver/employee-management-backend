@@ -15,6 +15,7 @@ model User {
   updatedAt     DateTime       @updatedAt
   refreshTokens RefreshToken[]
   userRoles     UserRole[]
+  employees     Employee[]
 }
 
 model RefreshToken {
@@ -68,4 +69,30 @@ model RolePermission {
 
   @@id([roleId, permissionId])
   @@index([permissionId])
+}
+
+model Employee {
+  id            String     @id @default(uuid())
+  userId        String?
+  user          User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  department    String
+  jobTitle      String
+  salary        Decimal
+  dateOfJoining DateTime
+  managerId     String?
+  manager       Employee?  @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: SetNull)
+  reports       Employee[] @relation("EmployeeManager")
+  deletedAt     DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  // No @unique on userId: Prisma's schema DSL can't express a *partial*
+  // unique constraint (scoped to non-deleted rows), so the real
+  // uniqueness guarantee is a hand-written partial unique index in the
+  // migration SQL instead - see migration
+  // add_partial_unique_index_employee_userid. A plain @unique here would
+  // permanently block re-using a userId after its Employee record is
+  // soft-deleted, which contradicts the soft-delete design.
+  @@index([userId])
+  @@index([managerId])
 }
