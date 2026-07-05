@@ -13,7 +13,17 @@ import BadRequestError from './errors/BadRequestError.js';
 
 const app = express();
 
-app.use(helmet());
+// Swagger UI's HTML page relies on inline <script>/<style> tags, which
+// Helmet's default Content-Security-Policy blocks (a well-documented
+// helmet + swagger-ui-express conflict) - relax CSP only for that one
+// path, only when it's actually mounted, leaving every other response's
+// CSP untouched.
+app.use((req, res, next) => {
+  if (env.ENABLE_SWAGGER && req.path.startsWith('/api-docs')) {
+    return helmet({ contentSecurityPolicy: false })(req, res, next);
+  }
+  return helmet()(req, res, next);
+});
 
 app.use(
   cors({
@@ -47,6 +57,11 @@ app.use((err, req, res, next) => {
 });
 
 app.use('/api/v1', router);
+
+if (env.ENABLE_SWAGGER) {
+  const { default: swaggerRouter } = await import('./docs/swagger.routes.js');
+  app.use(swaggerRouter);
+}
 
 app.use(notFoundMiddleware);
 app.use(errorMiddleware);

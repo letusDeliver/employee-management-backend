@@ -24,6 +24,7 @@ feature ships.
 10. [Employee Search, Pagination, Filtering, Sorting](./10-employee-search-pagination-filtering-sorting.md)
 11. [Audit Logs](./11-audit-logs.md)
 12. [File Uploads (Multer + Cloudinary)](./12-file-uploads.md)
+13. [Swagger / OpenAPI Docs](./13-swagger-api-docs.md)
 
 ## Stack
 

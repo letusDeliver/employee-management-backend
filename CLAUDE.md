@@ -97,7 +97,7 @@ No skipping sections. No rushing. Stop and wait for approval after each feature 
 - [x] Employee search, pagination, filtering, sorting
 - [x] Audit logs
 - [x] File uploads (Multer + Cloudinary)
-- [ ] Swagger API docs
+- [x] Swagger API docs
 - [ ] Dockerization
 - [ ] Testing strategy (unit/integration)
 
@@ -520,3 +520,82 @@ document), and — after both fixes — real Cloudinary-side deletion
 confirmed via direct CDN fetch and the Admin API, not just a non-error
 API response. See `planning/feature-12-file-uploads.md` for the approved
 plan, including the full pre-implementation design review.)_
+
+_(Feature 13 — Swagger / OpenAPI Docs — completed, on branch
+`feature/13-swagger-api-docs`. `@asteasolutions/zod-to-openapi@8.5.0` and
+`swagger-ui-express@5.0.1` installed — both compatibility-checked against
+the live npm registry before installing (`zod-to-openapi@8` requires
+`zod: ^4.0.0`, matching this project's `zod@4.4.3`; `swagger-ui-express@5`
+supports Express 5). Confirmed decision: request schemas are generated
+directly from the **existing Zod validation schemas** via a light,
+non-invasive `.meta({ id, description, example })` annotation on the same
+schema objects (verified in a scratch script first, per the established
+habit) — the validation schema stays the single source of truth, never a
+hand-written duplicate. Response schemas have no Zod counterpart in this
+API (no output-validation library exists), so `src/docs/components/
+schemas.js` hand-mirrors the real Prisma models — two easy-to-miss fields
+were caught and pinned during the pre-implementation review before any
+schema code was written: `Employee.salary` documents as a **string**
+(Prisma `Decimal` serializes to a JSON string, not a number — the same
+fact `normalizeForAudit()` from Feature 11 was built around) and
+`UserPublicSchema` includes `roles` (attached by `sanitizeUser()`, not a
+raw Prisma column). Went through the same review rhythm as Feature 12: a
+full pre-implementation design review across 10 dimensions (architecture,
+Zod integration, response docs, auth, organization, environment/security,
+DX, doc synchronization, scalability, verification plan), producing a
+4-item checklist (explicit `*.docs.js` import ordering, the two pinned
+field types above, cross-checking each path's `security` against its real
+`*.routes.js` middleware chain rather than authoring from memory, and a
+second verification case for the **query**-validated branch of
+`validateMiddleware`, not just the body-validated one) — folded into
+`planning/feature-13-swagger-api-docs.md` before implementation began.
+
+New `src/docs/` (registry, generator, security schemes `bearerAuth`/
+`cookieAuth`, reusable `ErrorResponseSchema`/response-builders, hand-
+written response schemas) plus one `<module>.docs.js` file per module
+(`auth`, `users`, `employees`, `employeeDocument`) registering that
+module's paths — mirrors the existing feature-first `src/modules/`
+organization, so a future module adds one file, not a change to the
+shared docs machinery. `env.js` gained `ENABLE_SWAGGER`, off by default in
+every environment; when disabled, `/api-docs`/`/api-docs.json` don't exist
+at all and 404 exactly like any other unmapped route.
+
+**Two real bugs were found live during this feature's own verification,
+not by code review or the design review** (the same honest-disclosure
+treatment as every prior feature's live-testing findings): (1)
+`z.coerce.boolean()` — the originally-planned implementation for
+`ENABLE_SWAGGER` — is a genuine footgun for environment variables: it
+calls JavaScript's `Boolean()` constructor internally, which treats **any
+non-empty string, including the literal `"false"`, as `true`**. Setting
+`ENABLE_SWAGGER=false` was silently still enabling Swagger UI until this
+was caught by actually testing that exact case rather than trusting the
+schema; fixed with an explicit `z.string().optional().default('false')
+.transform((val) => val.toLowerCase() === 'true')`, so only the literal
+string `"true"` (case-insensitive) is ever treated as enabled. (2) Helmet's
+default Content-Security-Policy — already applied globally since Feature
+2 — blocks Swagger UI's inline `<script>`/`<style>` tags outright (a
+well-documented Helmet/`swagger-ui-express` conflict); fixed by relaxing
+CSP only for requests under `/api-docs`, and only when `ENABLE_SWAGGER` is
+actually true, leaving every other route's CSP header completely
+untouched — confirmed live by diffing response headers on `/api-docs` vs.
+`/health` in the same running server. Verified live end-to-end:
+`ENABLE_SWAGGER=false` (and fully unset) both correctly 404 `/api-docs`
+with the exact same shape/stack-trace pattern as any other unmapped
+route; with it enabled, `/api-docs.json` produces a valid OpenAPI 3.0
+document (13 paths, all 9 named schema components, both security
+schemes); a real body-validation failure (`POST /auth/register`) and a
+real query-validation failure (`GET /employees?limit=999`, exercising the
+Express-5-specific `req.validatedQuery` branch from Feature 10) both
+produced the exact `{status:'error', message}` shape documented; a fresh
+test account promoted to `ADMIN` via a throwaway DB script (same
+established pattern as Features 8/9) proved the Authorize-flow
+equivalent (login → Bearer token → previously-`401` `/auth/me` now
+succeeds) and the permission-gated `403` path, both against the real
+running server. Honestly noted: this environment has no browser-
+automation tool available, so the Swagger UI's Authorize button itself
+was verified via the equivalent direct HTTP calls it performs, not by
+driving an actual browser — the same class of verification-environment
+gap already disclosed for Windows `SIGTERM` delivery and browser-only
+`SameSite` cookie enforcement in earlier features. See
+`planning/feature-13-swagger-api-docs.md` for the approved plan,
+including the pre-implementation design review and checklist.)_

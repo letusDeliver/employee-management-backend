@@ -6,12 +6,29 @@ API. Updated after every feature that adds or modifies an endpoint (see
 from the actual running server — not hand-written from memory — so it can
 be used to test the API in Postman without reading any source code.
 
-**Last synchronized with**: Feature 12 (File uploads — profile pictures +
-employee documents). Covers all 18 endpoints that exist as of this
-feature — the 13 from Feature 9/10/11 plus 5 new ones: `POST`/`DELETE
+**Last synchronized with**: Feature 13 (Swagger/OpenAPI docs). No endpoints
+were added or changed by Feature 13 — it added an interactive, machine-
+readable reference (`/api-docs`) alongside this document, not a
+replacement for it. Still covers all 18 endpoints introduced through
+Feature 12 (File uploads — profile pictures + employee documents): the 13
+from Feature 9/10/11 plus 5 from Feature 12 — `POST`/`DELETE
 /users/me/profile-picture` and `POST`/`GET`/`DELETE
 /employees/:id/documents`. `GET /auth/me` and `GET /users` also now
 include `profileImageUrl`/`profileImagePublicId` in the `user` shape.
+
+### Interactive Reference (Swagger UI)
+
+As of Feature 13, every endpoint in this document also has a machine-
+readable OpenAPI description, browsable and directly testable (including
+JWT Bearer auth via the **Authorize** button) at `GET /api-docs` — the raw
+OpenAPI 3.0 document is at `GET /api-docs.json`. Both are off by default
+in every environment (`ENABLE_SWAGGER=false` unless explicitly set to
+`true`) and, when off, are indistinguishable from any other unmapped route
+(a normal `404`, not a distinct "disabled" response). Swagger is a quick
+interactive companion to this document, not a replacement for it — request/
+response shapes are generated from the same Zod validation schemas and
+real Prisma models this document describes, but the deep security/negative-
+testing/edge-case material below only lives here.
 
 ---
 
@@ -187,6 +204,18 @@ in Postman's cookie jar once register/login/refresh sets it.
   one extra orphaned/stale Cloudinary asset, never data corruption. Same
   honest treatment as other concurrency caveats already accepted
   elsewhere in this project.
+- **Swagger's response schemas are hand-written, not derived** (Feature 13) — Zod covers every _request_ shape shown in `/api-docs`, but this API
+  has no output-validation library, so `/api-docs`'s response schemas
+  (`User`, `Employee`, `EmployeeDocument`, pagination) are manually mirrored
+  from the real Prisma models and checked against a live response once,
+  not continuously guaranteed to match if those models change later — this
+  document's own "Successful Response" sections remain the actual source
+  of truth if the two ever disagree.
+- **`/api-docs`'s Content-Security-Policy is fully disabled on that one
+  path** (Feature 13) — required for Swagger UI's inline scripts/styles to
+  render at all (a well-documented Helmet/swagger-ui-express conflict);
+  every other route keeps its normal CSP untouched, and this only applies
+  when `ENABLE_SWAGGER=true` in the first place.
 
 ---
 
