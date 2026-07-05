@@ -6,8 +6,8 @@ const create = async (req, res) => {
 };
 
 const list = async (req, res) => {
-  const employees = await employeeService.listEmployees();
-  res.status(200).json({ employees });
+  const { employees, pagination } = await employeeService.listEmployees(req.validatedQuery);
+  res.status(200).json({ employees, pagination });
 };
 
 const getById = async (req, res) => {

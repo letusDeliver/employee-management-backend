@@ -97,21 +97,21 @@ progress log.
 
 All routes are mounted under `/api/v1`.
 
-| Method   | Path             | Auth Required                                          | Description                                                       |
-| -------- | ---------------- | ------------------------------------------------------ | ----------------------------------------------------------------- |
-| `GET`    | `/health`        | No                                                     | Liveness check — is the process running                           |
-| `GET`    | `/ready`         | No                                                     | Readiness check — is the database reachable                       |
-| `POST`   | `/auth/register` | No                                                     | Create an account, receive an access token + refresh-token cookie |
-| `POST`   | `/auth/login`    | No                                                     | Authenticate, receive an access token + refresh-token cookie      |
-| `POST`   | `/auth/refresh`  | Refresh-token cookie                                   | Rotate the refresh token, issue a new access token                |
-| `POST`   | `/auth/logout`   | Refresh-token cookie                                   | Revoke the refresh token server-side                              |
-| `GET`    | `/auth/me`       | Access token (Bearer)                                  | Return the current authenticated user                             |
-| `GET`    | `/users`         | Access token, `user:list` permission                   | List all registered users                                         |
-| `POST`   | `/employees`     | Access token, `employee:create` permission             | Create an Employee (HR) record                                    |
-| `GET`    | `/employees`     | Access token, `employee:read:any` permission           | List all non-deleted Employee records                             |
-| `GET`    | `/employees/:id` | Access token, `employee:read:any` or `:own` permission | Get one Employee record (own record allowed for `EMPLOYEE`)       |
-| `PATCH`  | `/employees/:id` | Access token, `employee:update:any` permission         | Partially update an Employee record                               |
-| `DELETE` | `/employees/:id` | Access token, `employee:delete:any` permission         | Soft-delete an Employee record                                    |
+| Method   | Path             | Auth Required                                          | Description                                                                                                                                                                                                           |
+| -------- | ---------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/health`        | No                                                     | Liveness check — is the process running                                                                                                                                                                               |
+| `GET`    | `/ready`         | No                                                     | Readiness check — is the database reachable                                                                                                                                                                           |
+| `POST`   | `/auth/register` | No                                                     | Create an account, receive an access token + refresh-token cookie                                                                                                                                                     |
+| `POST`   | `/auth/login`    | No                                                     | Authenticate, receive an access token + refresh-token cookie                                                                                                                                                          |
+| `POST`   | `/auth/refresh`  | Refresh-token cookie                                   | Rotate the refresh token, issue a new access token                                                                                                                                                                    |
+| `POST`   | `/auth/logout`   | Refresh-token cookie                                   | Revoke the refresh token server-side                                                                                                                                                                                  |
+| `GET`    | `/auth/me`       | Access token (Bearer)                                  | Return the current authenticated user                                                                                                                                                                                 |
+| `GET`    | `/users`         | Access token, `user:list` permission                   | List all registered users                                                                                                                                                                                             |
+| `POST`   | `/employees`     | Access token, `employee:create` permission             | Create an Employee (HR) record                                                                                                                                                                                        |
+| `GET`    | `/employees`     | Access token, `employee:read:any` permission           | List non-deleted Employee records — paginated (`page`/`limit`), searchable (`search`, across Employee fields + linked User name/email), filterable (`department`/`jobTitle`/`managerId`), sortable (`sortBy`/`order`) |
+| `GET`    | `/employees/:id` | Access token, `employee:read:any` or `:own` permission | Get one Employee record (own record allowed for `EMPLOYEE`)                                                                                                                                                           |
+| `PATCH`  | `/employees/:id` | Access token, `employee:update:any` permission         | Partially update an Employee record                                                                                                                                                                                   |
+| `DELETE` | `/employees/:id` | Access token, `employee:delete:any` permission         | Soft-delete an Employee record                                                                                                                                                                                        |
 
 Authorization is permission-based (see `handbook/API_ENDPOINTS.md`), not
 role-based — `ADMIN`/`MANAGER`/`EMPLOYEE` are role names seeded with a
@@ -151,7 +151,7 @@ planning/                     # Approved action plan for each feature
 - [x] JWT Access + Refresh Tokens
 - [x] RBAC (roles & permissions)
 - [x] Employee CRUD
-- [ ] Employee search, pagination, filtering, sorting
+- [x] Employee search, pagination, filtering, sorting
 - [ ] Audit logs
 - [ ] File uploads (Multer + Cloudinary)
 - [ ] Swagger API docs

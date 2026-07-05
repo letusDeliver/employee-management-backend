@@ -6,11 +6,10 @@ API. Updated after every feature that adds or modifies an endpoint (see
 from the actual running server — not hand-written from memory — so it can
 be used to test the API in Postman without reading any source code.
 
-**Last synchronized with**: Feature 9, Stage B (Employee CRUD). Covers all
-13 endpoints that exist as of this feature — the original 8 plus 5 new
-`Employee` endpoints. Stage A replaced the authorization mechanism
-underneath four existing endpoints (`/auth/register`, `/auth/login`,
-`/auth/me`, `/users`); Stage B adds `/employees` and `/employees/:id`.
+**Last synchronized with**: Feature 10 (Employee search, pagination,
+filtering, sorting). Same 13 endpoints as Feature 9 — this feature only
+changes `GET /employees`'s query parameters, response shape, and
+underlying query; no endpoints added or removed.
 
 ---
 
@@ -142,9 +141,10 @@ in Postman's cookie jar once register/login/refresh sets it.
   is manually assigned to it via a direct database script — accounts
   registered after the migration are unaffected, since `register()` always
   assigns the default `EMPLOYEE` role.
-- **`GET /employees` has no pagination, searching, filtering, or
-  sorting** — every call returns the entire non-deleted `Employee` table.
-  Deliberately deferred to **Feature 10**, not an oversight.
+- **`GET /users` still has no pagination** — the identical gap `GET
+/employees` had before Feature 10 closed it there; out of scope for
+  Feature 10, a candidate for its own future pass if the user count ever
+  grows large enough to matter.
 - **`Employee` records ship with no audit trail** — creates, updates, and
   soft-deletes are not logged anywhere yet. Deliberately deferred to
   **Feature 11** (`AuditLog`), which will retrofit audit-log calls into
@@ -2261,9 +2261,9 @@ Requires `{{accessToken}}` to resolve to `employee:create` (`ADMIN`/
 ## 1. Endpoint Information
 
 ```
-Feature:            Employee CRUD (Feature 9, Stage B)
+Feature:            Employee Search, Pagination, Filtering, Sorting (Feature 10)
 Endpoint:           List Employees
-Description:        Returns every non-deleted Employee record
+Description:        Returns a paginated, searchable, filterable, sortable slice of non-deleted Employee records
 Method:             GET
 URL:                /api/v1/employees
 API Version:        v1
@@ -2276,9 +2276,11 @@ Public/Protected:   Protected
 ## 2. Purpose
 
 - **Why it exists**: gives HR/management visibility into the full
-  workforce.
+  workforce, at a scale where returning every row in one response (the
+  Feature 9 behavior) stops being practical.
 - **Business problem solved**: "who works here, in what role, reporting
-  to whom."
+  to whom" — plus, as of this feature, "find a specific person or group
+  quickly" and "browse a bounded page at a time."
 - **Expected callers**: `ADMIN`/`MANAGER` only — a plain `EMPLOYEE` never
   reaches this endpoint (they only ever hold `employee:read:own`, which
   this route doesn't accept).
@@ -2295,9 +2297,20 @@ None.
 
 ## 5. Query Parameters
 
-**None currently implemented** — no `page`/`limit`/`search`/`filter`/
-`sort` support yet. Every call returns the entire non-deleted `Employee`
-table. Deliberately deferred to Feature 10 (see Known Gaps).
+| Name         | Type   | Default     | Required | Allowed Values                                                   | Notes                                                                                                                                                                        |
+| ------------ | ------ | ----------- | -------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `page`       | number | `1`         | No       | Integer `>= 1`                                                   | `0` or negative → `400`.                                                                                                                                                     |
+| `limit`      | number | `10`        | No       | Integer `1`-`100`                                                | `0`, negative, or `> 100` → `400` (rejected, not silently clamped).                                                                                                          |
+| `search`     | string | _(none)_    | No       | Any string                                                       | Case-insensitive partial match across `department`, `jobTitle`, the linked `User.name`, and `User.email`. An empty `search=` is treated identically to omitting it entirely. |
+| `department` | string | _(none)_    | No       | Any string                                                       | **Exact** match, case-insensitive (not a partial match — use `search` for partial).                                                                                          |
+| `jobTitle`   | string | _(none)_    | No       | Any string                                                       | Same as `department`.                                                                                                                                                        |
+| `managerId`  | string | _(none)_    | No       | Valid UUID                                                       | Exact match. Invalid UUID format → `400`.                                                                                                                                    |
+| `sortBy`     | string | `createdAt` | No       | `department`, `jobTitle`, `salary`, `dateOfJoining`, `createdAt` | Whitelisted — any other value → `400`, never passed through to Prisma's `orderBy` directly.                                                                                  |
+| `order`      | string | `desc`      | No       | `asc`, `desc`                                                    | Any other value → `400`.                                                                                                                                                     |
+
+All filters (`department`, `jobTitle`, `managerId`) combine with **AND**;
+`search` contributes one **OR** block across its four fields, itself
+ANDed with whatever filters are also present.
 
 ## 6. Request Body
 
@@ -2305,8 +2318,11 @@ None.
 
 ## 7. Validation Rules
 
-No body/query to validate — only the `employee:read:any` permission
-check.
+Enforced by `src/modules/employees/employee.validation.js`'s
+`listEmployeesQuerySchema` (Zod), via `validateMiddleware(schema, 'query')`
+— the first endpoint in this API to validate query parameters rather than
+a request body. Every field above is coerced/bounded/whitelisted by that
+schema before the service ever sees it; nothing reaches Prisma unvalidated.
 
 ## 8. Successful Response
 
@@ -2316,55 +2332,83 @@ check.
 {
   "employees": [
     {
-      "id": "954690da-d433-4b7e-9e04-1c7be03c36bd",
+      "id": "ecb69110-8183-4769-a98b-8b0f69bf2f6a",
       "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
-      "department": "Engineering",
-      "jobTitle": "Backend Developer",
-      "salary": "75000",
-      "dateOfJoining": "2024-01-15T00:00:00.000Z",
+      "department": "Support",
+      "jobTitle": "Specialist",
+      "salary": "55000",
+      "dateOfJoining": "2024-03-01T00:00:00.000Z",
       "managerId": null,
       "deletedAt": null,
-      "createdAt": "2026-07-05T04:52:52.814Z",
-      "updatedAt": "2026-07-05T04:52:52.814Z"
+      "createdAt": "2026-07-05T05:58:39.416Z",
+      "updatedAt": "2026-07-05T05:58:39.416Z"
     }
-  ]
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 14,
+    "totalPages": 2
+  }
 }
 ```
 
-| Field       | Description                                                                                                   |
-| ----------- | ------------------------------------------------------------------------------------------------------------- |
-| `employees` | An array of every `Employee` row where `deletedAt IS NULL`. No explicit `ORDER BY` — do not rely on ordering. |
+Field notes: `employees` is up to `limit` non-deleted rows matching the
+search/filters, ordered by `sortBy`/`order` plus an unconditional
+secondary `id ASC` tiebreaker for deterministic ordering across repeated/
+paged calls. `pagination.page`/`pagination.limit` echo the request.
+`pagination.total` is the count across **all** matching pages, not just
+this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 
 ## 9. Error Responses
 
-| Status | Reason                                | Response (`message`)                                  | When                              |
-| ------ | ------------------------------------- | ----------------------------------------------------- | --------------------------------- |
-| `401`  | No/invalid/expired access token       | Same as every other protected endpoint                | `authMiddleware` failure          |
-| `403`  | Roles don't grant `employee:read:any` | `"You do not have permission to perform this action"` | Authenticated as plain `EMPLOYEE` |
+| Status | Reason                                | Response (`message`)                                  | When                                      |
+| ------ | ------------------------------------- | ----------------------------------------------------- | ----------------------------------------- |
+| `400`  | `page`/`limit` out of bounds          | Zod's bounds-violation message                        | `page < 1`, `limit < 1`, or `limit > 100` |
+| `400`  | Invalid `managerId`                   | Zod's UUID-format message                             | Malformed UUID supplied                   |
+| `400`  | Invalid `sortBy`                      | Zod's enum message listing the allowed values         | Any value outside the whitelist           |
+| `400`  | Invalid `order`                       | Zod's enum message                                    | Any value other than `asc`/`desc`         |
+| `401`  | No/invalid/expired access token       | Same as every other protected endpoint                | `authMiddleware` failure                  |
+| `403`  | Roles don't grant `employee:read:any` | `"You do not have permission to perform this action"` | Authenticated as plain `EMPLOYEE`         |
 
 ## 10. Postman Test Cases
 
-| #   | Case                    | Expected     |
-| --- | ----------------------- | ------------ |
-| 1   | Valid `ADMIN`/`MANAGER` | `200`, array |
-| 2   | Valid `EMPLOYEE` token  | `403`        |
-| 3   | No token                | `401`        |
+| #   | Case                                  | Query                                  | Expected                                                     |
+| --- | ------------------------------------- | -------------------------------------- | ------------------------------------------------------------ |
+| 1   | Default call                          | _(none)_                               | `200`, `page: 1`, `limit: 10`                                |
+| 2   | Explicit pagination                   | `?page=2&limit=3`                      | `200`, second page of 3, distinct from page 1                |
+| 3   | Out-of-bounds `page`                  | `?page=0`                              | `400`                                                        |
+| 4   | Out-of-bounds `limit`                 | `?limit=0` or `?limit=500`             | `400`                                                        |
+| 5   | Empty search                          | `?search=`                             | `200`, identical `total` to no `search` at all               |
+| 6   | Search by department (Employee field) | `?search=Sales`                        | `200`, only `Sales`-department rows                          |
+| 7   | Search by linked user's name          | `?search=<a linked User's name>`       | `200`, matches via the `user.name` relation                  |
+| 8   | Exact filter, wrong case              | `?department=engineering`              | `200`, still matches `"Engineering"` rows (case-insensitive) |
+| 9   | Sort ascending vs. descending         | `?sortBy=salary&order=asc` / `...desc` | `200`, orders reversed between the two calls                 |
+| 10  | Invalid `sortBy`                      | `?sortBy=notARealColumn`               | `400`                                                        |
+| 11  | As `EMPLOYEE` token                   | _(any)_                                | `403`                                                        |
+| 12  | No token                              | _(any)_                                | `401`                                                        |
 
 ## 11. Negative Testing
 
-| Scenario                                                                 | Expected                                                                                                  |
-| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| Wrong HTTP method (`POST /employees` with no body handled by this route) | `405`/routed to the `POST` handler instead, not this one — confirm the correct handler runs for each verb |
-| Tampered/expired JWT                                                     | `401`                                                                                                     |
-| Attempting `?role=ADMIN` or similar query tampering                      | No effect — authorization reads `req.user.roles` from the verified token only                             |
+| Scenario                                                                 | Expected                                                                                                                        |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Wrong HTTP method (`POST /employees` with no body handled by this route) | `405`/routed to the `POST` handler instead, not this one — confirm the correct handler runs for each verb                       |
+| Tampered/expired JWT                                                     | `401`                                                                                                                           |
+| Attempting `?role=ADMIN` or similar query tampering                      | No effect — authorization reads `req.user.roles` from the verified token only                                                   |
+| `?sortBy=deletedAt` or any real-but-unlisted column name                 | `400` — the whitelist rejects it before it ever reaches Prisma's `orderBy`, regardless of whether the column actually exists    |
+| SQL injection attempt in `search`/`department`/`jobTitle`                | Treated as a literal string — Prisma's parameterized `contains`/`equals` neutralizes it; no query-structure risk                |
+| Extremely long `search` string (10,000+ characters)                      | Currently accepted, no max length — a minor, honestly-acknowledged gap, same class as other unbounded-string fields in this API |
+| Non-numeric `page`/`limit` (e.g. `?page=abc`)                            | `400` — Zod's `coerce.number()` fails, reported as a type-mismatch                                                              |
 
 ## 12. Edge Cases
 
-| Scenario                   | Expected Behavior                                                                            |
-| -------------------------- | -------------------------------------------------------------------------------------------- |
-| No employees exist yet     | `200`, `{ "employees": [] }`                                                                 |
-| All employees soft-deleted | `200`, `{ "employees": [] }` — soft-deleted rows are invisible to this endpoint, by design   |
-| Very large employee count  | Returns all of them in one response — no pagination, same scalability caveat as `GET /users` |
+| Scenario                                                                | Expected Behavior                                                                                                                                          |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No employees match the search/filters at all                            | `200`, `{ "employees": [], "pagination": { "total": 0, "totalPages": 0, ... } }` — not an error                                                            |
+| `page` beyond the last page (e.g. `page=999` with only 2 real pages)    | `200`, `{ "employees": [] }` — an out-of-range page is simply an empty slice, not a `404`                                                                  |
+| Multiple rows sharing the identical `sortBy` value (e.g. same `salary`) | The unconditional `id ASC` secondary sort breaks the tie deterministically — repeating the exact same request always returns the same order, verified live |
+| All employees soft-deleted                                              | `200`, `{ "employees": [], "pagination": { "total": 0, ... } }` — soft-deleted rows are invisible to this endpoint, by design                              |
+| An `Employee` with `userId: null` and an active `search` term           | Only ever matches via its own `department`/`jobTitle` fields — the `user.name`/`user.email` branches simply never match a null relation, no error          |
 
 ## 13. Security Testing
 
@@ -2372,63 +2416,141 @@ check.
 - **Sensitive data exposure**: `salary` is present for every entry — this
   is exactly why the permission gate matters here more than on most
   endpoints in this API.
-- **BOLA**: not applicable — returns the full collection, not a
-  client-supplied ID lookup (see `GET /employees/:id` for where BOLA
-  actually applies).
+- **BOLA**: not applicable — returns a collection, not a client-supplied
+  ID lookup (see `GET /employees/:id` for where BOLA actually applies).
+- **Query-parameter injection**: confirm `sortBy` is truly whitelisted —
+  attempt every real column name that _isn't_ in the allowed list (e.g.
+  `deletedAt`, `id`, `userId`) and confirm each is rejected with `400`,
+  not silently accepted or passed through to a raw query.
+- **Resource exhaustion via `limit`**: confirm the server-side cap
+  (`100`) actually rejects a larger request rather than silently
+  clamping it — a silent clamp is a valid alternative design, but this
+  API's is a hard rejection, and that's the behavior to verify.
 
 ## 14. Database Impact
 
-- **Tables affected**: `Employee` (read only, all non-deleted rows).
+- **Tables affected**: `Employee` (read, filtered/sorted/paginated),
+  `User` (read, via relation join — only when `search` is present and
+  matches against `user.name`/`user.email`).
 - **Rows affected**: none inserted/updated/deleted.
+- **Queries per request**: two, run concurrently via `Promise.all` — one
+  `findMany` (the page of results) and one `count` (the total across all
+  matching pages). Not wrapped in a transaction — see the Performance
+  Notes/Interview Notes below for why that's an accepted trade-off here.
 
 ## 15. Request Lifecycle
 
 ```
-GET /api/v1/employees
+GET /api/v1/employees?search=...&department=...&sortBy=...&order=...&page=...&limit=...
     ↓
 authMiddleware
     ↓
 requirePermission('employee:read:any')
     ↓ (403 if not granted)
-employee.controller.list → employee.service.listEmployees()
+validateMiddleware(listEmployeesQuerySchema, 'query')
+    ↓ (400 on Zod failure; result lands on req.validatedQuery, not req.query)
+employee.controller.list → employee.service.listEmployees(req.validatedQuery)
+    ├─ buildEmployeeWhere({ search, department, jobTitle, managerId })
+    └─ Promise.all([
+         employeeRepository.findAll({ where, orderBy: [{[sortBy]: order}, {id: 'asc'}], skip, take }),
+         employeeRepository.count(where),
+       ])
     ↓
-employee.repository.findAll()   [WHERE deletedAt IS NULL]
-    ↓
-200 { employees: [...] }
+200 { employees: [...], pagination: {...} }
 ```
 
 ## 16. Performance Notes
 
-- Unfiltered `SELECT * WHERE deletedAt IS NULL` — a full scan, same
-  scalability profile as `GET /users`; pagination is Feature 10's job.
-- No caching of the result set itself (only the permission-resolution
-  step is cached).
+- Two queries per request (`findMany` + `count`), run concurrently via
+  `Promise.all`, not a `$transaction` — a deliberate choice: a
+  transaction would guarantee the list and the count reflect the exact
+  same database snapshot even under concurrent writes, but `Promise.all`
+  is measurably cheaper and the two queries reflecting slightly
+  different moments in time is an acceptable, minor inconsistency for an
+  HR application. Revisit only if this specific inconsistency ever
+  causes a real problem in practice.
+- `search` uses `contains`/`mode: 'insensitive'` (Postgres `ILIKE`) across
+  four fields, including a join to `User` — a sequential scan on both
+  tables at this data size; a future `pg_trgm` trigram index is the
+  documented upgrade path if this table grows large enough for it to
+  matter (not needed today).
+- Filters (`department`, `jobTitle`, `managerId`) are unindexed exact/
+  case-insensitive matches — fine at current scale; `Employee.userId` and
+  `Employee.managerId` already have indexes from Feature 9, but exact
+  filters on `department`/`jobTitle` do not yet.
+- `limit`'s hard cap (100) bounds the worst-case single-request cost
+  regardless of what's asked for.
 
 ## 17. Interview Notes
 
-**Q: Why does `EMPLOYEE`'s `employee:read:own` permission not work on
-this route at all, even for their own record?** This route only accepts
-`employee:read:any` — an `EMPLOYEE` reaching it is rejected at the
-middleware layer before any record is even considered, by design: "list
-everyone" and "read one specific record you own" are different
-operations with different risk profiles, so they're gated by different
-permission keys rather than one route trying to serve both scopes.
+- **Q: Why does `EMPLOYEE`'s `employee:read:own` permission not work on
+  this route at all, even for their own record?** This route only
+  accepts `employee:read:any` — an `EMPLOYEE` reaching it is rejected at
+  the middleware layer before any record is even considered, by design:
+  "list everyone, searchable/paginated" and "read one specific record you
+  own" are different operations with different risk profiles, gated by
+  different permission keys.
+- **Q: Why `Promise.all` instead of a `$transaction` for the list+count
+  pair?** A transaction guarantees both queries see an identical
+  snapshot, which matters under heavy concurrent writes; `Promise.all` is
+  cheaper and the two queries can, in principle, reflect a row inserted/
+  deleted between them. For an HR application (not a financial ledger),
+  that inconsistency window is an accepted, explicitly documented
+  trade-off, not an oversight.
+- **Q: Why validate query parameters into `req.validatedQuery` instead of
+  overwriting `req.query`?** `req.query` is a getter-only accessor under
+  Express 5 — assigning to it throws in this project's strict-mode ES
+  modules (verified directly, not assumed). `validateMiddleware` had to
+  be generalized to write query results to a different property while
+  keeping `req.body`'s existing overwrite behavior unchanged for every
+  other call site.
+- **Q: Why is the secondary `id ASC` sort unconditional, applied even
+  when `sortBy` is already `createdAt`?** Any `sortBy` column can have
+  duplicate values across rows (two employees with the same `salary`, or
+  even the same `createdAt` if created in the same request batch) —
+  without a tiebreaker, the database is free to return tied rows in any
+  order, which can differ between identical repeated requests. `id` is
+  always unique, so appending it as a secondary sort guarantees full
+  determinism regardless of what the primary sort column is.
 
 ## 18. cURL Examples
 
 ```bash
+# Default
 curl -i http://localhost:3000/api/v1/employees -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Paginated, sorted, filtered
+curl -i "http://localhost:3000/api/v1/employees?page=2&limit=5&sortBy=salary&order=desc" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Search across Employee fields and the linked User's name/email
+curl -i "http://localhost:3000/api/v1/employees?search=Jane" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Exact filter, case-insensitive
+curl -i "http://localhost:3000/api/v1/employees?department=engineering" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 ## 19. Postman Collection Notes
 
-Same `{{accessToken}}` requirement as `POST /employees`.
+Same `{{accessToken}}` requirement as `POST /employees`. Recommended
+Postman environment additions for exercising this endpoint fully:
+`{{page}}`, `{{limit}}`, `{{search}}` as empty-by-default variables you
+fill in per test run, rather than hard-coding query strings into every
+saved request.
 
 ## 20. Testing Checklist
 
 - ✅ `200` as `ADMIN`/`MANAGER`, `403` as `EMPLOYEE`, `401` with no token
-- ✅ Empty array when no/all-deleted employees exist
-- ✅ Soft-deleted records never appear
+- ✅ Pagination: default page/limit, explicit page/limit, out-of-range page
+- ✅ `400` on `page < 1`, `limit < 1`, `limit > 100`, invalid `sortBy`/`order`/`managerId`
+- ✅ Empty `search=` behaves identically to no `search`
+- ✅ `search` matches both `Employee` fields and the linked `User`'s name/email
+- ✅ Exact filters are case-insensitive
+- ✅ Sort order actually reverses between `asc`/`desc`; repeated identical
+  calls return identical ordering (stability)
+- ✅ Empty array (not an error) when no rows match or all are soft-deleted
 - ✅ No sensitive data leaked beyond intended fields
 
 ---
