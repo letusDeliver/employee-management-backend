@@ -6,4 +6,6 @@ export const AUDIT_ACTIONS = Object.freeze({
 
 export const AUDIT_ENTITY_TYPES = Object.freeze({
   EMPLOYEE: 'Employee',
+  USER: 'User',
+  EMPLOYEE_DOCUMENT: 'EmployeeDocument',
 });

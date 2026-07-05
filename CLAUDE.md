@@ -96,7 +96,7 @@ No skipping sections. No rushing. Stop and wait for approval after each feature 
 - [x] Employee CRUD (Clean Architecture: controller/service/repository)
 - [x] Employee search, pagination, filtering, sorting
 - [x] Audit logs
-- [ ] File uploads (Multer + Cloudinary)
+- [x] File uploads (Multer + Cloudinary)
 - [ ] Swagger API docs
 - [ ] Dockerization
 - [ ] Testing strategy (unit/integration)
@@ -458,3 +458,65 @@ survival was verified by schema/constraint inspection rather than a live
 request, honestly noted as such (no user hard-delete path exists to
 trigger it for real). See `planning/feature-11-audit-logs.md` for the
 approved plan.)_
+
+_(Feature 12 — File Uploads (Multer + Cloudinary) — completed, on branch
+`feature/12-file-uploads`. Two upload surfaces, combined into one
+feature per your explicit call: `User` profile pictures (two new nullable
+columns, `profileImageUrl`/`profileImagePublicId` — self-service, no
+permission check, always operates on the caller's own record) and a new
+`EmployeeDocument` table (real FK to `Employee.id`, HR/manager-controlled
+via the existing `employee:update:any`/`employee:read:any`/`:own`
+permissions — no new permission keys). A dedicated pre-implementation
+design review (12 dimensions: Cloudinary failure recovery, replacement
+ordering, delete ordering, folder structure, public-id strategy, file
+naming, security, performance, error handling, transactions, verification
+plan, documentation) caught and fixed two real operation-ordering bugs
+*before* any code was written: profile-picture replace/delete and
+document delete all originally sequenced "Cloudinary first, DB second" —
+reversed to "DB commit first, Cloudinary cleanup after, best-effort" so
+any failure produces a harmless orphan, never a dangling reference. Also
+adopted, per that review: a **fixed, deterministic** Cloudinary
+`public_id` + `overwrite`/`invalidate` for the single-slot profile
+picture (removing the separate old-asset-delete step for that flow
+entirely), and a fresh server-generated UUID per document (never derived
+from the original filename, closing off path traversal on the Cloudinary
+side). `multer`/`cloudinary` APIs verified in scratch scripts before real
+code, per the established habit — confirmed live that `fileFilter` can
+reject with our own `BadRequestError` directly (skipping Multer's generic
+`LIMIT_UNEXPECTED_FILE`), that Multer does **not** reject a request with
+no file field on its own (needed an explicit check), and that
+`cloudinary.uploader.upload_stream` uses a standard error-first callback.
+`env.js` now validates `CLOUDINARY_CLOUD_NAME`/`CLOUDINARY_API_KEY`/
+`CLOUDINARY_API_SECRET` (closing a gap deferred since Feature 4).
+Audit logging (Feature 11) extended to `User` (profile-picture events
+only — not register/login/role-assignment) and the new
+`EmployeeDocument` entity type — with one critical safety rule found
+during the theory discussion itself, before any code existed: `User` has
+a `password` field `Employee` never had, so every `User`-entity audit
+snapshot goes through the existing `sanitizeUser()`, never a raw record
+dump, verified live across every profile-picture replacement with zero
+password leakage. **Two further real bugs were found live during this
+feature's own verification, not by code review**: (1)
+`cloudinary.uploader.destroy()` defaults to `resource_type: "image"` and
+**silently no-ops** (`{result: "not found"}`, not a thrown error) for any
+other type — a PDF document (Cloudinary's own classification: `"raw"`)
+appeared to delete successfully but the asset was still live, caught by
+actually re-fetching its URL after "deletion" rather than trusting the
+absence of a thrown error. Fixed by storing Cloudinary's own
+`resourceType` on the `EmployeeDocument` row at upload time and passing
+it explicitly to every `destroy()` call — required a small additional
+migration (table was empty, so no backfill needed) and a real code fix,
+not just documentation. (2) Even after that fix, a re-fetch of a
+just-deleted asset's URL still returned `200` — the origin copy was
+genuinely gone (confirmed via Cloudinary's own Admin API), but the CDN
+kept serving a stale cached copy; fixed by adding `invalidate: true` to
+every `destroy()` call, not just uploads. Verified live end-to-end: real
+Cloudinary uploads/deletes/replacements (not mocked), profile picture
+replaced 3× with exactly one asset at the fixed path throughout, document
+upload/list/delete across `ADMIN`/`MANAGER`/owning-`EMPLOYEE`/different-
+`EMPLOYEE` (BOLA confirmed), all negative cases (missing file, bad MIME,
+oversized, unauthenticated, wrong permission, nonexistent employee/
+document), and — after both fixes — real Cloudinary-side deletion
+confirmed via direct CDN fetch and the Admin API, not just a non-error
+API response. See `planning/feature-12-file-uploads.md` for the approved
+plan, including the full pre-implementation design review.)_

@@ -21,6 +21,7 @@ progress log.
 - **Validation**: Zod (both environment config and request bodies)
 - **Logging**: Winston (leveled, environment-aware) + Morgan (HTTP access logs)
 - **Security**: Helmet, CORS, bcrypt-hashed passwords, httpOnly cookies
+- **File uploads**: Multer (memory storage) + Cloudinary (profile pictures, Employee documents)
 - **Tooling**: ESLint (flat config) + Prettier, nodemon
 
 ## Getting Started
@@ -61,6 +62,11 @@ progress log.
      ```bash
      node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
      ```
+   - `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` —
+     from your Cloudinary account dashboard. **Required** — the app
+     validates these at boot the same as the JWT secrets and refuses to
+     start without them, since profile pictures and Employee documents
+     depend on a real Cloudinary connection.
 
 4. **Run database migrations**
 
@@ -97,21 +103,26 @@ progress log.
 
 All routes are mounted under `/api/v1`.
 
-| Method   | Path             | Auth Required                                          | Description                                                                                                                                                                                                           |
-| -------- | ---------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`    | `/health`        | No                                                     | Liveness check — is the process running                                                                                                                                                                               |
-| `GET`    | `/ready`         | No                                                     | Readiness check — is the database reachable                                                                                                                                                                           |
-| `POST`   | `/auth/register` | No                                                     | Create an account, receive an access token + refresh-token cookie                                                                                                                                                     |
-| `POST`   | `/auth/login`    | No                                                     | Authenticate, receive an access token + refresh-token cookie                                                                                                                                                          |
-| `POST`   | `/auth/refresh`  | Refresh-token cookie                                   | Rotate the refresh token, issue a new access token                                                                                                                                                                    |
-| `POST`   | `/auth/logout`   | Refresh-token cookie                                   | Revoke the refresh token server-side                                                                                                                                                                                  |
-| `GET`    | `/auth/me`       | Access token (Bearer)                                  | Return the current authenticated user                                                                                                                                                                                 |
-| `GET`    | `/users`         | Access token, `user:list` permission                   | List all registered users                                                                                                                                                                                             |
-| `POST`   | `/employees`     | Access token, `employee:create` permission             | Create an Employee (HR) record                                                                                                                                                                                        |
-| `GET`    | `/employees`     | Access token, `employee:read:any` permission           | List non-deleted Employee records — paginated (`page`/`limit`), searchable (`search`, across Employee fields + linked User name/email), filterable (`department`/`jobTitle`/`managerId`), sortable (`sortBy`/`order`) |
-| `GET`    | `/employees/:id` | Access token, `employee:read:any` or `:own` permission | Get one Employee record (own record allowed for `EMPLOYEE`)                                                                                                                                                           |
-| `PATCH`  | `/employees/:id` | Access token, `employee:update:any` permission         | Partially update an Employee record                                                                                                                                                                                   |
-| `DELETE` | `/employees/:id` | Access token, `employee:delete:any` permission         | Soft-delete an Employee record                                                                                                                                                                                        |
+| Method   | Path                                   | Auth Required                                          | Description                                                                                                                                                                                                           |
+| -------- | -------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/health`                              | No                                                     | Liveness check — is the process running                                                                                                                                                                               |
+| `GET`    | `/ready`                               | No                                                     | Readiness check — is the database reachable                                                                                                                                                                           |
+| `POST`   | `/auth/register`                       | No                                                     | Create an account, receive an access token + refresh-token cookie                                                                                                                                                     |
+| `POST`   | `/auth/login`                          | No                                                     | Authenticate, receive an access token + refresh-token cookie                                                                                                                                                          |
+| `POST`   | `/auth/refresh`                        | Refresh-token cookie                                   | Rotate the refresh token, issue a new access token                                                                                                                                                                    |
+| `POST`   | `/auth/logout`                         | Refresh-token cookie                                   | Revoke the refresh token server-side                                                                                                                                                                                  |
+| `GET`    | `/auth/me`                             | Access token (Bearer)                                  | Return the current authenticated user                                                                                                                                                                                 |
+| `GET`    | `/users`                               | Access token, `user:list` permission                   | List all registered users                                                                                                                                                                                             |
+| `POST`   | `/employees`                           | Access token, `employee:create` permission             | Create an Employee (HR) record                                                                                                                                                                                        |
+| `GET`    | `/employees`                           | Access token, `employee:read:any` permission           | List non-deleted Employee records — paginated (`page`/`limit`), searchable (`search`, across Employee fields + linked User name/email), filterable (`department`/`jobTitle`/`managerId`), sortable (`sortBy`/`order`) |
+| `GET`    | `/employees/:id`                       | Access token, `employee:read:any` or `:own` permission | Get one Employee record (own record allowed for `EMPLOYEE`)                                                                                                                                                           |
+| `PATCH`  | `/employees/:id`                       | Access token, `employee:update:any` permission         | Partially update an Employee record                                                                                                                                                                                   |
+| `DELETE` | `/employees/:id`                       | Access token, `employee:delete:any` permission         | Soft-delete an Employee record                                                                                                                                                                                        |
+| `POST`   | `/users/me/profile-picture`            | Access token (self only)                               | Upload/replace the caller's own avatar                                                                                                                                                                                |
+| `DELETE` | `/users/me/profile-picture`            | Access token (self only)                               | Remove the caller's own avatar                                                                                                                                                                                        |
+| `POST`   | `/employees/:id/documents`             | Access token, `employee:update:any` permission         | Upload a document (resume, ID proof, etc.) to an Employee record                                                                                                                                                      |
+| `GET`    | `/employees/:id/documents`             | Access token, `employee:read:any` or `:own` permission | List an Employee's documents                                                                                                                                                                                          |
+| `DELETE` | `/employees/:id/documents/:documentId` | Access token, `employee:update:any` permission         | Permanently remove a document                                                                                                                                                                                         |
 
 Authorization is permission-based (see `handbook/API_ENDPOINTS.md`), not
 role-based — `ADMIN`/`MANAGER`/`EMPLOYEE` are role names seeded with a
@@ -124,7 +135,7 @@ src/
 ├── app.js, server.js        # Express app assembly + process lifecycle
 ├── config/                  # env.js, database.js, logger.js — one shared instance each
 ├── errors/                  # Typed AppError hierarchy
-├── middlewares/              # auth, permission (RBAC), validate, error, notFound
+├── middlewares/              # auth, permission (RBAC), validate, upload (Multer), error, notFound
 ├── modules/                  # Feature-first domain modules (auth, users, rbac, employees, audit)
 ├── routes/                   # Router aggregation
 └── utils/                    # asyncHandler, jwt
@@ -153,7 +164,7 @@ planning/                     # Approved action plan for each feature
 - [x] Employee CRUD
 - [x] Employee search, pagination, filtering, sorting
 - [x] Audit logs
-- [ ] File uploads (Multer + Cloudinary)
+- [x] File uploads (Multer + Cloudinary)
 - [ ] Swagger API docs
 - [ ] Dockerization
 - [ ] Testing strategy
