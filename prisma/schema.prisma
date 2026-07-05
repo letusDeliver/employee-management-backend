@@ -11,16 +11,11 @@ model User {
   email         String         @unique
   password      String
   name          String
-  role          Role           @default(EMPLOYEE)
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   refreshTokens RefreshToken[]
-}
-
-enum Role {
-  ADMIN
-  MANAGER
-  EMPLOYEE
+  userRoles     UserRole[]
+  employees     Employee[]
 }
 
 model RefreshToken {
@@ -31,4 +26,73 @@ model RefreshToken {
   expiresAt DateTime
   revoked   Boolean  @default(false)
   createdAt DateTime @default(now())
+}
+
+model Role {
+  id              String           @id @default(uuid())
+  name            String           @unique
+  description     String?
+  isSystem        Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+}
+
+model Permission {
+  id              String           @id @default(uuid())
+  key             String           @unique
+  resource        String
+  action          String
+  scope           String?
+  description     String?
+  createdAt       DateTime         @default(now())
+  rolePermissions RolePermission[]
+}
+
+model UserRole {
+  userId     String
+  roleId     String
+  assignedAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+model Employee {
+  id            String     @id @default(uuid())
+  userId        String?
+  user          User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  department    String
+  jobTitle      String
+  salary        Decimal
+  dateOfJoining DateTime
+  managerId     String?
+  manager       Employee?  @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: SetNull)
+  reports       Employee[] @relation("EmployeeManager")
+  deletedAt     DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  // No @unique on userId: Prisma's schema DSL can't express a *partial*
+  // unique constraint (scoped to non-deleted rows), so the real
+  // uniqueness guarantee is a hand-written partial unique index in the
+  // migration SQL instead - see migration
+  // add_partial_unique_index_employee_userid. A plain @unique here would
+  // permanently block re-using a userId after its Employee record is
+  // soft-deleted, which contradicts the soft-delete design.
+  @@index([userId])
+  @@index([managerId])
 }

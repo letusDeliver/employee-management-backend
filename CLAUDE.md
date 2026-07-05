@@ -92,8 +92,8 @@ No skipping sections. No rushing. Stop and wait for approval after each feature 
 - [x] Logging (Winston)
 - [x] User model & Auth: Register/Login
 - [x] JWT Access + Refresh Tokens
-- [x] RBAC (roles & permissions)
-- [ ] Employee CRUD (Clean Architecture: controller/service/repository)
+- [x] RBAC (roles & permissions) — redesigned in Feature 9 from coarse-grained roles to a full Role/Permission model
+- [x] Employee CRUD (Clean Architecture: controller/service/repository)
 - [ ] File uploads (Multer + Cloudinary)
 - [ ] Swagger API docs
 - [ ] Dockerization
@@ -327,3 +327,68 @@ consequence of Feature 7's stateless-access-token design; after that,
 `GET /users` returned `200` with all users, no `password` field on any
 entry; confirmed no secrets/passwords in `logs/*.log`. See
 `planning/feature-08-rbac.md` for the approved plan.)_
+
+_(Feature 9 — RBAC Redesign + Employee CRUD — completed, on branch
+`feature/09-rbac-and-employee-crud`, in two checkpointed stages per the
+approved plan. Before touching the schema: a full `pg_dump` backup
+(`backups/`, gitignored) and a written rollback plan, since this is the
+first feature to drop real data from a real column.
+
+**Stage A (RBAC redesign)**: replaced the Feature 8 coarse-grained
+`User.role` enum + `requireRole` with a full relational model — `Role`,
+`Permission`, `UserRole`, `RolePermission` tables, seeded via idempotent
+`prisma/seed.js` (3 system roles, 6 permissions, confirmed grants).
+`requirePermission(...keys)` (`src/middlewares/permission.middleware.js`)
+replaces `requireRole`, resolving a user's roles to a permission set
+through an in-memory cache (`src/utils/permissionCache.js`). JWT payload
+changed from `{ sub, role }` to `{ sub, roles }`. `register()` now wraps
+user-creation + default-`EMPLOYEE`-role-assignment in one
+`prisma.$transaction` — a narrow, deliberate fix to the Feature 7
+non-transactional gap (token issuance still happens after commit, since
+that failure mode is a UX inconvenience, not a broken account, unlike a
+user with zero roles). Applying the migration required a manual
+workaround: `prisma migrate dev` refuses to run non-interactively at all
+(even with `--create-only`) whenever there's a data-loss warning, so the
+migration SQL was generated via `prisma migrate diff` and applied via
+`prisma migrate deploy` instead — worth knowing for any future breaking
+migration in this non-interactive environment. Verified live: pre-existing
+test accounts correctly lost their roles entirely (`roles: []`, an
+accepted consequence of the clean cut-over); register/login/`/me`/`/users`
+all re-verified end-to-end against the new model. Also found and fixed a
+real documentation error while updating `handbook/API_ENDPOINTS.md`:
+`/me` was documented (since Feature 8) as returning the token's stale
+role — it actually always reads fresh from the database, verified live by
+calling `/me` with a pre-promotion token and observing the post-promotion
+role.
+
+**Stage B (Employee CRUD)**: `Employee` model (nullable `userId`/
+`managerId`, soft delete via `deletedAt`, self-relation for the manager
+hierarchy), full Clean Architecture slice under `modules/employees/`.
+Authorization matrix as confirmed: `ADMIN`/`MANAGER` get full CRUD via
+`:any`-scoped permissions; `EMPLOYEE` gets `employee:read:own` only (no
+self-service edit). `GET /employees/:id` is this feature's concrete
+two-layer-authorization example — `requirePermission` accepts either
+`:any` or `:own` at the route, and the service does the actual ownership
+comparison once the record is loaded, since the middleware has nothing to
+compare against yet. **Two real bugs were found and fixed while verifying
+this feature, both by testing documented edge cases, not by code
+review**: (1) `Employee.userId`'s uniqueness was originally a plain
+(non-partial) unique index, which permanently blocked reusing a `userId`
+after its Employee record was soft-deleted — contradicted the soft-delete
+design entirely. Fixed with a hand-written partial unique index
+(`WHERE "deletedAt" IS NULL`), since Prisma's schema DSL has no syntax for
+partial constraints; this also meant modeling `User`↔`Employee` as
+one-to-many rather than one-to-one, since Prisma requires the FK side of
+a 1:1 relation to be schema-level unique — arguably the more honest model
+anyway, since a `userId` can have more than one `Employee` row over time
+(history), just never more than one live one. (2) An invalid/nonexistent
+`userId` or `managerId` originally leaked a raw `500` with the underlying
+Prisma error text (an uncaught `P2003` foreign-key violation); fixed by
+translating it into a proper `400` in the service layer, same treatment
+as the malformed-JSON fix from the `API_ENDPOINTS.md` feature. Verified
+live end-to-end: create/list/get/update/delete all behave exactly per the
+plan's verification checklist, including duplicate-`userId` `409`,
+self-management `400`, double-delete `404` (not `409`), and soft-deleted
+records disappearing from every read path immediately. See
+`planning/feature-09-rbac-redesign-and-employee-crud.md` for the approved
+plan, including the rollback plan.)_

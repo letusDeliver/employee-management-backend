@@ -5,6 +5,9 @@ node_modules/
 .env
 .env.*.local
 
+# Local database backups (may contain password hashes / PII - never commit)
+backups/
+
 # Logs
 logs/*
 !logs/.gitkeep

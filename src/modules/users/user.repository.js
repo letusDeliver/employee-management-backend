@@ -1,19 +1,19 @@
 import prisma from '../../config/database.js';
 
-const findByEmail = (email) => {
-  return prisma.user.findUnique({ where: { email } });
+const findByEmail = (email, client = prisma) => {
+  return client.user.findUnique({ where: { email } });
 };
 
-const findById = (id) => {
-  return prisma.user.findUnique({ where: { id } });
+const findById = (id, client = prisma) => {
+  return client.user.findUnique({ where: { id } });
 };
 
-const create = (data) => {
-  return prisma.user.create({ data });
+const create = (data, client = prisma) => {
+  return client.user.create({ data });
 };
 
-const findAll = () => {
-  return prisma.user.findMany();
+const findAll = (client = prisma) => {
+  return client.user.findMany();
 };
 
 export default { findByEmail, findById, create, findAll };

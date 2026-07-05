@@ -6,8 +6,11 @@ API. Updated after every feature that adds or modifies an endpoint (see
 from the actual running server — not hand-written from memory — so it can
 be used to test the API in Postman without reading any source code.
 
-**Last synchronized with**: Feature 8 (RBAC). Covers all 8 endpoints that
-exist as of this feature.
+**Last synchronized with**: Feature 9, Stage B (Employee CRUD). Covers all
+13 endpoints that exist as of this feature — the original 8 plus 5 new
+`Employee` endpoints. Stage A replaced the authorization mechanism
+underneath four existing endpoints (`/auth/register`, `/auth/login`,
+`/auth/me`, `/users`); Stage B adds `/employees` and `/employees/:id`.
 
 ---
 
@@ -62,7 +65,18 @@ centralized error handler (`src/middlewares/error.middleware.js`):
 - **Access token**: a JWT, returned in the JSON response body on
   register/login/refresh. Short-lived (`15m` by default). Sent via the
   `Authorization: Bearer <token>` header. Verified statelessly (signature
-  - expiry only — no database call).
+  - expiry only — no database call). **As of Feature 9**, its payload is
+    `{ sub: userId, roles: [roleName, ...] }` — an array of role names, not
+    the single `role` string used before Feature 9. A permission-requiring
+    route then resolves `roles` to a set of permission keys (via
+    `src/utils/permissionCache.js`, backed by the `Role`/`Permission`/
+    `RolePermission` tables) on every request — this resolution step, not
+    the JWT itself, is what actually decides access. This means a role's
+    _permissions_ can be changed at any time and take effect on the very
+    next request (no re-login needed), but a _user's_ role assignment is
+    still only reflected the next time they log in — same
+    stale-until-relogin behavior documented in Feature 8, just one layer
+    removed from where the caching now happens.
 - **Refresh token**: a JWT, delivered **only** as an httpOnly cookie
   (`refreshToken`), never in a JSON body. Long-lived (`7d` by default).
   Tracked (hashed) in the database — revocable, and rotated on every use.
@@ -91,38 +105,84 @@ in Postman's cookie jar once register/login/refresh sets it.
 4. `POST /auth/login`
 5. `GET /auth/me`
 6. `GET /users` (expect `403` — the registered user defaults to `EMPLOYEE`)
-7. `POST /auth/refresh`
-8. `POST /auth/logout`
-9. `POST /auth/refresh` again (expect `401` — the token was just revoked)
+7. `POST /employees` as an `ADMIN`/`MANAGER` token (create a record, note
+   the returned `id`)
+8. `GET /employees` as `ADMIN`/`MANAGER` (expect `200`, array)
+9. `GET /employees/:id` as the `EMPLOYEE` the record's `userId` points to
+   (expect `200`), then as a different `EMPLOYEE` (expect `403`)
+10. `PATCH /employees/:id`, `DELETE /employees/:id`
+11. `POST /auth/refresh`
+12. `POST /auth/logout`
+13. `POST /auth/refresh` again (expect `401` — the token was just revoked)
 
 ### Known, Honestly-Documented Gaps (apply across multiple endpoints)
 
 - **No rate limiting exists yet** on any endpoint, including `/auth/login`
   and `/auth/refresh` — a real brute-force-protection gap, acknowledged
   since Feature 6, not yet closed.
-- **`POST /auth/register` is not transactional** — a crash between
-  creating the user and issuing tokens (rare, but has happened once during
-  this project's own development) can leave a real user account with no
-  valid session. Documented since Feature 7.
+- **`POST /auth/register`'s transactionality was narrowed, not fully
+  closed, in Feature 9** — user creation and default-role assignment now
+  happen in one `prisma.$transaction` (so a user can never exist with zero
+  roles), but issuing the refresh/access token pair still happens as a
+  separate step afterward. A crash between the transaction commit and
+  token issuance now just means "the account exists correctly, log in
+  again" — no longer the "account exists but is structurally broken" gap
+  documented since Feature 7.
 - **`GET /users` has no pagination** — fine at current scale, a natural
   future improvement once the user count grows.
 - **No self-service way to change a user's role** — by design (see
-  `GET /users`'s Security Testing section).
+  `GET /users`'s Security Testing section). Role assignment is a
+  direct-database operation for testing purposes, same as every prior
+  feature.
+- **Pre-existing accounts created before Feature 9's migration lost their
+  role entirely** — the `User.role` enum column was dropped without a
+  data-migration step (a deliberate "clean cut-over" decision for this dev
+  database, backed by a pre-migration `pg_dump`). Any account that existed
+  before this migration now has an empty `roles: []` array until a `Role`
+  is manually assigned to it via a direct database script — accounts
+  registered after the migration are unaffected, since `register()` always
+  assigns the default `EMPLOYEE` role.
+- **`GET /employees` has no pagination, searching, filtering, or
+  sorting** — every call returns the entire non-deleted `Employee` table.
+  Deliberately deferred to **Feature 10**, not an oversight.
+- **`Employee` records ship with no audit trail** — creates, updates, and
+  soft-deletes are not logged anywhere yet. Deliberately deferred to
+  **Feature 11** (`AuditLog`), which will retrofit audit-log calls into
+  the service methods built in Feature 9.
+- **No self-service editing of one's own Employee record** — the
+  `EMPLOYEE` role is only ever granted `employee:read:own`, never an
+  `:update:own` permission. Changing department/salary/job title is an
+  `ADMIN`/`MANAGER` action, by design.
+- **Soft-deleted `Employee` rows are invisible everywhere, including to
+  the person who deleted them** — there is no "restore" endpoint. A
+  soft-deleted record can currently only be un-deleted via a direct
+  database update (`deletedAt: null`).
 
 ---
 
 ## Endpoint Index
 
-| #   | Feature   | Method | Path             | Auth                      | Roles             | Public/Protected   |
-| --- | --------- | ------ | ---------------- | ------------------------- | ----------------- | ------------------ |
-| 1   | Health    | `GET`  | `/health`        | No                        | —                 | Public             |
-| 2   | Readiness | `GET`  | `/ready`         | No                        | —                 | Public             |
-| 3   | Auth      | `POST` | `/auth/register` | No                        | —                 | Public             |
-| 4   | Auth      | `POST` | `/auth/login`    | No                        | —                 | Public             |
-| 5   | Auth      | `POST` | `/auth/refresh`  | Refresh cookie            | —                 | Protected (cookie) |
-| 6   | Auth      | `POST` | `/auth/logout`   | Refresh cookie (optional) | —                 | Protected (cookie) |
-| 7   | Auth      | `GET`  | `/auth/me`       | Access token              | Any authenticated | Protected          |
-| 8   | Users     | `GET`  | `/users`         | Access token              | `ADMIN`           | Protected          |
+| #   | Feature   | Method   | Path             | Auth                      | Required Permission                        | Public/Protected   |
+| --- | --------- | -------- | ---------------- | ------------------------- | ------------------------------------------ | ------------------ |
+| 1   | Health    | `GET`    | `/health`        | No                        | —                                          | Public             |
+| 2   | Readiness | `GET`    | `/ready`         | No                        | —                                          | Public             |
+| 3   | Auth      | `POST`   | `/auth/register` | No                        | —                                          | Public             |
+| 4   | Auth      | `POST`   | `/auth/login`    | No                        | —                                          | Public             |
+| 5   | Auth      | `POST`   | `/auth/refresh`  | Refresh cookie            | —                                          | Protected (cookie) |
+| 6   | Auth      | `POST`   | `/auth/logout`   | Refresh cookie (optional) | —                                          | Protected (cookie) |
+| 7   | Auth      | `GET`    | `/auth/me`       | Access token              | Any authenticated                          | Protected          |
+| 8   | Users     | `GET`    | `/users`         | Access token              | `user:list`                                | Protected          |
+| 9   | Employees | `POST`   | `/employees`     | Access token              | `employee:create`                          | Protected          |
+| 10  | Employees | `GET`    | `/employees`     | Access token              | `employee:read:any`                        | Protected          |
+| 11  | Employees | `GET`    | `/employees/:id` | Access token              | `employee:read:any` OR `employee:read:own` | Protected          |
+| 12  | Employees | `PATCH`  | `/employees/:id` | Access token              | `employee:update:any`                      | Protected          |
+| 13  | Employees | `DELETE` | `/employees/:id` | Access token              | `employee:delete:any`                      | Protected          |
+
+**As of Feature 9**, authorization is permission-based, not role-based —
+`ADMIN`/`MANAGER`/`EMPLOYEE` are just role _names_ that happen to be
+granted certain permissions (seeded in `prisma/seed.js`); routes check
+permission keys (`requirePermission('user:list')`), not role names
+directly (`requireRole('ADMIN')`, the retired Feature 8 mechanism).
 
 ---
 
@@ -540,16 +600,22 @@ via the generic `validateMiddleware`, **before** the controller ever runs.
 {
   "message": "User registered successfully",
   "user": {
-    "id": "178e6fbb-e1ef-4e20-b564-665b91691aaf",
-    "email": "jane.doe@example.com",
-    "name": "Jane Doe",
-    "role": "EMPLOYEE",
-    "createdAt": "2026-07-04T18:07:34.179Z",
-    "updatedAt": "2026-07-04T18:07:34.179Z"
+    "id": "e1b07e0b-3c8d-4f7d-aa1f-fffec7648b21",
+    "email": "stagea-test1@example.com",
+    "name": "Stage A Test",
+    "createdAt": "2026-07-05T04:35:57.265Z",
+    "updatedAt": "2026-07-05T04:35:57.265Z",
+    "roles": ["EMPLOYEE"]
   },
   "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...."
 }
 ```
+
+**As of Feature 9**: `user.role` (a single string) is now `user.roles` (an
+array of role names). Every new registration is assigned exactly one role
+— `EMPLOYEE` — via a `UserRole` row created in the same database
+transaction as the user itself (see Request Lifecycle below), so
+`roles` is never empty for a freshly registered account.
 
 Response headers also include:
 
@@ -559,17 +625,17 @@ Set-Cookie: refreshToken=eyJ...; Max-Age=604799; Path=/api/v1/auth;
   (Secure flag present only when NODE_ENV=production)
 ```
 
-| Field                                | Description                                                                                                             |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `message`                            | Fixed confirmation string.                                                                                              |
-| `user.id`                            | UUID, not sequential — see `handbook/06-user-model-auth.md` for why.                                                    |
-| `user.email`                         | Echoes the registered email.                                                                                            |
-| `user.name`                          | Echoes the registered name.                                                                                             |
-| `user.role`                          | Always `"EMPLOYEE"` for a self-registered account — there is no way to register as `ADMIN`/`MANAGER` via this endpoint. |
-| `user.createdAt` / `updatedAt`       | ISO 8601 timestamps, identical on creation.                                                                             |
-| **`user.password` is never present** | Stripped by `sanitizeUser` before the response is built — verify this on every test.                                    |
-| `accessToken`                        | A signed JWT, `15m` default lifetime. Use in `Authorization: Bearer <accessToken>` for subsequent requests.             |
-| `refreshToken` (cookie only)         | Never appears in the JSON body — only as the `Set-Cookie` header.                                                       |
+| Field                                | Description                                                                                                                                                                                                                      |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `message`                            | Fixed confirmation string.                                                                                                                                                                                                       |
+| `user.id`                            | UUID, not sequential — see `handbook/06-user-model-auth.md` for why.                                                                                                                                                             |
+| `user.email`                         | Echoes the registered email.                                                                                                                                                                                                     |
+| `user.name`                          | Echoes the registered name.                                                                                                                                                                                                      |
+| `user.roles`                         | Always `["EMPLOYEE"]` for a self-registered account — there is no way to register as `ADMIN`/`MANAGER` via this endpoint. An array (not a single string) since Feature 9, since a user can in principle hold more than one role. |
+| `user.createdAt` / `updatedAt`       | ISO 8601 timestamps, identical on creation.                                                                                                                                                                                      |
+| **`user.password` is never present** | Stripped by `sanitizeUser` before the response is built — verify this on every test.                                                                                                                                             |
+| `accessToken`                        | A signed JWT, `15m` default lifetime. Use in `Authorization: Bearer <accessToken>` for subsequent requests.                                                                                                                      |
+| `refreshToken` (cookie only)         | Never appears in the JSON body — only as the `Set-Cookie` header.                                                                                                                                                                |
 
 ## 9. Error Responses
 
@@ -618,12 +684,12 @@ no _specific_ documented trigger for this endpoint beyond the general
 
 ## 12. Edge Cases
 
-| Scenario                                                                             | Expected Behavior                                                                                                                                                                                                                                                                                                             |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Duplicate/concurrent registration attempts with the same email, fired simultaneously | Only one will succeed (`201`); the other should hit the database's unique constraint on `email` and receive `409` — **not independently verified under true concurrency in this project**, flagged honestly as an untested race window                                                                                        |
-| Registering immediately after a crashed prior attempt for the same email             | Real, observed behavior (Feature 7): if a prior request crashed _after_ creating the user but _before_ issuing tokens, retrying registration with the same email correctly returns `409` (proves the user does exist), but that account has no valid session from the failed attempt — use `/auth/login` instead in that case |
-| Very long `email`/`name` values                                                      | Currently accepted with no upper bound — see Negative Testing above                                                                                                                                                                                                                                                           |
-| Unicode/special characters in `name` (e.g. `"名前"`, emoji)                          | Accepted — no character-set restriction on `name`                                                                                                                                                                                                                                                                             |
+| Scenario                                                                             | Expected Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Duplicate/concurrent registration attempts with the same email, fired simultaneously | Only one will succeed (`201`); the other should hit the database's unique constraint on `email` and receive `409` — **not independently verified under true concurrency in this project**, flagged honestly as an untested race window                                                                                                                                                                                                                                                      |
+| Registering immediately after a crashed prior attempt for the same email             | If a prior request crashed _after_ the user+role transaction committed but _before_ token issuance, retrying registration with the same email correctly returns `409` (proves the user does exist, and — as of Feature 9 — correctly has a role); use `/auth/login` instead to obtain a session in that case. This is a narrower, less severe version of the Feature 7 gap: the account is never structurally broken (no user can exist without a role now), only momentarily session-less. |
+| Very long `email`/`name` values                                                      | Currently accepted with no upper bound — see Negative Testing above                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Unicode/special characters in `name` (e.g. `"名前"`, emoji)                          | Accepted — no character-set restriction on `name`                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ## 13. Security Testing
 
@@ -633,17 +699,20 @@ no _specific_ documented trigger for this endpoint beyond the general
   repeatedly to enumerate whether emails exist (via the `409` response) or
   to spam account creation. A known, acknowledged gap.
 - **JWT validation**: N/A on the way in; the JWT issued on the way out
-  should be verified to actually decode correctly and carry `{sub, role}`
-  — inspect it at [jwt.io](https://jwt.io) or similar to confirm structure
-  (do this only with test tokens, never a real production token).
+  should be verified to actually decode correctly and carry
+  `{sub, roles}` (an array, since Feature 9 — previously a single `role`
+  string) — inspect it at [jwt.io](https://jwt.io) or similar to confirm
+  structure (do this only with test tokens, never a real production
+  token).
 - **Sensitive data exposure / password exposure**: verify manually that
   the response body's `user` object **never** contains a `password` field,
   on every single test run, not just once.
-- **Role escalation**: verify a `role` field sent in the request body is
-  simply ignored — `registerSchema` doesn't even define a `role` field, so
-  Zod strips/ignores any extra property sent (Zod's default is to strip
+- **Role escalation**: verify a `role`/`roles` field sent in the request
+  body is simply ignored — `registerSchema` doesn't define either field,
+  so Zod strips/ignores any extra property sent (Zod's default is to strip
   unrecognized keys, not reject the request) — confirm a submitted
-  `"role": "ADMIN"` does **not** result in an admin account.
+  `"roles": ["ADMIN"]` does **not** result in an admin account; every
+  registration is hard-coded server-side to the `EMPLOYEE` role.
 - **Mass assignment**: directly related to the above — confirm no
   unexpected field (e.g. `id`, `createdAt`) can be client-supplied and
   honored.
@@ -652,16 +721,23 @@ no _specific_ documented trigger for this endpoint beyond the general
 
 ## 14. Database Impact
 
-- **Tables affected**: `User` (insert), `RefreshToken` (insert).
-- **Rows inserted**: exactly 1 `User` row, exactly 1 `RefreshToken` row,
-  on success.
+- **Tables affected**: `User` (insert), `UserRole` (insert), `RefreshToken`
+  (insert).
+- **Rows inserted**: exactly 1 `User` row, exactly 1 `UserRole` row (the
+  default `EMPLOYEE` grant), exactly 1 `RefreshToken` row, on success.
 - **Rows updated/deleted**: none.
-- **Transactions**: **none** — these are two separate, non-atomic writes.
-  A known, documented gap (Feature 7): a failure between the two leaves a
-  real user with no session. See `handbook/07-jwt-access-refresh-tokens.md`.
-- **Cascade/rollback behavior**: since there's no transaction, there is
-  no rollback if the second write fails — the first write's effect
-  (the created user) persists regardless.
+- **Transactions**: **as of Feature 9**, the `User` insert and the
+  `UserRole` insert happen inside one `prisma.$transaction` — either both
+  succeed or neither does, so a user can never exist without a role. The
+  `RefreshToken` insert (token issuance) still happens as a separate step
+  _after_ that transaction commits — a narrower, deliberately scoped fix
+  to the Feature 7 gap, not a full "everything in one transaction"
+  rewrite. See the Feature 9 planning doc for the reasoning.
+- **Cascade/rollback behavior**: if the `User`/`UserRole` transaction
+  fails partway, both inserts roll back together — no orphaned user, no
+  orphaned role grant. If token issuance fails afterward, the user+role
+  data persists correctly; the client just needs to call `/auth/login`
+  instead.
 
 ## 15. Request Lifecycle
 
@@ -677,9 +753,13 @@ auth.controller.register (asyncHandler-wrapped)
 auth.service.register
     ├─ userRepository.findByEmail(email)   → exists? → 409 ConflictError
     ├─ bcrypt.hash(password, 10)
-    ├─ userRepository.create(...)
+    ├─ prisma.$transaction:
+    │    ├─ userRepository.create(..., tx)
+    │    ├─ rbacRepository.findRoleByName('EMPLOYEE', tx)
+    │    └─ rbacRepository.assignRoleToUser(userId, roleId, tx)
     └─ issueTokenPair(user)
-         ├─ jwt.signAccessToken / signRefreshToken
+         ├─ rbacRepository.getRoleNamesForUser(user.id)
+         ├─ jwt.signAccessToken / signRefreshToken  ({ sub, roles })
          └─ refreshTokenRepository.create(...)
     ↓
 controller sets refreshToken cookie, responds 201
@@ -688,7 +768,7 @@ controller sets refreshToken cookie, responds 201
 **Middleware that runs for this endpoint**: `helmet`, `cors`, `morgan`
 (→ `logger.http`), `cookieParser`, `express.json()`, the JSON-syntax-error
 translator, `validateMiddleware(registerSchema)`. **No** `authMiddleware`
-or `requireRole` — this route is public.
+or `requirePermission` — this route is public.
 
 ## 16. Performance Notes
 
@@ -697,9 +777,10 @@ or `requireRole` — this route is public.
 - `bcrypt.hash` is deliberately slow (cost factor 10) — expect tens of
   milliseconds here specifically; this is the single most expensive step
   in the request, by design (see `handbook/06-user-model-auth.md`).
-- Two sequential database writes (no batching/transaction) — a second
-  round-trip cost that a transaction would not eliminate, but _would_
-  make atomic.
+- Three sequential database writes now (was two before Feature 9): the
+  `User`+`UserRole` transaction, then the `RefreshToken` insert. The
+  transaction adds a small additional round-trip cost in exchange for the
+  atomicity guarantee above.
 
 ## 17. Interview Notes
 
@@ -843,19 +924,23 @@ bcrypt comparison.
 {
   "message": "Login successful",
   "user": {
-    "id": "ebea9f2d-f331-40b8-968a-386dd88d4576",
-    "email": "jane.doe@example.com",
-    "name": "Jane Doe",
-    "role": "EMPLOYEE",
-    "createdAt": "2026-07-04T14:42:46.216Z",
-    "updatedAt": "2026-07-04T14:42:46.216Z"
+    "id": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
+    "email": "docs-example@example.com",
+    "name": "Docs Example",
+    "createdAt": "2026-07-05T04:41:20.891Z",
+    "updatedAt": "2026-07-05T04:41:20.891Z",
+    "roles": ["EMPLOYEE"]
   },
   "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...."
 }
 ```
 
 Same `Set-Cookie` behavior as register. Field meanings are identical to
-register's response — see that section.
+register's response — see that section. `user.roles` reflects the
+account's **current** role assignments at the moment of login (read fresh
+from `UserRole`), not whatever it was at registration — this is precisely
+what makes logging in again the fix for the "stale role" scenario
+documented in `GET /users`'s Edge Cases/Security Testing sections.
 
 ## 9. Error Responses
 
@@ -910,9 +995,10 @@ every time this endpoint changes.
   important endpoint to eventually rate-limit, given credential-stuffing
   risk. A known, acknowledged gap.
 - **JWT validation**: verify the issued `accessToken` actually decodes to
-  `{ sub, role, iat, exp }` and nothing more (no `email`/`name` in the
+  `{ sub, roles, iat, exp }` and nothing more (no `email`/`name` in the
   payload — see `handbook/07-jwt-access-refresh-tokens.md` for why the
-  payload is deliberately minimal).
+  payload is deliberately minimal; `roles` became an array in Feature 9,
+  previously a single `role` string).
 - **Sensitive data exposure**: confirm `password` never appears in the
   response, and confirm the submitted password never appears in
   `logs/*.log` (Morgan doesn't log bodies by default — verify this
@@ -923,7 +1009,8 @@ every time this endpoint changes.
 
 ## 14. Database Impact
 
-- **Tables affected**: `User` (read only), `RefreshToken` (insert).
+- **Tables affected**: `User` (read), `UserRole`/`Role` (read, to build
+  the token payload's `roles` array), `RefreshToken` (insert).
 - **Rows inserted**: exactly 1 `RefreshToken` row on success; zero on
   failure.
 - **Rows updated/deleted**: none.
@@ -947,11 +1034,13 @@ auth.service.login
     │    └─ found → bcrypt.compare(password, user.password)
     │                 ├─ mismatch → 401 Invalid credentials
     │                 └─ match    → issueTokenPair(user)
+    │                                 ├─ rbacRepository.getRoleNamesForUser(user.id)
+    │                                 └─ jwt.signAccessToken/signRefreshToken ({ sub, roles })
     ↓
 controller sets refreshToken cookie, responds 200
 ```
 
-**No** `authMiddleware`/`requireRole` — public route.
+**No** `authMiddleware`/`requirePermission` — public route.
 
 ## 16. Performance Notes
 
@@ -1173,7 +1262,7 @@ controller sets the NEW refreshToken cookie, responds 200 { accessToken }
 ```
 
 **No** `authMiddleware` (this route has its own, cookie-based auth check,
-not the Bearer-token one) and **no** `requireRole`.
+not the Bearer-token one) and **no** `requirePermission`.
 
 ## 16. Performance Notes
 
@@ -1469,18 +1558,23 @@ token's signature and expiry, performed by `authMiddleware`.
 
 {
   "user": {
-    "id": "ebea9f2d-f331-40b8-968a-386dd88d4576",
-    "email": "jane.doe@example.com",
-    "name": "Jane Doe",
-    "role": "EMPLOYEE",
-    "createdAt": "2026-07-04T14:42:46.216Z",
-    "updatedAt": "2026-07-04T14:42:46.216Z"
+    "id": "cc5d98db-0a0a-49bb-ab80-1d18d295bbf8",
+    "email": "stale-check-1783226574582@example.com",
+    "name": "Stale Check",
+    "createdAt": "2026-07-05T04:42:54.720Z",
+    "updatedAt": "2026-07-05T04:42:54.720Z",
+    "roles": ["ADMIN"]
   }
 }
 ```
 
 Same field meanings as register/login's `user` object — see Endpoint 3.
-`password` is never present.
+`password` is never present. **`roles` here is always fresh from the
+database** — `getCurrentUser` re-queries `UserRole` on every call rather
+than trusting the access token's embedded `roles` claim (verified live:
+calling `/me` with a token issued _before_ a role change still correctly
+shows the _new_ role — see the edge case below for why this is a
+narrower guarantee than it sounds).
 
 ## 9. Error Responses
 
@@ -1511,10 +1605,10 @@ Same field meanings as register/login's `user` object — see Endpoint 3.
 
 ## 12. Edge Cases
 
-| Scenario                                                     | Expected Behavior                                                                                                                                                                                                                                                             |
-| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Token valid but issued for a role that has since changed     | Returns the **stale** role from the token payload, not the current database value — the response reflects what the _token_ says, not necessarily today's database state; see Endpoint 8 and `handbook/08-rbac.md` for the full explanation of this propagation-delay behavior |
-| Calling this immediately after `/refresh` with the new token | `200`, works exactly like any other valid access token — no special-casing                                                                                                                                                                                                    |
+| Scenario                                                          | Expected Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Token valid but the user's role has since changed in the database | Returns the **current** database role, not the token's stale claim — corrected in Feature 9 after being verified live (a prior version of this doc, written during Feature 8, incorrectly stated the opposite). `getCurrentUser` does its own `UserRole` lookup by `userId`; it never reads `req.user.roles` from the token at all. **This is specific to `/me`** — it does not mean role changes take effect immediately everywhere. `requirePermission` (used by `/users` and, from Stage B onward, the Employee routes) checks `req.user.roles`, which _is_ the token's embedded, stale-until-relogin claim — see Endpoint 8's edge case for that distinct, still-true behavior. |
+| Calling this immediately after `/refresh` with the new token      | `200`, works exactly like any other valid access token — no special-casing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## 13. Security Testing
 
@@ -1548,17 +1642,18 @@ Authorization: Bearer <accessToken>
 authMiddleware
     ├─ no/malformed header → 401 Authentication required
     ├─ jwt.verifyAccessToken throws → 401 Invalid or expired token
-    └─ valid → req.user = { id, role }
+    └─ valid → req.user = { id, roles }   (roles unused by this route)
     ↓
 auth.controller.me → auth.service.getCurrentUser(req.user.id)
     ├─ userRepository.findById → not found → 401 User no longer exists
-    └─ found → sanitizeUser(user)
+    ├─ rbacRepository.getRoleNamesForUser(userId)   [fresh DB read]
+    └─ sanitizeUser(user, roles)
     ↓
 200 { user }
 ```
 
-**No** `requireRole` on this route — any authenticated user, regardless
-of role, can call it.
+**No** `requirePermission` on this route — any authenticated user,
+regardless of role, can call it.
 
 ## 16. Performance Notes
 
@@ -1571,11 +1666,14 @@ of role, can call it.
 
 **Q: Why does this endpoint re-fetch the user from the database instead
 of just returning the token's payload directly?** The token's payload is
-intentionally minimal (`sub`, `role` only) — it doesn't carry `email` or
+intentionally minimal (`sub`, `roles` only) — it doesn't carry `email` or
 `name` at all, so there's nothing to "just return" from the token; a
-database read is required to get the full profile. This also means `/me`
-always reflects the _current_ `name`/`email` (just not necessarily the
-current `role`, which is baked into the token — see the edge case above).
+database read is required to get the full profile. Since Feature 9,
+`getCurrentUser` also re-resolves `roles` from `UserRole` rather than
+reusing `req.user.roles`, so `/me` reflects the current `name`/`email`
+**and** the current roles — the one place in this API where a role
+change is visible without a fresh login (see the edge case above for why
+that doesn't extend to authorization decisions elsewhere).
 
 ## 18. cURL Examples
 
@@ -1621,32 +1719,34 @@ I'm authenticated" check.
 ## 1. Endpoint Information
 
 ```
-Feature:            RBAC (roles & permissions)
+Feature:            RBAC Redesign (Feature 9)
 Endpoint:           List All Users
-Description:        Returns every registered user (admin-only)
+Description:        Returns every registered user (requires the `user:list` permission)
 Method:             GET
 URL:                /api/v1/users
 API Version:        v1
 Module:             modules/users
 Authentication:     Yes (Bearer access token)
-Authorization:      ADMIN role required
+Authorization:      `user:list` permission required (granted to ADMIN only, as seeded)
 Public/Protected:   Protected
 ```
 
 ## 2. Purpose
 
 - **Why it exists**: gives an administrator visibility into all
-  registered accounts — this project's first real, concrete use of the
-  `role` field and the first authorization-gated endpoint.
+  registered accounts — this project's first real, concrete use of a
+  permission check and the first authorization-gated endpoint.
 - **Business problem solved**: user management/oversight — "who is
   registered in this system."
-- **Expected callers**: only users with the `ADMIN` role.
+- **Expected callers**: any user whose roles resolve to the `user:list`
+  permission — only `ADMIN`, per the seeded `RolePermission` grants, not a
+  hard-coded role-name check anymore.
 
 ## 3. Request Headers
 
-| Header                                | Required | Notes                                                         |
-| ------------------------------------- | -------- | ------------------------------------------------------------- |
-| `Authorization: Bearer <accessToken>` | **Yes**  | Must belong to a user whose token payload has `role: "ADMIN"` |
+| Header                                | Required | Notes                                                                   |
+| ------------------------------------- | -------- | ----------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must belong to a user whose roles resolve to the `user:list` permission |
 
 ## 4. Path Parameters
 
@@ -1666,7 +1766,8 @@ None.
 ## 7. Validation Rules
 
 No body/query to validate. The only check is authorization —
-`req.user.role === 'ADMIN'`.
+`requirePermission('user:list')` resolves the caller's roles to a
+permission set and confirms `user:list` is granted.
 
 ## 8. Successful Response
 
@@ -1679,32 +1780,32 @@ No body/query to validate. The only check is authorization —
       "id": "52f83ced-efa7-4f6e-acb5-f82f19e0768e",
       "email": "jane.doe@example.com",
       "name": "Jane Doe",
-      "role": "EMPLOYEE",
       "createdAt": "2026-07-04T13:56:29.996Z",
-      "updatedAt": "2026-07-04T13:56:29.996Z"
+      "updatedAt": "2026-07-04T13:56:29.996Z",
+      "roles": []
     },
     {
-      "id": "178e6fbb-e1ef-4e20-b564-665b91691aaf",
-      "email": "rbac.employee@example.com",
-      "name": "RBAC Employee",
-      "role": "ADMIN",
-      "createdAt": "2026-07-04T18:07:34.179Z",
-      "updatedAt": "2026-07-04T18:09:00.275Z"
+      "id": "e1b07e0b-3c8d-4f7d-aa1f-fffec7648b21",
+      "email": "stagea-test1@example.com",
+      "name": "Stage A Test",
+      "createdAt": "2026-07-05T04:35:57.265Z",
+      "updatedAt": "2026-07-05T04:35:57.265Z",
+      "roles": ["ADMIN"]
     }
   ]
 }
 ```
 
-| Field   | Description                                                                                                                                                                                              |
-| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `users` | An array of every `User` row in the database, each sanitized (no `password`). Order is whatever the database returns by default (no explicit `ORDER BY` is applied — do not rely on a particular order). |
+| Field   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users` | An array of every `User` row in the database, each sanitized (no `password`), each with a `roles` array. Order is whatever the database returns by default (no explicit `ORDER BY` — do not rely on a particular order). Note `jane.doe@example.com` above: an account created **before** the Feature 9 migration, now showing `roles: []` — its old `role` enum value was dropped, not migrated, per the "clean cut-over" decision (see the Global Reference's Known Gaps). |
 
 ## 9. Error Responses
 
-| Status | Reason                                | Response (`message`)                                                                      | When                                                                    |
-| ------ | ------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `401`  | No/invalid/expired access token       | Same messages as `/auth/me` (`"Authentication required"` or `"Invalid or expired token"`) | `authMiddleware` runs first, identically to every other protected route |
-| `403`  | Valid token, but `role` isn't `ADMIN` | `"You do not have permission to perform this action"`                                     | Any authenticated `EMPLOYEE` or `MANAGER`                               |
+| Status | Reason                                         | Response (`message`)                                                                      | When                                                                    |
+| ------ | ---------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `401`  | No/invalid/expired access token                | Same messages as `/auth/me` (`"Authentication required"` or `"Invalid or expired token"`) | `authMiddleware` runs first, identically to every other protected route |
+| `403`  | Valid token, but roles don't grant `user:list` | `"You do not have permission to perform this action"`                                     | Any authenticated `EMPLOYEE` or `MANAGER`                               |
 
 ## 10. Postman Test Cases
 
@@ -1717,19 +1818,19 @@ No body/query to validate. The only check is authorization —
 
 ## 11. Negative Testing
 
-| Scenario                                                                         | Expected                                                                                                                                         |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| A `role` claim manually crafted into a forged JWT (signed with the wrong secret) | `401` — fails signature verification before authorization is even checked                                                                        |
-| Wrong HTTP method (`POST /users`)                                                | `404` — no route registered for `POST` on this path                                                                                              |
-| Attempting to pass `role=ADMIN` as a query string (`?role=ADMIN`)                | No effect — this endpoint reads `req.user.role` from the verified token exclusively; query parameters are not consulted for authorization at all |
+| Scenario                                                                          | Expected                                                                                                                                                            |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A `roles` claim manually crafted into a forged JWT (signed with the wrong secret) | `401` — fails signature verification before authorization is even checked                                                                                           |
+| Wrong HTTP method (`POST /users`)                                                 | `404` — no route registered for `POST` on this path                                                                                                                 |
+| Attempting to pass `role=ADMIN` as a query string (`?role=ADMIN`)                 | No effect — this endpoint resolves permissions from `req.user.roles` on the verified token exclusively; query parameters are not consulted for authorization at all |
 
 ## 12. Edge Cases
 
-| Scenario                                                                                                                   | Expected Behavior                                                                                                                                                                                                               |
-| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A user is promoted to `ADMIN` in the database, but calls this endpoint using their still-valid, pre-promotion access token | `403` — the token's `role` claim is frozen at issuance; a fresh login or `/refresh` is required before the promotion takes effect. **Directly observed and verified live** during Feature 8's own testing — not a hypothetical. |
-| Empty `User` table (no users registered at all — unlikely in practice since an `ADMIN` had to register first)              | `200`, `{ "users": [] }`                                                                                                                                                                                                        |
-| Very large number of users                                                                                                 | Currently returns all of them in one response — no pagination; a real scalability limit worth knowing before this table grows large                                                                                             |
+| Scenario                                                                                                                   | Expected Behavior                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A user is promoted to `ADMIN` in the database, but calls this endpoint using their still-valid, pre-promotion access token | `403` — the token's `roles` claim is frozen at issuance; a fresh login or `/refresh` is required before the promotion takes effect. **Directly observed and verified live**, both during Feature 8's original testing and again after the Feature 9 permission-based rewrite — the specific mechanism changed (role → permission resolution), but the stale-token propagation delay behaves identically. |
+| Empty `User` table (no users registered at all — unlikely in practice since an `ADMIN` had to register first)              | `200`, `{ "users": [] }`                                                                                                                                                                                                                                                                                                                                                                                 |
+| Very large number of users                                                                                                 | Currently returns all of them in one response — no pagination; a real scalability limit worth knowing before this table grows large                                                                                                                                                                                                                                                                      |
 
 ## 13. Security Testing
 
@@ -1759,7 +1860,11 @@ No body/query to validate. The only check is authorization —
 
 ## 14. Database Impact
 
-- **Tables affected**: `User` (read only, all rows).
+- **Tables affected**: `User` (read, all rows), `UserRole`+`Role` (read,
+  once per distinct role name to build the `roles` array for every user
+  in the list), `Role`/`Permission`/`RolePermission` (read, once per
+  distinct role name in `req.user.roles`, via the permission cache, to
+  authorize the request itself).
 - **Rows affected**: none inserted/updated/deleted.
 - **Transactions**: N/A.
 
@@ -1773,38 +1878,53 @@ Authorization: Bearer <accessToken>
     ↓
 authMiddleware
     ├─ fails → 401
-    └─ succeeds → req.user = { id, role }
+    └─ succeeds → req.user = { id, roles }
     ↓
-requireRole('ADMIN')
-    ├─ req.user.role !== 'ADMIN' → 403
-    └─ req.user.role === 'ADMIN' → next()
+requirePermission('user:list')
+    ├─ permissionCache.getPermissionKeysForRoles(req.user.roles)
+    │    └─ cache miss → rbacRepository.getPermissionKeysForRoles(...)
+    ├─ 'user:list' not granted → 403
+    └─ 'user:list' granted → next()
     ↓
 user.controller.list → user.service.listUsers()
     ↓
-user.repository.findAll() → sanitizeUser() applied to every record
+user.repository.findAll()
+    ├─ rbacRepository.getRoleNamesForUsers(userIds)   [one batched query]
+    └─ sanitizeUser(user, roles) applied to every record
     ↓
 200 { users: [...] }
 ```
 
 **Middleware for this endpoint specifically**: `authMiddleware` **then**
-`requireRole('ADMIN')` — the order is the entire security model of this
-route (see `handbook/08-rbac.md`).
+`requirePermission('user:list')` — the order is the entire security model
+of this route, same principle as Feature 8's `requireRole('ADMIN')`, now
+resolved through the permission tables instead of a hard-coded role name.
 
 ## 16. Performance Notes
 
 - `findAll()` is an unfiltered `SELECT *` — fine at current scale, but the
   first endpoint in this API where pagination will eventually matter.
-- No caching.
+- Role-name-to-permission resolution is cached in-memory (a few minutes'
+  TTL — see `src/utils/permissionCache.js`) — most requests hit the cache,
+  not the database, for the authorization check itself.
+- `listUsers()` batches its role lookup into one query for all users
+  (`getRoleNamesForUsers`), not one query per user — avoids an N+1 query
+  pattern that would otherwise scale linearly with the user count.
 - No index concern here since there's no `WHERE` clause at all (a full
   table scan is unavoidable for "return everyone," regardless of
   indexing).
 
 ## 17. Interview Notes
 
-See `handbook/08-rbac.md` in full. The single most important question for
-this endpoint: _"A user was just promoted to `ADMIN` — why can't they
-access this endpoint yet with their current session?"_ — answered fully
-there, and directly observed during this endpoint's own development.
+See `handbook/08-rbac.md` and the Feature 9 planning doc in full. The
+single most important question for this endpoint: _"A user was just
+promoted to `ADMIN` — why can't they access this endpoint yet with their
+current session?"_ — answered fully there, and directly observed during
+both this endpoint's original development and its Feature 9 rewrite. A
+second, Feature-9-specific question: _"Why check a permission key instead
+of a role name directly?"_ — because the set of things `ADMIN` can do is
+now data (`RolePermission` rows), not code; granting `MANAGER` the same
+`user:list` access later is a seed-data change, not a code change.
 
 ## 18. cURL Examples
 
@@ -1840,3 +1960,1072 @@ routinely re-promote after resetting your local database.
   until a fresh login)
 - ✅ No sensitive data leaked
 - ✅ Logs verified: no tokens/secrets logged
+
+---
+
+---
+
+# 9. `POST /employees`
+
+## 1. Endpoint Information
+
+```
+Feature:            Employee CRUD (Feature 9, Stage B)
+Endpoint:           Create Employee
+Description:        Creates a new Employee (HR) record, optionally linked to a User account
+Method:             POST
+URL:                /api/v1/employees
+API Version:        v1
+Module:             modules/employees
+Authentication:     Yes (Bearer access token)
+Authorization:      `employee:create` permission required (ADMIN, MANAGER as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the entry point for HR data — separate from the
+  `User` (login/auth) table by design, see the Feature 9 planning doc's
+  data-model discussion.
+- **Business problem solved**: recording department/role/compensation/
+  reporting-line data for a person, independent of whether they have (or
+  ever will have) login access.
+- **Expected callers**: an `ADMIN` or `MANAGER` onboarding a new hire.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                             |
+| ------------------------------------- | -------- | ----------------------------------------------------------------- |
+| `Content-Type: application/json`      | **Yes**  | Sending malformed JSON returns `400 Invalid JSON in request body` |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `employee:create` permission                  |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
+  "department": "Engineering",
+  "jobTitle": "Backend Developer",
+  "salary": 75000,
+  "dateOfJoining": "2024-01-15",
+  "managerId": null
+}
+```
+
+| Field           | Type              | Required | Notes                                                                                                                                                           |
+| --------------- | ----------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `userId`        | string (UUID)     | No       | Links this Employee to a login account. Omit for an HR-only record with no system access.                                                                       |
+| `department`    | string            | Yes      | Free-text, min 1 character — not a normalized `Department` table (see Known Gaps).                                                                              |
+| `jobTitle`      | string            | Yes      | Free-text, min 1 character.                                                                                                                                     |
+| `salary`        | number            | Yes      | Must be a positive number.                                                                                                                                      |
+| `dateOfJoining` | string (ISO date) | Yes      | Coerced to a `Date`. Cannot be in the future.                                                                                                                   |
+| `managerId`     | string (UUID)     | No       | Must reference an existing `Employee.id`. Cannot equal the created record's own id (checked in the service, since the id doesn't exist yet at validation time). |
+
+## 7. Validation Rules
+
+Enforced by `src/modules/employees/employee.validation.js`'s
+`createEmployeeSchema` (Zod), via `validateMiddleware`.
+
+- `userId`/`managerId`: if present, must be syntactically valid UUIDs
+  (Zod's `.uuid()`).
+- `department`/`jobTitle`: non-empty strings.
+- `salary`: must be a positive number. Custom message:
+  `"Salary must be a positive number"`.
+- `dateOfJoining`: coerced via `z.coerce.date()`, then `.refine()`d to
+  reject any date after "now". Custom message:
+  `"Date of joining cannot be in the future"`.
+- **Verified quirk**: an entirely missing `dateOfJoining` produces
+  `"dateOfJoining: Invalid input: expected date, received Date"` — not
+  `"received undefined"` like the other missing-field messages. This is
+  `z.coerce.date()`'s own behavior: it coerces `undefined` into
+  `new Date(undefined)` (an `Invalid Date`, still typeof `Date`) _before_
+  the type check runs, so Zod reports the coerced type, not the original
+  one. Worth knowing so this doesn't look like a bug when testing.
+
+**Business-rule validation (in the service, not the schema)**:
+
+- `userId` (if provided) must not already belong to another non-deleted
+  `Employee` record — requires a database lookup.
+- `managerId` cannot equal the record's own `id` — checked on update, not
+  create (a brand-new record's `id` can't be referenced in its own
+  creation payload).
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "employee": {
+    "id": "954690da-d433-4b7e-9e04-1c7be03c36bd",
+    "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
+    "department": "Engineering",
+    "jobTitle": "Backend Developer",
+    "salary": "75000",
+    "dateOfJoining": "2024-01-15T00:00:00.000Z",
+    "managerId": null,
+    "deletedAt": null,
+    "createdAt": "2026-07-05T04:52:52.814Z",
+    "updatedAt": "2026-07-05T04:52:52.814Z"
+  }
+}
+```
+
+| Field                | Description                                                                                                                                                                                   |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `employee.id`        | UUID, server-generated.                                                                                                                                                                       |
+| `employee.salary`    | **Returned as a string**, not a number — Prisma's `Decimal` type serializes to a string in JSON to avoid floating-point precision loss. Expect this in every response that includes `salary`. |
+| `employee.deletedAt` | `null` for a live record — see `DELETE /employees/:id` for the soft-delete value.                                                                                                             |
+| `employee.managerId` | `null` unless supplied.                                                                                                                                                                       |
+
+## 9. Error Responses
+
+| Status | Reason                                               | Response (`message`)                                                                       | When                                                                                                                                        |
+| ------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | Missing required field(s)                            | e.g. `"department: Invalid input: expected string, received undefined"` (joined per field) | Any of `department`/`jobTitle`/`salary`/`dateOfJoining` absent                                                                              |
+| `400`  | Negative/zero salary                                 | `"salary: Salary must be a positive number"`                                               | `salary <= 0`                                                                                                                               |
+| `400`  | Future `dateOfJoining`                               | `"dateOfJoining: Date of joining cannot be in the future"`                                 | Date is after "now"                                                                                                                         |
+| `400`  | Invalid UUID for `userId`/`managerId`                | Zod's default UUID-format message                                                          | Malformed UUID string supplied                                                                                                              |
+| `400`  | Malformed JSON body                                  | `"Invalid JSON in request body"`                                                           | Same as every other JSON-body endpoint                                                                                                      |
+| `401`  | No/invalid/expired access token                      | Same as every other protected endpoint                                                     | `authMiddleware` failure                                                                                                                    |
+| `400`  | `userId`/`managerId` references a nonexistent record | `"userId: references a record that does not exist"` (or `managerId:`)                      | The referenced `User`/`Employee` doesn't exist — a Prisma FK-violation (`P2003`), translated in the service rather than left as a raw `500` |
+| `403`  | Roles don't grant `employee:create`                  | `"You do not have permission to perform this action"`                                      | Authenticated as plain `EMPLOYEE`                                                                                                           |
+| `409`  | `userId` already has an Employee record              | `"This user already has an employee record"`                                               | Duplicate `userId` (only counts non-deleted records), via pre-check or the DB's own partial-unique-index constraint                         |
+
+## 10. Postman Test Cases
+
+| #   | Case                 | Body                                                                                                                        | Expected                            |
+| --- | -------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| 1   | Valid, with `userId` | `{"userId":"<uuid>","department":"Engineering","jobTitle":"Backend Developer","salary":75000,"dateOfJoining":"2024-01-15"}` | `201`                               |
+| 2   | Valid, no `userId`   | Same, minus `userId`                                                                                                        | `201`, `employee.userId: null`      |
+| 3   | Duplicate `userId`   | Same `userId` as test 1, run again                                                                                          | `409`                               |
+| 4   | Empty body           | `{}`                                                                                                                        | `400`, all 4 required fields listed |
+| 5   | Negative salary      | `{..., "salary": -500}`                                                                                                     | `400`                               |
+| 6   | Future date          | `{..., "dateOfJoining": "2099-01-01"}`                                                                                      | `400`                               |
+| 7   | As `EMPLOYEE` token  | Any valid body                                                                                                              | `403`                               |
+| 8   | No token             | Any valid body                                                                                                              | `401`                               |
+| 9   | Nonexistent `userId` | `{..., "userId": "00000000-0000-0000-0000-000000000000"}`                                                                   | `400`, not `500`                    |
+
+## 11. Negative Testing
+
+| Payload/Scenario                                        | Expected                                                                                                       |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Wrong data types (`"salary": "not-a-number"`)           | `400` — Zod type-check fails                                                                                   |
+| SQL injection attempt in `department`/`jobTitle`        | Stored as literal text — Prisma's parameterized queries neutralize it; no query-structure risk                 |
+| XSS attempt (`"jobTitle": "<script>alert(1)</script>"`) | Accepted and stored as-is — same frontend-escaping-is-the-real-boundary reasoning as `register`'s `name` field |
+| Very long `department`/`jobTitle` (10,000+ characters)  | Currently accepted — no max-length rule, a real (if minor) gap, same class as `register`'s `name` field        |
+| Malformed JSON                                          | `400`, `"Invalid JSON in request body"`                                                                        |
+| Tampered/expired JWT                                    | `401`                                                                                                          |
+| Wrong role (`EMPLOYEE`)                                 | `403`                                                                                                          |
+| Wrong method (`GET` with a body) / wrong URL            | `404`/method-not-allowed via Express's default routing                                                         |
+
+## 12. Edge Cases
+
+| Scenario                                                                                          | Expected Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Concurrent create requests for the same `userId`                                                  | Only one succeeds (`201`); the other gets `409` from the database's partial-unique-index catch, not just the pre-check — **not independently verified under true concurrency**, same honestly-flagged gap as `register`                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `userId` referencing a `User` that doesn't exist                                                  | `400`, `"userId: references a record that does not exist"` — **found and fixed while writing this doc**: this originally leaked a raw `500` with the Prisma error text, since nothing caught the `P2003` foreign-key-violation code. Now translated in `employee.service.js`.                                                                                                                                                                                                                                                                                                                                                        |
+| `managerId` referencing a non-existent `Employee`                                                 | Same fix, same message shape with `managerId` instead                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Creating an employee, then re-creating one for the same `userId` after the first was soft-deleted | `201` — succeeds. **This required a real fix during Feature 9's own development**: the database's unique constraint on `Employee.userId` was originally a plain (non-partial) unique index, which blocked reuse forever — contradicting the soft-delete design, and caught by testing this exact scenario, not by code review. Fixed with a hand-written partial unique index (`WHERE "deletedAt" IS NULL`), since Prisma's schema DSL has no syntax for partial unique constraints. Verified live: soft-deleting frees the `userId` for a brand-new record, while a genuinely-still-active duplicate still correctly returns `409`. |
+
+## 13. Security Testing
+
+- **Authentication/authorization**: confirm `401` before `403` (no token
+  vs. wrong role), same principle as every other protected endpoint.
+- **Rate limiting**: not implemented — same acknowledged gap as the rest
+  of the API.
+- **Mass assignment**: confirm fields not in the schema (`id`, `deletedAt`,
+  `createdAt`) cannot be client-supplied and honored — Zod strips
+  unrecognized keys by default.
+- **BOLA**: not directly applicable to creation (no existing resource is
+  looked up by client-supplied ID) — but the `userId` **is** a
+  client-supplied reference to another resource; confirm a non-admin
+  cannot use this endpoint to link an Employee record to an arbitrary
+  `userId` they don't own (mitigated entirely by the permission gate — an
+  `EMPLOYEE` can't reach this endpoint at all).
+- **Sensitive data exposure**: the response includes `salary` — confirm
+  only `ADMIN`/`MANAGER` (who already have `employee:create`) ever see
+  this endpoint's response at all.
+
+## 14. Database Impact
+
+- **Tables affected**: `Employee` (insert).
+- **Rows inserted**: exactly 1, on success.
+- **Transactions**: none — a single insert needs no transaction wrapper.
+- **Cascade/rollback behavior**: N/A (no cascading writes on create).
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/employees
+    ↓
+(global middleware chain)
+    ↓
+authMiddleware
+    ↓
+requirePermission('employee:create')
+    ↓ (403 if not granted)
+validateMiddleware(createEmployeeSchema)
+    ↓ (400 on Zod failure)
+employee.controller.create (asyncHandler-wrapped)
+    ↓
+employee.service.createEmployee
+    ├─ userId provided? → employeeRepository.findByUserId → exists? → 409
+    ├─ employeeRepository.create(data)
+    └─ (catch) Prisma P2002 → 409 (race-condition fallback)
+    ↓
+201 { employee }
+```
+
+## 16. Performance Notes
+
+- `findByUserId` uses the `@unique` index on `Employee.userId`.
+- No transaction overhead — single insert.
+- Permission resolution for `employee:create` benefits from the same
+  in-memory cache as every other permission-gated route.
+
+## 17. Interview Notes
+
+- **Q: Why is `Employee` a separate table from `User` instead of adding
+  columns to `User`?** Separation of concerns at the data level — auth
+  identity and HR data have different lifecycles and, in a larger system,
+  are often owned by different services entirely. See the Feature 9
+  planning doc's full data-model discussion.
+- **Q: Why does the service pre-check for a duplicate `userId` AND catch
+  the database's own unique-constraint error?** The pre-check is for the
+  common case (fast, friendly `409` without hitting a constraint
+  violation); the catch is for the rare race-condition case a pre-check
+  alone can't close, since two requests can both pass the pre-check
+  before either commits. The database is the actual source of truth for
+  uniqueness — the pre-check is an optimization, not the guarantee.
+- **Q: Why is `Employee.userId`'s uniqueness enforced by a hand-written
+  partial index instead of a plain `@unique` in `schema.prisma`?**
+  Because the real business rule is "at most one **active** Employee per
+  user," not "at most one ever" — a plain unique index can't distinguish
+  a soft-deleted row from a live one, so it would permanently block
+  reusing a `userId` after its Employee record was soft-deleted. A
+  `CREATE UNIQUE INDEX ... WHERE "deletedAt" IS NULL` expresses that
+  correctly; Prisma's schema DSL has no syntax for partial constraints,
+  so this required a hand-written migration rather than a schema
+  attribute. This also forced the `User`↔`Employee` relation to be
+  modeled as one-to-many (`User.employees: Employee[]`) rather than
+  one-to-one, since Prisma requires the FK side of a 1:1 relation to be
+  schema-level unique — which, honestly, is the more accurate model
+  anyway: a `userId` genuinely can have more than one `Employee` row over
+  time (history), just never more than one _live_ one. **This was a real
+  bug caught by testing the soft-delete-then-recreate scenario while
+  writing this documentation**, not found by code review — worth citing
+  as a concrete example of why testing the documented edge cases matters.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/employees \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"department":"Engineering","jobTitle":"Backend Developer","salary":75000,"dateOfJoining":"2024-01-15"}'
+```
+
+## 19. Postman Collection Notes
+
+Requires `{{accessToken}}` to resolve to `employee:create` (`ADMIN`/
+`MANAGER`). Save the returned `employee.id` to a collection variable
+(e.g. `{{employeeId}}`) — every other Employee endpoint needs it.
+
+## 20. Testing Checklist
+
+- ✅ Success with and without `userId`
+- ✅ `409` on duplicate (still-active) `userId`
+- ✅ `201` re-creating for a `userId` whose prior Employee record was soft-deleted
+- ✅ `400` (not `500`) on nonexistent `userId`/`managerId`
+- ✅ `400` on missing fields, negative salary, future date
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `salary` returned as a string, not a number
+- ✅ No sensitive data leaked beyond the intended `salary` field
+- ✅ Logs verified: no tokens/secrets logged
+
+---
+
+---
+
+# 10. `GET /employees`
+
+## 1. Endpoint Information
+
+```
+Feature:            Employee CRUD (Feature 9, Stage B)
+Endpoint:           List Employees
+Description:        Returns every non-deleted Employee record
+Method:             GET
+URL:                /api/v1/employees
+API Version:        v1
+Module:             modules/employees
+Authentication:     Yes (Bearer access token)
+Authorization:      `employee:read:any` permission required (ADMIN, MANAGER as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: gives HR/management visibility into the full
+  workforce.
+- **Business problem solved**: "who works here, in what role, reporting
+  to whom."
+- **Expected callers**: `ADMIN`/`MANAGER` only — a plain `EMPLOYEE` never
+  reaches this endpoint (they only ever hold `employee:read:own`, which
+  this route doesn't accept).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                              |
+| ------------------------------------- | -------- | -------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `employee:read:any` permission |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+**None currently implemented** — no `page`/`limit`/`search`/`filter`/
+`sort` support yet. Every call returns the entire non-deleted `Employee`
+table. Deliberately deferred to Feature 10 (see Known Gaps).
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body/query to validate — only the `employee:read:any` permission
+check.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "employees": [
+    {
+      "id": "954690da-d433-4b7e-9e04-1c7be03c36bd",
+      "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
+      "department": "Engineering",
+      "jobTitle": "Backend Developer",
+      "salary": "75000",
+      "dateOfJoining": "2024-01-15T00:00:00.000Z",
+      "managerId": null,
+      "deletedAt": null,
+      "createdAt": "2026-07-05T04:52:52.814Z",
+      "updatedAt": "2026-07-05T04:52:52.814Z"
+    }
+  ]
+}
+```
+
+| Field       | Description                                                                                                   |
+| ----------- | ------------------------------------------------------------------------------------------------------------- |
+| `employees` | An array of every `Employee` row where `deletedAt IS NULL`. No explicit `ORDER BY` — do not rely on ordering. |
+
+## 9. Error Responses
+
+| Status | Reason                                | Response (`message`)                                  | When                              |
+| ------ | ------------------------------------- | ----------------------------------------------------- | --------------------------------- |
+| `401`  | No/invalid/expired access token       | Same as every other protected endpoint                | `authMiddleware` failure          |
+| `403`  | Roles don't grant `employee:read:any` | `"You do not have permission to perform this action"` | Authenticated as plain `EMPLOYEE` |
+
+## 10. Postman Test Cases
+
+| #   | Case                    | Expected     |
+| --- | ----------------------- | ------------ |
+| 1   | Valid `ADMIN`/`MANAGER` | `200`, array |
+| 2   | Valid `EMPLOYEE` token  | `403`        |
+| 3   | No token                | `401`        |
+
+## 11. Negative Testing
+
+| Scenario                                                                 | Expected                                                                                                  |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| Wrong HTTP method (`POST /employees` with no body handled by this route) | `405`/routed to the `POST` handler instead, not this one — confirm the correct handler runs for each verb |
+| Tampered/expired JWT                                                     | `401`                                                                                                     |
+| Attempting `?role=ADMIN` or similar query tampering                      | No effect — authorization reads `req.user.roles` from the verified token only                             |
+
+## 12. Edge Cases
+
+| Scenario                   | Expected Behavior                                                                            |
+| -------------------------- | -------------------------------------------------------------------------------------------- |
+| No employees exist yet     | `200`, `{ "employees": [] }`                                                                 |
+| All employees soft-deleted | `200`, `{ "employees": [] }` — soft-deleted rows are invisible to this endpoint, by design   |
+| Very large employee count  | Returns all of them in one response — no pagination, same scalability caveat as `GET /users` |
+
+## 13. Security Testing
+
+- **Authorization**: confirm every non-`:any`-granting role is rejected.
+- **Sensitive data exposure**: `salary` is present for every entry — this
+  is exactly why the permission gate matters here more than on most
+  endpoints in this API.
+- **BOLA**: not applicable — returns the full collection, not a
+  client-supplied ID lookup (see `GET /employees/:id` for where BOLA
+  actually applies).
+
+## 14. Database Impact
+
+- **Tables affected**: `Employee` (read only, all non-deleted rows).
+- **Rows affected**: none inserted/updated/deleted.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/employees
+    ↓
+authMiddleware
+    ↓
+requirePermission('employee:read:any')
+    ↓ (403 if not granted)
+employee.controller.list → employee.service.listEmployees()
+    ↓
+employee.repository.findAll()   [WHERE deletedAt IS NULL]
+    ↓
+200 { employees: [...] }
+```
+
+## 16. Performance Notes
+
+- Unfiltered `SELECT * WHERE deletedAt IS NULL` — a full scan, same
+  scalability profile as `GET /users`; pagination is Feature 10's job.
+- No caching of the result set itself (only the permission-resolution
+  step is cached).
+
+## 17. Interview Notes
+
+**Q: Why does `EMPLOYEE`'s `employee:read:own` permission not work on
+this route at all, even for their own record?** This route only accepts
+`employee:read:any` — an `EMPLOYEE` reaching it is rejected at the
+middleware layer before any record is even considered, by design: "list
+everyone" and "read one specific record you own" are different
+operations with different risk profiles, so they're gated by different
+permission keys rather than one route trying to serve both scopes.
+
+## 18. cURL Examples
+
+```bash
+curl -i http://localhost:3000/api/v1/employees -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Same `{{accessToken}}` requirement as `POST /employees`.
+
+## 20. Testing Checklist
+
+- ✅ `200` as `ADMIN`/`MANAGER`, `403` as `EMPLOYEE`, `401` with no token
+- ✅ Empty array when no/all-deleted employees exist
+- ✅ Soft-deleted records never appear
+- ✅ No sensitive data leaked beyond intended fields
+
+---
+
+---
+
+# 11. `GET /employees/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Employee CRUD (Feature 9, Stage B)
+Endpoint:           Get Employee By ID
+Description:        Returns a single Employee record, subject to an ownership check
+Method:             GET
+URL:                /api/v1/employees/:id
+API Version:        v1
+Module:             modules/employees
+Authentication:     Yes (Bearer access token)
+Authorization:      `employee:read:any` OR `employee:read:own` (the latter requires the record's userId to match the caller)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the one place a plain `EMPLOYEE` can see Employee
+  data at all — their own record.
+- **Business problem solved**: "what does my own HR record say" for a
+  regular employee, and "look up this specific person" for HR/management.
+- **Expected callers**: any authenticated user, with two different access
+  paths depending on their permissions.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                      |
+| ------------------------------------- | -------- | ---------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `employee:read:any` or `employee:read:own` |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description              | Example                                |
+| ---- | ------------- | -------- | ------------------------ | -------------------------------------- |
+| `id` | string (UUID) | **Yes**  | The Employee record's id | `954690da-d433-4b7e-9e04-1c7be03c36bd` |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No format validation on `id` at all — an invalid UUID or a well-formed
+UUID that doesn't exist both simply fail to match any row and produce the
+same `404`. This is the two-layer authorization design in action:
+
+1. **Middleware** (`requirePermission('employee:read:any',
+'employee:read:own')`): does the caller's roles grant _either_ key?
+   If neither, `403` — before the record is even fetched.
+2. **Service** (`getEmployeeById`): fetches the record first (`404` if
+   missing/soft-deleted), _then_ — only if the caller doesn't have the
+   `:any` grant — compares `employee.userId` to the caller's own id,
+   throwing `403` on mismatch. The middleware alone cannot do this check;
+   it has no record to compare against yet.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "employee": {
+    "id": "954690da-d433-4b7e-9e04-1c7be03c36bd",
+    "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
+    "department": "Engineering",
+    "jobTitle": "Backend Developer",
+    "salary": "75000",
+    "dateOfJoining": "2024-01-15T00:00:00.000Z",
+    "managerId": null,
+    "deletedAt": null,
+    "createdAt": "2026-07-05T04:52:52.814Z",
+    "updatedAt": "2026-07-05T04:52:52.814Z"
+  }
+}
+```
+
+Same field meanings as `POST /employees`'s response.
+
+## 9. Error Responses
+
+| Status | Reason                                                           | Response (`message`)                                        | When                                                                                                                                  |
+| ------ | ---------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `401`  | No/invalid/expired access token                                  | Same as every other protected endpoint                      | `authMiddleware` failure                                                                                                              |
+| `403`  | Roles grant neither `employee:read:any` nor `employee:read:own`  | `"You do not have permission to perform this action"`       | Caller has no employee-related read permission at all (should not normally happen given the seeded roles, but fails closed if it did) |
+| `403`  | Caller only has `employee:read:own`, and the record isn't theirs | `"You do not have permission to view this employee record"` | A different, more specific message than the middleware's — deliberately distinguishable in logs/testing                               |
+| `404`  | No such record, or it's soft-deleted                             | `"Employee not found"`                                      | Invalid/nonexistent/deleted `id`                                                                                                      |
+
+## 10. Postman Test Cases
+
+| #   | Case                                      | Expected                            |
+| --- | ----------------------------------------- | ----------------------------------- |
+| 1   | `ADMIN`/`MANAGER`, any valid `id`         | `200`                               |
+| 2   | Owning `EMPLOYEE`, own `id`               | `200`                               |
+| 3   | Different `EMPLOYEE`, someone else's `id` | `403` (the record-specific message) |
+| 4   | Valid UUID, nonexistent record            | `404`                               |
+| 5   | Malformed (non-UUID) `id`                 | `404` (verified live — no `500`)    |
+| 6   | No token                                  | `401`                               |
+
+## 11. Negative Testing
+
+| Scenario                                              | Expected                                                                                                         |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| SQL injection attempt as the `id` (`'; DROP TABLE--`) | `404` — Prisma's parameterized query treats it as a literal string that matches nothing, no query-structure risk |
+| Extremely long string as `id`                         | `404` — same as above, just a very long non-matching string                                                      |
+| Tampered/expired JWT                                  | `401`                                                                                                            |
+| Wrong method (`POST /employees/:id`)                  | `404` (no route registered for `POST` on this path)                                                              |
+
+## 12. Edge Cases
+
+| Scenario                                                                                      | Expected Behavior                                                                                                                        |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Record soft-deleted between listing it and fetching it by id                                  | `404` — the repository's `findById` filters `deletedAt: null`, so a just-deleted record disappears immediately, no stale read window     |
+| An `ADMIN` fetching their _own_ Employee record (if they have one)                            | `200` — `:any` short-circuits the ownership check entirely; an admin never needs `:own` to see their own record                          |
+| A user with **no** Employee record calling this with someone else's `id`, holding only `:own` | `403` — the ownership check compares against `employee.userId`, which will simply never equal a caller who has no Employee record at all |
+
+## 13. Security Testing
+
+- **BOLA (Broken Object Level Authorization)**: this is the primary BOLA
+  test case in this API so far — confirm systematically that an
+  `employee:read:own`-only caller **cannot** read any `id` except the one
+  whose `userId` matches their own, by testing at least two different
+  non-owned ids, not just one.
+- **Authorization layering**: confirm the two distinct `403` messages
+  above actually correspond to the two different rejection paths
+  (middleware vs. service) — useful for distinguishing "wrong permission
+  entirely" from "right permission, wrong record" during testing.
+- **Sensitive data exposure**: `salary` is visible to the record's own
+  owner here (unlike `GET /employees`, which an `EMPLOYEE` can never
+  reach) — confirm this is the intended behavior (an employee seeing
+  their own salary is expected; seeing anyone else's is not).
+
+## 14. Database Impact
+
+- **Tables affected**: `Employee` (read only, single row).
+- **Rows affected**: none inserted/updated/deleted.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/employees/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('employee:read:any', 'employee:read:own')
+    ↓ (403 if neither granted; req.grantedPermissions set otherwise)
+employee.controller.getById → employee.service.getEmployeeById(id, { id: req.user.id, grantedPermissions })
+    ├─ employeeRepository.findById(id)   [WHERE id = ? AND deletedAt IS NULL]
+    │    └─ not found → 404
+    ├─ grantedPermissions includes 'employee:read:any'? → skip ownership check
+    └─ else: employee.userId !== requester.id → 403
+    ↓
+200 { employee }
+```
+
+## 16. Performance Notes
+
+- `findById` filters on the primary key plus `deletedAt` — cheap,
+  index-backed lookup.
+- The ownership check is pure in-memory comparison (`===`), no extra
+  query.
+
+## 17. Interview Notes
+
+- **Q: Why does the middleware accept _either_ `employee:read:any` or
+  `employee:read:own` on the same route, instead of two separate
+  routes?** The HTTP contract (`GET /employees/:id`) is identical either
+  way — what differs is _whose_ records you can reach, which is a
+  data-level concern, not a routing concern. Splitting it into two routes
+  would duplicate the endpoint for no benefit; the ownership check
+  belongs in the service layer regardless.
+- **Q: Could the ownership check be done in the middleware instead?** No
+  — the middleware runs before the controller/service ever fetches the
+  record, so it has no `employee.userId` to compare against yet. This is
+  exactly why this API uses a two-layer model: middleware for the coarse
+  "can you do this at all" gate, service for the fine "is this specific
+  record yours" gate.
+
+## 18. cURL Examples
+
+```bash
+# As the owning EMPLOYEE
+curl -i http://localhost:3000/api/v1/employees/$EMPLOYEE_ID \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+
+# As ADMIN, any id
+curl -i http://localhost:3000/api/v1/employees/$EMPLOYEE_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Needs both an `{{adminAccessToken}}` and an `{{employeeAccessToken}}` (the
+latter belonging to the user whose `userId` the target Employee record
+points to) to exercise both authorization paths.
+
+## 20. Testing Checklist
+
+- ✅ `200` as `ADMIN`/`MANAGER` for any record
+- ✅ `200` as the owning `EMPLOYEE`
+- ✅ `403` (record-specific message) as a different `EMPLOYEE`
+- ✅ `404` for nonexistent and soft-deleted records
+- ✅ `404` (not `500`) for a malformed/non-UUID `id`
+- ✅ `401` with no token
+- ✅ No sensitive data leaked beyond intended fields
+
+---
+
+---
+
+# 12. `PATCH /employees/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Employee CRUD (Feature 9, Stage B)
+Endpoint:           Update Employee
+Description:        Partially updates an Employee record
+Method:             PATCH
+URL:                /api/v1/employees/:id
+API Version:        v1
+Module:             modules/employees
+Authentication:     Yes (Bearer access token)
+Authorization:      `employee:update:any` permission required (ADMIN, MANAGER as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: HR data changes — promotions, department transfers,
+  manager reassignment, salary changes.
+- **Business problem solved**: keeping HR records current without
+  re-creating them.
+- **Expected callers**: `ADMIN`/`MANAGER` only — no self-service update
+  path exists for `EMPLOYEE` (see Known Gaps).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                |
+| ------------------------------------- | -------- | ---------------------------------------------------- |
+| `Content-Type: application/json`      | **Yes**  | For any request with a body                          |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `employee:update:any` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description              | Example                                |
+| ---- | ------------- | -------- | ------------------------ | -------------------------------------- |
+| `id` | string (UUID) | **Yes**  | The Employee record's id | `954690da-d433-4b7e-9e04-1c7be03c36bd` |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+Same shape as `POST /employees`, but **every field is optional**
+(`updateEmployeeSchema` is `createEmployeeSchema.partial()`). Send only
+the fields you want to change.
+
+```json
+{
+  "department": "Platform Engineering",
+  "salary": 82000
+}
+```
+
+## 7. Validation Rules
+
+Same per-field rules as `POST /employees` (Section 7 there), applied only
+to whichever fields are present. Additional business rule, checked in the
+service: **`managerId` cannot equal the record's own `id`** — an employee
+cannot be their own manager. Verified live: `400`,
+`"An employee cannot be their own manager"`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "employee": {
+    "id": "954690da-d433-4b7e-9e04-1c7be03c36bd",
+    "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
+    "department": "Platform Engineering",
+    "jobTitle": "Backend Developer",
+    "salary": "82000",
+    "dateOfJoining": "2024-01-15T00:00:00.000Z",
+    "managerId": null,
+    "deletedAt": null,
+    "createdAt": "2026-07-05T04:52:52.814Z",
+    "updatedAt": "2026-07-05T05:10:00.000Z"
+  }
+}
+```
+
+Only `updatedAt` changes automatically among the timestamp fields.
+
+## 9. Error Responses
+
+| Status | Reason                                   | Response (`message`)                                  | When                                                                   |
+| ------ | ---------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------- |
+| `400`  | `managerId` equals the record's own `id` | `"An employee cannot be their own manager"`           | Self-management attempt                                                |
+| `400`  | Invalid field value(s)                   | Same per-field messages as `POST /employees`          | e.g. negative salary, future date, malformed UUID                      |
+| `401`  | No/invalid/expired access token          | Same as every other protected endpoint                | `authMiddleware` failure                                               |
+| `403`  | Roles don't grant `employee:update:any`  | `"You do not have permission to perform this action"` | Any `EMPLOYEE`, or a `MANAGER`/`ADMIN` role misconfigured in seed data |
+| `404`  | No such record, or it's soft-deleted     | `"Employee not found"`                                | Invalid/nonexistent/deleted `id`                                       |
+
+## 10. Postman Test Cases
+
+| #   | Case                               | Body                                            | Expected                |
+| --- | ---------------------------------- | ----------------------------------------------- | ----------------------- |
+| 1   | Valid partial update               | `{"department":"Platform Engineering"}`         | `200`                   |
+| 2   | Self-management (`managerId = id`) | `{"managerId":"<same id>"}`                     | `400`                   |
+| 3   | Nonexistent `id`                   | `{"department":"X"}`                            | `404`                   |
+| 4   | As `EMPLOYEE` token                | Any body                                        | `403`                   |
+| 5   | Empty body `{}`                    | Valid — no fields required for a partial update | `200`, no fields change |
+
+## 11. Negative Testing
+
+Same category of tests as `POST /employees`'s Negative Testing section
+(wrong types, XSS/SQL attempts, malformed JSON, tampered JWT) — all
+behave identically, applied to whichever fields are sent.
+
+## 12. Edge Cases
+
+| Scenario                                                    | Expected Behavior                                                                                                                                                           |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Updating a record that was soft-deleted moments earlier     | `404` — `findById`'s `deletedAt: null` filter applies to updates too, not just reads                                                                                        |
+| Concurrent updates to the same record from two requests     | Last write wins — no optimistic-locking/version check exists; **not independently verified under true concurrency**, same honestly-flagged gap as elsewhere in this project |
+| Setting `managerId` to a _different_, valid Employee's `id` | `200` — no cycle-detection beyond the direct self-reference check (a longer manager cycle, e.g. A→B→A, is **not** currently detected — a known, undemonstrated gap)         |
+
+## 13. Security Testing
+
+- **Mass assignment**: confirm `id`, `deletedAt`, `createdAt`, `updatedAt`
+  cannot be client-supplied and honored — same as `POST /employees`.
+- **Authorization**: confirm `EMPLOYEE` (which never has `:update:any` or
+  any `:update:own`) cannot reach this endpoint at all, for any record
+  including their own.
+- **BOLA**: not applicable in the ownership sense (`:update:any` doesn't
+  distinguish records) — but confirm a `MANAGER` genuinely can update
+  _any_ employee, since that's the seeded design, not an oversight.
+
+## 14. Database Impact
+
+- **Tables affected**: `Employee` (update).
+- **Rows updated**: exactly 1, on success.
+- **Transactions**: none — a single update needs no wrapper.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/employees/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('employee:update:any')
+    ↓ (403 if not granted)
+validateMiddleware(updateEmployeeSchema)
+    ↓ (400 on Zod failure)
+employee.controller.update → employee.service.updateEmployee(id, data)
+    ├─ employeeRepository.findById(id) → not found → 404
+    ├─ assertNotSelfManaged(id, data.managerId) → 400 if equal
+    └─ employeeRepository.update(id, data)
+    ↓
+200 { employee }
+```
+
+## 16. Performance Notes
+
+Same profile as `GET /employees/:id` plus one additional `UPDATE`
+statement — no notable performance concerns at this scale.
+
+## 17. Interview Notes
+
+**Q: Why is `managerId === id` checked in the service instead of the Zod
+schema?** The schema validates the _shape_ of a single field in
+isolation; this check compares the payload's `managerId` against the
+_path parameter_ `id`, which the schema has no access to — cross-field
+(and cross-parameter) business rules belong in the service layer, not the
+validation schema, by design (see `CLAUDE.md`'s layering rules).
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/employees/$EMPLOYEE_ID \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"department":"Platform Engineering","salary":82000}'
+```
+
+## 19. Postman Collection Notes
+
+Same `{{accessToken}}`/`{{employeeId}}` variables as the other Employee
+endpoints.
+
+## 20. Testing Checklist
+
+- ✅ Valid partial update (single field, multiple fields, empty body)
+- ✅ `400` on self-management (`managerId = id`)
+- ✅ `404` on nonexistent/soft-deleted record
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ Only `updatedAt` changes among timestamps
+- ✅ No sensitive data leaked
+
+---
+
+---
+
+# 13. `DELETE /employees/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Employee CRUD (Feature 9, Stage B)
+Endpoint:           Delete Employee (soft delete)
+Description:        Marks an Employee record as deleted without removing the row
+Method:             DELETE
+URL:                /api/v1/employees/:id
+API Version:        v1
+Module:             modules/employees
+Authentication:     Yes (Bearer access token)
+Authorization:      `employee:delete:any` permission required (ADMIN, MANAGER as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: removes an employee from active views (lists,
+  lookups) while preserving the historical row — HR data is a classic
+  case where hard-deleting is undesirable (audit trail, payroll history).
+- **Business problem solved**: offboarding, or correcting an
+  accidentally-created record, without losing the record entirely.
+- **Expected callers**: `ADMIN`/`MANAGER` only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                |
+| ------------------------------------- | -------- | ---------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `employee:delete:any` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description              | Example                                |
+| ---- | ------------- | -------- | ------------------------ | -------------------------------------- |
+| `id` | string (UUID) | **Yes**  | The Employee record's id | `954690da-d433-4b7e-9e04-1c7be03c36bd` |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body to validate — only the permission check and the record's
+existence (via the same `findById`, `deletedAt: null`-filtered lookup
+used everywhere else).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Employee deleted successfully"
+}
+```
+
+The response deliberately does **not** echo the deleted record — there is
+nothing further the caller needs from it, and this keeps the response
+shape simple and consistent.
+
+## 9. Error Responses
+
+| Status | Reason                                  | Response (`message`)                                  | When                                                                                                                                                                                   |
+| ------ | --------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `401`  | No/invalid/expired access token         | Same as every other protected endpoint                | `authMiddleware` failure                                                                                                                                                               |
+| `403`  | Roles don't grant `employee:delete:any` | `"You do not have permission to perform this action"` | Any `EMPLOYEE`                                                                                                                                                                         |
+| `404`  | No such record, already soft-deleted    | `"Employee not found"`                                | Invalid/nonexistent/**already-deleted** `id` — **not** `409`, verified live: calling `DELETE` twice on the same `id` returns `404` both times after the first call, not `409 Conflict` |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                          | Expected                                                                |
+| --- | ------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| 1   | Valid delete                                                  | `200`                                                                   |
+| 2   | Same `id` again (already deleted)                             | `404`, not `409`                                                        |
+| 3   | Nonexistent `id`                                              | `404`                                                                   |
+| 4   | As `EMPLOYEE` token                                           | `403`                                                                   |
+| 5   | No token                                                      | `401`                                                                   |
+| 6   | `GET /employees/:id` on the same `id` right after deleting it | `404` — soft-deleted records disappear from every read path immediately |
+
+## 11. Negative Testing
+
+| Scenario                                            | Expected                                                                                |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Malformed (non-UUID) `id`                           | `404` — same as every other endpoint taking `id` in the path                            |
+| Tampered/expired JWT                                | `401`                                                                                   |
+| Wrong method (`GET` with delete semantics expected) | Routed to the actual `GET` handler instead — confirm the right handler serves each verb |
+
+## 12. Edge Cases
+
+| Scenario                                                                 | Expected Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deleting a record that has other Employees reporting to it (`managerId`) | The direct reports are **not** cascade-deleted — the `Employee.managerId` FK is `ON DELETE SET NULL`, but that only fires on a real row deletion, not a soft delete (an `UPDATE ... SET deletedAt = now()`), so reports still show the now-soft-deleted manager's `id` until manually reassigned. **A real, undemonstrated-until-writing-this-doc gap**: soft delete does not clean up `managerId` references the way a hard delete's `SET NULL` would. |
+| Concurrent delete requests for the same `id`                             | One succeeds (`200`), the other should see `404` (already gone from the `deletedAt: null`-filtered lookup) — **not independently verified under true concurrency**                                                                                                                                                                                                                                                                                      |
+| Restoring a soft-deleted record                                          | **No endpoint exists for this** — only a direct database update (`deletedAt: null`) can restore one today, per the Known Gaps section                                                                                                                                                                                                                                                                                                                   |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `EMPLOYEE` cannot delete any record,
+  including their own (there is no `:delete:own` permission at all — only
+  `ADMIN`/`MANAGER` can delete, matching the confirmed authorization
+  matrix).
+- **Idempotency under retry**: confirm a client that retries a `DELETE`
+  after a network timeout (not knowing if the first attempt succeeded)
+  gets a safe, non-destructive `404` on the second attempt rather than an
+  error that implies something went wrong.
+- **Mass assignment**: N/A — no request body.
+
+## 14. Database Impact
+
+- **Tables affected**: `Employee` (update — `deletedAt` set, row not
+  removed).
+- **Rows updated**: exactly 1, on success. **Zero rows deleted** — this
+  is the entire point of a soft delete.
+- **Cascade/rollback behavior**: **does not** trigger the `managerId`
+  `ON DELETE SET NULL` FK rule — see the Edge Cases finding above. That
+  rule only fires on an actual `DELETE` statement, which this endpoint
+  never issues.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/employees/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('employee:delete:any')
+    ↓ (403 if not granted)
+employee.controller.remove → employee.service.softDeleteEmployee(id)
+    ├─ employeeRepository.findById(id) → not found → 404
+    └─ employeeRepository.softDelete(id)   [UPDATE ... SET deletedAt = now()]
+    ↓
+200 { message: "Employee deleted successfully" }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup plus single indexed update — no notable
+performance concerns at this scale.
+
+## 17. Interview Notes
+
+- **Q: Why soft delete instead of a real `DELETE`?** HR data has an
+  audit/history expectation that a hard delete would violate — see the
+  Feature 9 planning doc's Purpose section. It also mirrors the
+  `RefreshToken.revoked` pattern already established in Feature 7 ("flag,
+  don't erase").
+- **Q: What's the tradeoff of soft delete you found while building this?**
+  Foreign-key `ON DELETE` rules (like `managerId`'s `SET NULL`) only fire
+  on real deletes — a soft delete is just an `UPDATE`, so any FK-driven
+  cleanup you'd get "for free" from a hard delete has to be handled
+  explicitly instead. This project does **not** yet handle it (see Edge
+  Cases) — a good concrete example of soft delete's cost, not just its
+  benefit.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/employees/$EMPLOYEE_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this **last** in any test sequence involving a given `{{employeeId}}`
+— every other Employee endpoint stops finding the record afterward.
+
+## 20. Testing Checklist
+
+- ✅ Valid delete → `200`
+- ✅ Second delete on the same `id` → `404`, not `409`
+- ✅ `GET`/`PATCH` on the same `id` after deletion → `404`
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ Confirmed: soft delete does **not** clean up dependent `managerId`
+  references (documented gap, not silently ignored)
+- ✅ No sensitive data leaked

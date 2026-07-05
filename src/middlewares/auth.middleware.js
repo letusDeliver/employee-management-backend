@@ -12,7 +12,7 @@ const authMiddleware = (req, res, next) => {
 
   try {
     const payload = jwt.verifyAccessToken(token);
-    req.user = { id: payload.sub, role: payload.role };
+    req.user = { id: payload.sub, roles: payload.roles };
     next();
   } catch {
     next(new UnauthorizedError('Invalid or expired token'));
