@@ -31,7 +31,7 @@ I am acting as a **Principal Backend Architect, Senior Node.js Engineer, and Tec
 14. **Follow REST API best practices** (proper HTTP verbs, status codes, resource naming).
 15. **Keep the project scalable and maintainable.**
 16. **Keep the root `README.md` in sync with the project.** Before pushing any feature (or any other change) to git, check whether `README.md` needs updating — new endpoints, new scripts, new setup steps, tech stack additions, or roadmap checkboxes — and update it first, in the same commit/push, not as an afterthought.
-17. **Maintain `handbook/API_ENDPOINTS.md` as a living, implementation-accurate API reference.** After every feature that adds or modifies an endpoint, update this document before pushing — never let it drift from the actual code. For every endpoint it must cover, in this order: (1) Endpoint Information (feature, method, URL, version, module, auth/authz, public/protected), (2) Purpose, (3) Request Headers, (4) Path Parameters, (5) Query Parameters, (6) Request Body (full schema + field descriptions), (7) Validation Rules, (8) Successful Response (status + full JSON + field-by-field explanation), (9) Error Responses (every applicable status code, with exact message and trigger condition), (10) Postman Test Cases, (11) Negative Testing (wrong types, missing/empty/null fields, injection/XSS attempts, malformed JSON, tampered/expired JWTs, wrong role, wrong method/URL), (12) Edge Cases (concurrency, duplicates, boundary values, already-deleted/-revoked resources), (13) Security Testing (authN/authZ, rate limiting, JWT validation, sensitive-data exposure, role/privilege escalation, mass assignment, BOLA), (14) Database Impact (tables/rows affected, transactions, rollback behavior), (15) Request Lifecycle (the exact middleware chain for that endpoint), (16) Performance Notes, (17) Interview Notes, (18) cURL Examples, (19) Postman Collection Notes, (20) a Testing Checklist. Every example and error message in the document must be verified against the real running server, not invented — this handbook exists so anyone can test the API in Postman without reading the source code. Never invent behavior; if something is a known gap (no rate limiting, no pagination, untested concurrency), say so honestly rather than describing an idealized version. Keep older endpoints' entries synchronized whenever their underlying implementation changes, not just when new endpoints are added.
+17. **Maintain `../handbook/API_ENDPOINTS.md` as a living, implementation-accurate API reference.** (The `handbook/` directory lives at the repository root, shared with the frontend — see the root `README.md`.) After every feature that adds or modifies an endpoint, update this document before pushing — never let it drift from the actual code. For every endpoint it must cover, in this order: (1) Endpoint Information (feature, method, URL, version, module, auth/authz, public/protected), (2) Purpose, (3) Request Headers, (4) Path Parameters, (5) Query Parameters, (6) Request Body (full schema + field descriptions), (7) Validation Rules, (8) Successful Response (status + full JSON + field-by-field explanation), (9) Error Responses (every applicable status code, with exact message and trigger condition), (10) Postman Test Cases, (11) Negative Testing (wrong types, missing/empty/null fields, injection/XSS attempts, malformed JSON, tampered/expired JWTs, wrong role, wrong method/URL), (12) Edge Cases (concurrency, duplicates, boundary values, already-deleted/-revoked resources), (13) Security Testing (authN/authZ, rate limiting, JWT validation, sensitive-data exposure, role/privilege escalation, mass assignment, BOLA), (14) Database Impact (tables/rows affected, transactions, rollback behavior), (15) Request Lifecycle (the exact middleware chain for that endpoint), (16) Performance Notes, (17) Interview Notes, (18) cURL Examples, (19) Postman Collection Notes, (20) a Testing Checklist. Every example and error message in the document must be verified against the real running server, not invented — this handbook exists so anyone can test the API in Postman without reading the source code. Never invent behavior; if something is a known gap (no rate limiting, no pagination, untested concurrency), say so honestly rather than describing an idealized version. Keep older endpoints' entries synchronized whenever their underlying implementation changes, not just when new endpoints are added.
 
 ## Technology Stack
 
@@ -599,3 +599,37 @@ gap already disclosed for Windows `SIGTERM` delivery and browser-only
 `SameSite` cookie enforcement in earlier features. See
 `planning/feature-13-swagger-api-docs.md` for the approved plan,
 including the pre-implementation design review and checklist.)_
+
+_(Repository Restructuring — Monorepo Layout — 2026-07-22. Not a numbered
+backend feature; a one-time, repo-wide structural change ahead of
+starting the Angular frontend. Everything that previously lived at the
+repo root (`src/`, `prisma/`, `package.json`, `CLAUDE.md`, `README.md`,
+`.env`, `planning/`, etc.) moved down one level into `backend/`, in-place
+— same git repo, same GitHub remote
+(`github.com/letusDeliver/employee-management-backend`), same commit
+history, no new repo created. `handbook/` moved up to the repository
+root, now shared between backend and frontend feature write-ups; a new
+top-level `docs/` was created (reserved for architecture diagrams,
+screenshots, ADRs, and deployment notes — developer guides stay in
+`handbook/`). `planning/` stayed inside `backend/` (backend-specific
+per-feature plans; frontend will get its own `frontend/planning/` the
+same way once frontend feature work starts). A new root-level
+`README.md` now indexes `backend/README.md`, `frontend/README.md`
+(pending), and `handbook/`. This file's own Rule 17 and this repo's
+`README.md` had their `handbook/...` references corrected to
+`../handbook/...` to match the new location — `planning/...` references
+were left untouched since that folder didn't move. A real, Windows-
+specific blocker surfaced during the move itself: `mv` failed with
+`Permission denied` on `prisma/` and `src/` because a leftover
+`npm run dev` → `nodemon` parent/child process pair (from the session's
+background dev server) still held file handles open inside those
+folders — the same class of orphaned-process issue first documented in
+Feature 4, just triggered by a directory move instead of a port
+conflict this time; found via `Get-CimInstance Win32_Process` (command
+line inspection, not just process name) and resolved by force-killing
+both PIDs before retrying. Verified live after the move: `npm run dev`
+from inside `backend/` boots cleanly (`.env`, `node_modules`, and
+`prisma/` all resolve correctly relative to the new location), and
+`/api/v1/health` / `/api/v1/ready` both still return `200`. No commits
+were pushed to the remote as part of this restructuring — local commit
+only, pending your go-ahead to push.)_
