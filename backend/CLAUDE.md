@@ -633,3 +633,48 @@ from inside `backend/` boots cleanly (`.env`, `node_modules`, and
 `/api/v1/health` / `/api/v1/ready` both still return `200`. No commits
 were pushed to the remote as part of this restructuring — local commit
 only, pending your go-ahead to push.)_
+
+_(Permission Resolution Enhancement — 2026-07-22. Not a numbered
+feature; a small, surgically-scoped RBAC enhancement, built specifically
+because the approved `docs/frontend-architecture-blueprint.md` requires
+it before any frontend auth code is written — the frontend must not
+maintain its own copy of `prisma/seed.js`'s `ROLE_PERMISSIONS` map (a
+duplication/drift risk the blueprint explicitly rejected). `POST
+/auth/register`, `POST /auth/login`, and `GET /auth/me` now additionally
+return `user.permissions: string[]` — the caller's role(s) resolved to
+concrete permission keys via `permissionCache.getPermissionKeysForRoles`,
+the **same** cache `permission.middleware.js`'s `requirePermission`
+already uses server-side; this exposes existing resolution logic, it
+does not add new logic. New `attachPermissions(sanitizedUser, roles)`
+in `user.service.js`, deliberately **not** folded into `sanitizeUser()`
+itself — `sanitizeUser()` is also used by `listUsers()` (`GET /users`)
+and by the `AuditLog` before/after snapshots in the profile-picture
+flows, neither of which should carry a resolved permission set.
+`GET /users` and both `/users/me/profile-picture` endpoints are
+therefore unchanged — still `roles`-only. The JWT payload itself is
+unchanged (`{ sub, roles }`) — permissions travel only in the JSON
+response body, refreshed on every register/login/`/auth/me` call, the
+exact same "can go stale until the next login" trade-off already
+accepted for `roles` since Feature 8. Swagger docs updated to match:
+`src/docs/components/schemas.js` gained a new `AuthenticatedUserSchema`
+(`UserPublicSchema` + `permissions`), used only by `auth.docs.js`'s
+three affected paths — `UserPublicSchema` itself is untouched, so
+`GET /users`'s Swagger schema doesn't lie about a field that endpoint
+never returns. Verified live end-to-end: a fresh registration's
+response includes `permissions: ["employee:read:own"]`; login and
+`/auth/me` match; after promoting the same test user to `ADMIN` via the
+established direct-DB-script pattern, `/auth/me` **with the same
+pre-promotion access token** immediately showed the full ADMIN
+permission set (since `getCurrentUser` re-resolves roles/permissions
+from the database on every call, not from the token) while `GET /users`
+with that same stale token still correctly `403`'d (since
+`authMiddleware`/`requirePermission` still check the token's own frozen
+`roles` claim) — a fresh login then produced a token whose `GET /users`
+call succeeded (`200`); `/api-docs.json` regenerated cleanly with the
+new `AuthenticatedUserSchema` correctly referenced by register/login/me
+and correctly absent from `GET /users`'s schema. `handbook/
+API_ENDPOINTS.md` updated for all three affected endpoints (response
+JSON, field tables, and the document's own "last synchronized" header).
+See `docs/frontend-architecture-blueprint.md` §19 for what this
+unblocks next: `frontend/CLAUDE.md`'s `SessionStore` can now be written
+against the real field from day one instead of a temporary assumption.)_

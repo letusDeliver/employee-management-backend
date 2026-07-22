@@ -12,6 +12,15 @@ import { z } from 'zod';
 //   always attaches this array, it is not a raw Prisma User column.
 // - `password` never appears - sanitizeUser() strips it before any
 //   response is built.
+// - AuthenticatedUserSchema additionally includes `permissions` -
+//   attachPermissions() (user.service.js) attaches this only for the
+//   three endpoints that authenticate the caller (register, login,
+//   /auth/me), NOT for GET /users or the profile-picture endpoints,
+//   which use the plain UserPublicSchema without it. Keeping these as
+//   two schemas (rather than adding `permissions` to UserPublicSchema
+//   itself) is deliberate - the field genuinely isn't present on every
+//   response that shape backs, and this API's docs commit to only
+//   documenting real, observed behavior.
 
 export const UserPublicSchema = z
   .object({
@@ -25,6 +34,14 @@ export const UserPublicSchema = z
     updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
   })
   .meta({ id: 'User', description: 'A sanitized User record - password is never included' });
+
+export const AuthenticatedUserSchema = UserPublicSchema.extend({
+  permissions: z.array(z.string()).meta({ example: ['employee:read:own'] }),
+}).meta({
+  id: 'AuthenticatedUser',
+  description:
+    'A sanitized User record with resolved permission keys - only returned by endpoints that authenticate the caller (register, login, /auth/me).',
+});
 
 export const EmployeeSchema = z
   .object({

@@ -6,15 +6,26 @@ API. Updated after every feature that adds or modifies an endpoint (see
 from the actual running server — not hand-written from memory — so it can
 be used to test the API in Postman without reading any source code.
 
-**Last synchronized with**: Feature 13 (Swagger/OpenAPI docs). No endpoints
-were added or changed by Feature 13 — it added an interactive, machine-
-readable reference (`/api-docs`) alongside this document, not a
-replacement for it. Still covers all 18 endpoints introduced through
-Feature 12 (File uploads — profile pictures + employee documents): the 13
-from Feature 9/10/11 plus 5 from Feature 12 — `POST`/`DELETE
-/users/me/profile-picture` and `POST`/`GET`/`DELETE
-/employees/:id/documents`. `GET /auth/me` and `GET /users` also now
-include `profileImageUrl`/`profileImagePublicId` in the `user` shape.
+**Last synchronized with**: the permission-resolution enhancement built
+ahead of the Angular frontend (see `docs/frontend-architecture-blueprint.md`
+§7.1/§19). No endpoints were added — `POST /auth/register`,
+`POST /auth/login`, and `GET /auth/me` now additionally return a resolved
+`user.permissions: string[]` array (the caller's role(s) resolved to
+permission keys via the same `permissionCache` lookup
+`requirePermission` uses server-side), so the frontend never needs its
+own copy of `prisma/seed.js`'s `ROLE_PERMISSIONS` map. Deliberately
+**not** added to `GET /users` or the profile-picture endpoints — see
+those sections' own response docs, unchanged.
+
+Before that: Feature 13 (Swagger/OpenAPI docs) added no endpoint changes
+— it added an interactive, machine-readable reference (`/api-docs`)
+alongside this document, not a replacement for it. Still covers all 18
+endpoints introduced through Feature 12 (File uploads — profile pictures
++ employee documents): the 13 from Feature 9/10/11 plus 5 from Feature
+12 — `POST`/`DELETE /users/me/profile-picture` and
+`POST`/`GET`/`DELETE /employees/:id/documents`. `GET /auth/me` and
+`GET /users` also include `profileImageUrl`/`profileImagePublicId` in
+the `user` shape.
 
 ### Interactive Reference (Swagger UI)
 
@@ -669,7 +680,8 @@ via the generic `validateMiddleware`, **before** the controller ever runs.
     "name": "Stage A Test",
     "createdAt": "2026-07-05T04:35:57.265Z",
     "updatedAt": "2026-07-05T04:35:57.265Z",
-    "roles": ["EMPLOYEE"]
+    "roles": ["EMPLOYEE"],
+    "permissions": ["employee:read:own"]
   },
   "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...."
 }
@@ -680,6 +692,18 @@ array of role names). Every new registration is assigned exactly one role
 — `EMPLOYEE` — via a `UserRole` row created in the same database
 transaction as the user itself (see Request Lifecycle below), so
 `roles` is never empty for a freshly registered account.
+
+**As of the permission-resolution enhancement (built ahead of the
+Angular frontend, see `docs/frontend-architecture-blueprint.md` §7.1)**:
+`user.permissions` is a new field — the caller's role(s) resolved into
+concrete permission keys via the same `permissionCache` lookup
+`requirePermission` uses server-side (`user.service.js`'s
+`attachPermissions`), so the frontend never needs its own copy of
+`prisma/seed.js`'s `ROLE_PERMISSIONS` map. **Only present on this
+endpoint, `POST /auth/login`, and `GET /auth/me`** — deliberately not
+added to `GET /users` or the profile-picture endpoints, which still
+return the plain `roles`-only shape (see `AuthenticatedUserSchema` vs.
+`UserPublicSchema` in `src/docs/components/schemas.js`).
 
 Response headers also include:
 
@@ -696,6 +720,7 @@ Set-Cookie: refreshToken=eyJ...; Max-Age=604799; Path=/api/v1/auth;
 | `user.email`                         | Echoes the registered email.                                                                                                                                                                                                     |
 | `user.name`                          | Echoes the registered name.                                                                                                                                                                                                      |
 | `user.roles`                         | Always `["EMPLOYEE"]` for a self-registered account — there is no way to register as `ADMIN`/`MANAGER` via this endpoint. An array (not a single string) since Feature 9, since a user can in principle hold more than one role. |
+| `user.permissions`                   | Always `["employee:read:own"]` for a fresh registration — the `EMPLOYEE` role's grants resolved to permission keys, identical to what `requirePermission` checks server-side. Only present on register/login/`/auth/me`.        |
 | `user.createdAt` / `updatedAt`       | ISO 8601 timestamps, identical on creation.                                                                                                                                                                                      |
 | **`user.password` is never present** | Stripped by `sanitizeUser` before the response is built — verify this on every test.                                                                                                                                             |
 | `accessToken`                        | A signed JWT, `15m` default lifetime. Use in `Authorization: Bearer <accessToken>` for subsequent requests.                                                                                                                      |
@@ -993,18 +1018,24 @@ bcrypt comparison.
     "name": "Docs Example",
     "createdAt": "2026-07-05T04:41:20.891Z",
     "updatedAt": "2026-07-05T04:41:20.891Z",
-    "roles": ["EMPLOYEE"]
+    "roles": ["EMPLOYEE"],
+    "permissions": ["employee:read:own"]
   },
   "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...."
 }
 ```
 
 Same `Set-Cookie` behavior as register. Field meanings are identical to
-register's response — see that section. `user.roles` reflects the
-account's **current** role assignments at the moment of login (read fresh
-from `UserRole`), not whatever it was at registration — this is precisely
-what makes logging in again the fix for the "stale role" scenario
-documented in `GET /users`'s Edge Cases/Security Testing sections.
+register's response — see that section. `user.roles` **and
+`user.permissions`** reflect the account's **current** role
+assignments/resolved grants at the moment of login (read fresh from
+`UserRole`/`permissionCache`), not whatever they were at registration —
+this is precisely what makes logging in again the fix for the "stale
+role" scenario documented in `GET /users`'s Edge Cases/Security Testing
+sections, and now also the fix for stale permissions (verified live: a
+user promoted to `ADMIN` mid-session keeps the old token's stale
+`permissions` until a fresh login, exactly mirroring the pre-existing
+stale-`roles` behavior).
 
 ## 9. Error Responses
 
@@ -1629,7 +1660,8 @@ token's signature and expiry, performed by `authMiddleware`.
     "profileImagePublicId": null,
     "createdAt": "2026-07-05T04:41:20.891Z",
     "updatedAt": "2026-07-05T12:32:25.983Z",
-    "roles": ["EMPLOYEE"]
+    "roles": ["EMPLOYEE"],
+    "permissions": ["employee:read:own"]
   }
 }
 ```
@@ -1639,12 +1671,18 @@ are `null` until the user uploads a profile picture via `POST
 /users/me/profile-picture` — see that endpoint's own documentation below.
 
 Same field meanings as register/login's `user` object — see Endpoint 3.
-`password` is never present. **`roles` here is always fresh from the
-database** — `getCurrentUser` re-queries `UserRole` on every call rather
-than trusting the access token's embedded `roles` claim (verified live:
+`password` is never present. **`roles` and `permissions` here are always
+fresh from the database** — `getCurrentUser` re-queries `UserRole` and
+re-resolves permissions via `permissionCache` on every call rather than
+trusting the access token's embedded `roles` claim (verified live:
 calling `/me` with a token issued _before_ a role change still correctly
-shows the _new_ role — see the edge case below for why this is a
-narrower guarantee than it sounds).
+shows the _new_ role **and** the new role's full permission set — see
+the edge case below for why this is a narrower guarantee than it
+sounds). This makes `/auth/me` the one endpoint where a stale access
+token's `permissions` can still be checked accurately without a fresh
+login — every *other* permission-gated endpoint still enforces the
+token's stale `roles` claim via `authMiddleware`/`requirePermission`
+until the token is refreshed or reissued.
 
 ## 9. Error Responses
 

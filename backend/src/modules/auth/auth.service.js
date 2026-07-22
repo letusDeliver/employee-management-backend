@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 
 import prisma from '../../config/database.js';
 import userRepository from '../users/user.repository.js';
-import { sanitizeUser } from '../users/user.service.js';
+import { sanitizeUser, attachPermissions } from '../users/user.service.js';
 import rbacRepository from '../rbac/rbac.repository.js';
 import refreshTokenRepository from './refreshToken.repository.js';
 import jwt from '../../utils/jwt.js';
@@ -58,7 +58,7 @@ const register = async ({ email, password, name }) => {
 
   const { roles, ...tokens } = await issueTokenPair(user);
 
-  return { user: sanitizeUser(user, roles), ...tokens };
+  return { user: await attachPermissions(sanitizeUser(user, roles), roles), ...tokens };
 };
 
 const login = async ({ email, password }) => {
@@ -77,7 +77,7 @@ const login = async ({ email, password }) => {
 
   const { roles, ...tokens } = await issueTokenPair(user);
 
-  return { user: sanitizeUser(user, roles), ...tokens };
+  return { user: await attachPermissions(sanitizeUser(user, roles), roles), ...tokens };
 };
 
 const refresh = async (refreshToken) => {
@@ -123,7 +123,7 @@ const getCurrentUser = async (userId) => {
 
   const roles = await rbacRepository.getRoleNamesForUser(userId);
 
-  return sanitizeUser(user, roles);
+  return attachPermissions(sanitizeUser(user, roles), roles);
 };
 
 export default { register, login, refresh, logout, getCurrentUser };

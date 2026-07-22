@@ -3,7 +3,7 @@ import { z } from 'zod';
 import registry from '../../docs/openapi.registry.js';
 import { bearerAuth, cookieAuth } from '../../docs/components/security.js';
 import { errorResponse, jsonResponse } from '../../docs/components/responses.js';
-import { UserPublicSchema } from '../../docs/components/schemas.js';
+import { AuthenticatedUserSchema } from '../../docs/components/schemas.js';
 import { registerSchema, loginSchema } from './auth.validation.js';
 
 const TAG = ['Auth'];
@@ -21,7 +21,7 @@ registry.registerPath({
   responses: {
     201: jsonResponse(
       'Account created',
-      z.object({ message: z.string(), user: UserPublicSchema, accessToken: z.string() }),
+      z.object({ message: z.string(), user: AuthenticatedUserSchema, accessToken: z.string() }),
       { message: 'User registered successfully', accessToken: 'eyJhbGciOi...' },
     ),
     400: errorResponse('Validation failed', { status: 'error', message: 'email: Invalid email' }),
@@ -45,7 +45,7 @@ registry.registerPath({
   responses: {
     200: jsonResponse(
       'Login successful',
-      z.object({ message: z.string(), user: UserPublicSchema, accessToken: z.string() }),
+      z.object({ message: z.string(), user: AuthenticatedUserSchema, accessToken: z.string() }),
       { message: 'Login successful', accessToken: 'eyJhbGciOi...' },
     ),
     400: errorResponse('Validation failed'),
@@ -94,7 +94,7 @@ registry.registerPath({
     'Always reads the user fresh from the database - never trusts stale role/permission data from the token payload.',
   security: [{ [bearerAuth.name]: [] }],
   responses: {
-    200: jsonResponse('OK', z.object({ user: UserPublicSchema })),
+    200: jsonResponse('OK', z.object({ user: AuthenticatedUserSchema })),
     401: errorResponse('Missing, invalid, or expired access token', {
       status: 'error',
       message: 'Authentication required',

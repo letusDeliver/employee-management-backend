@@ -5,12 +5,29 @@ import rbacRepository from '../rbac/rbac.repository.js';
 import auditLogRepository from '../audit/auditLog.repository.js';
 import { AUDIT_ACTIONS, AUDIT_ENTITY_TYPES } from '../audit/auditLog.constants.js';
 import cloudinaryStorage from '../../utils/cloudinaryStorage.js';
+import permissionCache from '../../utils/permissionCache.js';
 import NotFoundError from '../../errors/NotFoundError.js';
 import BadRequestError from '../../errors/BadRequestError.js';
 
 export const sanitizeUser = (user, roles = []) => {
   const { password, ...safeUser } = user;
   return { ...safeUser, roles };
+};
+
+// Resolves a user's roles into the same permission keys
+// permission.middleware.js's requirePermission() checks server-side
+// (same permissionCache, no separate resolution logic) and attaches them
+// to an already-sanitized user. Deliberately NOT folded into
+// sanitizeUser() itself: sanitizeUser() is also used for listUsers()
+// (GET /users) and AuditLog before/after snapshots, neither of which
+// should carry a resolved permission set - only the three endpoints that
+// authenticate the caller (register, login, /auth/me) do. See
+// docs/frontend-architecture-blueprint.md §7.1 for why this exists: the
+// frontend must not maintain its own copy of prisma/seed.js's
+// ROLE_PERMISSIONS map.
+export const attachPermissions = async (sanitizedUser, roles) => {
+  const permissions = await permissionCache.getPermissionKeysForRoles(roles);
+  return { ...sanitizedUser, permissions };
 };
 
 const listUsers = async () => {
