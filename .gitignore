@@ -2,7 +2,11 @@
 .DS_Store
 Thumbs.db
 
-# Editor
-.vscode/
-.idea/
+# Editor - anchored to the repo root only. Subprojects (backend/, frontend/)
+# manage their own .vscode//.idea/ policy via their own .gitignore - an
+# unanchored rule here would silently block legitimate tracked files like
+# frontend's CLI-generated .vscode/*.json (tasks.json, launch.json, etc.),
+# which frontend/.gitignore explicitly un-ignores.
+/.vscode/
+/.idea/
 *.swp

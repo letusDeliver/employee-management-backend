@@ -1,10 +1,11 @@
 # Frontend Architecture Blueprint
 
-**Status:** Approved. The one required backend prerequisite (§7.1/§19)
-has shipped and been verified live — see the Progress Log entry in
-`backend/CLAUDE.md` ("Permission Resolution Enhancement"). Angular
-scaffolding is the next step, still pending its own separate approval.
-No Angular code or CLI commands have been run as part of this document.
+**Status:** Approved and in active use. The backend prerequisite
+(§7.1/§19) shipped and was verified live (see `backend/CLAUDE.md`'s
+"Permission Resolution Enhancement" entry). Feature 0 (Angular Project
+Initialization) is complete — see `frontend/CLAUDE.md`'s Progress Log.
+Feature 1 (Angular Material, Tailwind CSS, theming, design tokens) is
+next, following the same 8-phase workflow (`frontend/CLAUDE.md`).
 
 This blueprint is the frontend's equivalent of the backend's
 `CLAUDE.md` + `planning/feature-NN-*.md` combination: a durable
@@ -24,10 +25,22 @@ handbook kept in sync, one commit per feature).
   section; (5) expanded the Feature Lifecycle and Definition of Done
   into one detailed, symmetric checklist; (6) added an explicit
   Store-is-not-NgRx clarification.
-- v3 (this revision) — the §7.1/§19 backend prerequisite has been built
+- v3 — the §7.1/§19 backend prerequisite has been built
   and verified live: `POST /auth/register`, `POST /auth/login`, and
   `GET /auth/me` now return a resolved `user.permissions: string[]`.
   §0, §7.1, and §19 updated from "proposed" to "shipped."
+- v4 (this revision) — Feature 0 (Angular Project Initialization) is
+  complete; the environment-file naming in §2's folder tree corrected
+  from the original illustrative `environment.ts`/`environment.production.ts`
+  to Angular's actual current `ng generate environments` convention:
+  `environment.ts` (used as-is for production) +
+  `environment.development.ts` (swapped in for dev builds via a
+  `fileReplacements` entry). This is a naming correction only — no
+  change to the Core Layer's config-token architecture (§12), which
+  still holds: exactly one file (`core/config/api-base-url.token.ts`)
+  reads `environment.*` directly, everything else injects the
+  `API_BASE_URL` token. See `frontend/CLAUDE.md`'s Progress Log for
+  everything else Feature 0 verified live.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:
@@ -229,8 +242,8 @@ frontend/
 │   │           └── employee-documents/        # EmployeeDocumentsDialogComponent
 │   │
 │   ├── environments/
-│   │   ├── environment.ts
-│   │   └── environment.production.ts
+│   │   ├── environment.ts             # used as-is for production (Angular's current `ng generate environments` convention — see v4 revision note)
+│   │   └── environment.development.ts # swapped in for dev builds via a fileReplacements entry
 │   ├── styles/
 │   │   ├── _tokens.scss                # single source of truth: color roles, spacing, radii
 │   │   ├── _material-theme.scss        # mat.theme() built from _tokens

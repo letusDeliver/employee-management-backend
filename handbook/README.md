@@ -1,9 +1,10 @@
-# Backend Engineering Handbook
+# Engineering Handbook
 
-Internal engineering handbook for the Employee Management App backend —
-doubles as senior backend interview preparation material. One chapter is
-written per completed feature, in build order, immediately after that
-feature ships.
+Internal engineering handbook for the Employee Management App — shared
+between the backend and the Angular frontend since the monorepo
+restructuring — doubles as senior interview preparation material. One
+chapter is written per completed feature, in build order, immediately
+after that feature ships.
 
 ## Overview
 
@@ -11,7 +12,7 @@ feature ships.
 - [API Endpoints Handbook](./API_ENDPOINTS.md) — a living, implementation-accurate reference for every endpoint (headers, validation, every status code, Postman/cURL examples, security/negative testing, request lifecycle). Updated after every feature that touches an endpoint — see `CLAUDE.md` Rule 17.
 - [Manual Testing Guide](./TESTING_GUIDE.md) — a sequential, end-to-end runbook: every endpoint paired with the database query (Prisma + raw SQL) that verifies the resulting state actually changed correctly. The interim manual QA process until automated tests land.
 
-## Chapters
+## Backend Chapters
 
 1. [Project Setup & Folder Structure](./01-project-setup-and-folder-structure.md)
 2. [Express App Bootstrap](./02-express-app-bootstrap.md)
@@ -27,13 +28,23 @@ feature ships.
 12. [File Uploads (Multer + Cloudinary)](./12-file-uploads.md)
 13. [Swagger / OpenAPI Docs](./13-swagger-api-docs.md)
 
-## Stack
+## Frontend Chapters
+
+0. [Angular Project Initialization](./frontend-00-project-initialization.md)
+
+## Backend Stack
 
 Node.js · Express · JavaScript (ES Modules) · PostgreSQL · Prisma · JWT +
 Refresh Tokens · RBAC · Cloudinary · Multer · Docker · Swagger · Winston ·
 Morgan · Helmet · Zod
 
-## Architecture
+## Frontend Stack
+
+Angular 21 (standalone) · TypeScript (strict) · Signals · Angular
+Material · Tailwind CSS · RxJS · ESLint (`@angular-eslint`) · Prettier ·
+Vitest
+
+## Backend Architecture
 
 Clean Architecture + Feature-First organization:
 
@@ -42,5 +53,13 @@ HTTP Request → Route → Controller (thin) → Service (business logic)
              → Repository (DB access) → Prisma → PostgreSQL
 ```
 
-See each chapter's Architecture section for how that feature slots into
-this pipeline.
+## Frontend Architecture
+
+Layered + Feature-First — see
+[`docs/frontend-architecture-blueprint.md`](../docs/frontend-architecture-blueprint.md)
+for the full architecture constitution and
+[`frontend/CLAUDE.md`](../frontend/CLAUDE.md) for the 8-phase feature
+workflow every frontend chapter follows.
+
+See each chapter's own Architecture section for how that feature slots
+into its side's pipeline.
