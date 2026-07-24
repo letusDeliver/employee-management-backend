@@ -13,8 +13,8 @@ feature by feature against the real backend API, following
 - **Language**: TypeScript, strict mode
 - **State**: Signals + `computed()` (feature Stores are plain signal-based
   services — **not** NgRx)
-- **Styling**: SCSS (Angular Material + Tailwind CSS land in the next
-  feature)
+- **Styling**: SCSS composition root + Angular Material 3 (custom theme)
+  + Tailwind CSS v4, one `_tokens.scss` design-token source of truth
 - **Forms**: Typed Reactive Forms
 - **Linting**: ESLint (`@angular-eslint`)
 - **Formatting**: Prettier
@@ -75,7 +75,11 @@ src/
 │   ├── layout/          # visual chrome — public-layout (landing/login/register), shell (authenticated)
 │   └── features/       # one folder per domain module, lazy-loaded, added one at a time
 ├── environments/        # environment.ts (production), environment.development.ts (dev)
-└── styles.scss
+├── styles/
+│   ├── _theme-colors.scss    # generated M3 palette (ng generate @angular/material:m3-theme)
+│   ├── _material-theme.scss  # mat.theme() — color, typography, density
+│   └── _tokens.scss          # semantic color aliases + spacing/radius/elevation scale
+└── styles.scss                # composition root — theme + Tailwind @theme block
 ```
 
 Most of this is currently empty scaffolding (`.gitkeep`-marked) — see
@@ -97,5 +101,5 @@ Most of this is currently empty scaffolding (`.gitkeep`-marked) — see
 ## Roadmap
 
 - [x] Feature 0 — Angular project scaffolding, tooling, environments, folder skeleton
-- [ ] Feature 1 — Angular Material, Tailwind CSS, theming, design tokens, design system
+- [x] Feature 1 — Angular Material, Tailwind CSS, theming, design tokens, design system
 - [ ] Landing Page, Authentication, Dashboard, Employees, Users, Account (order TBD)

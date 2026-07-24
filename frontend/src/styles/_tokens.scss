@@ -1,0 +1,46 @@
+// Design tokens (blueprint §14) — Sass-time constants that the Tailwind `@theme` block
+// in `styles.scss` reads from. Never hardcode a color/spacing/radius/elevation literal
+// anywhere else; add it here once instead.
+//
+// Color roles are aliases to Material's M3 system variables (emitted at runtime by
+// `_material-theme.scss`'s `mat.theme()`), not new values — the seed color lives in
+// exactly one place, `_theme-colors.scss`. They're plain Sass variables (not a second
+// set of CSS custom properties) so the `@theme` block below is the only runtime
+// definition point, avoiding a self-referencing custom property.
+$color-primary: var(--mat-sys-primary);
+$color-on-primary: var(--mat-sys-on-primary);
+$color-primary-container: var(--mat-sys-primary-container);
+$color-on-primary-container: var(--mat-sys-on-primary-container);
+
+$color-accent: var(--mat-sys-tertiary);
+$color-on-accent: var(--mat-sys-on-tertiary);
+$color-accent-container: var(--mat-sys-tertiary-container);
+$color-on-accent-container: var(--mat-sys-on-tertiary-container);
+
+$color-warn: var(--mat-sys-error);
+$color-on-warn: var(--mat-sys-on-error);
+$color-warn-container: var(--mat-sys-error-container);
+$color-on-warn-container: var(--mat-sys-on-error-container);
+
+$color-surface: var(--mat-sys-surface);
+$color-on-surface: var(--mat-sys-on-surface);
+$color-outline: var(--mat-sys-outline);
+
+// Spacing — Tailwind v4's numeric utilities (`p-4`, `gap-2`, ...) are all multiples of
+// one base unit; this is that base, defined explicitly rather than left as Tailwind's
+// unexamined default (which happens to be the same value). Used between layout
+// regions/components (§13) — never inside a Material component, which relies on
+// Material's own internal spacing.
+$spacing-unit: 0.25rem;
+
+// Radii — for bespoke, non-Material elements only.
+$radius-sm: 4px;
+$radius-md: 8px;
+$radius-lg: 16px;
+$radius-full: 9999px;
+
+// Elevation — mirrors Material's own M3 elevation levels (1-3) for bespoke,
+// non-Material elements that need to visually match.
+$elevation-1: 0 1px 2px 0 rgb(0 0 0 / 15%), 0 1px 3px 1px rgb(0 0 0 / 10%);
+$elevation-2: 0 1px 2px 0 rgb(0 0 0 / 15%), 0 2px 6px 2px rgb(0 0 0 / 10%);
+$elevation-3: 0 4px 8px 3px rgb(0 0 0 / 10%), 0 1px 3px 0 rgb(0 0 0 / 20%);

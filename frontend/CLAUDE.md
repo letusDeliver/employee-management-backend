@@ -90,8 +90,8 @@ its own separate branch if explicitly requested.
 | Framework | Angular 21.2.19, standalone APIs (no NgModules) | ✅ Feature 0 |
 | Language | TypeScript 5.9, strict mode | ✅ Feature 0 |
 | State | Signals + `computed()`; RxJS at true stream boundaries only | Introduced per-feature |
-| Styling | SCSS | ✅ Feature 0 (Tailwind + Material: Feature 1) |
-| Design system | Angular Material, Tailwind CSS | Pending Feature 1 |
+| Styling | SCSS composition root | ✅ Feature 0 |
+| Design system | Angular Material 3 (custom theme), Tailwind CSS v4 | ✅ Feature 1 |
 | Routing | Angular Router | ✅ Feature 0 (scaffold only; real routes per-feature) |
 | HTTP | Angular `HttpClient`, functional interceptors | ✅ Feature 0 (extension point only) |
 | Forms | Typed Reactive Forms (**not** Signal Forms — see blueprint §9) | Introduced per-feature |
@@ -117,7 +117,7 @@ EmployeeListPageComponent` automatically — verified live during Feature
 > `backend/CLAUDE.md`'s Progress Log.
 
 - [x] Feature 0 — Angular Project Initialization
-- [ ] Feature 1 — Angular Material, Tailwind CSS, theming, design tokens, design system
+- [x] Feature 1 — Angular Material, Tailwind CSS, theming, design tokens, design system
 - [ ] Feature 2+ — Landing Page, Auth, Dashboard, Employees, Users, Account (order TBD)
 
 _(Feature 0 — Angular Project Initialization — completed, on the
@@ -238,3 +238,91 @@ System". No Material, Tailwind, or business-feature code exists yet —
 deliberately deferred, matching the approved Feature 0/Feature 1 split.
 See `docs/frontend-architecture-blueprint.md`'s revision history for
 the environment-naming amendment made during this feature.)_
+
+_(Feature 1 — Angular Material, Tailwind CSS, theming, design tokens,
+design system — completed, on the `frontend` branch. `ng add
+@angular/material@21.2.14` run as a scaffold-only step (installs
+`@angular/material` + `@angular/cdk`; no `@angular/animations` and no
+`app.config.ts` changes — confirmed by reading its real `setup-project.js`
+before running it, not assumed); its canned palette prompt was accepted
+only because it gets replaced next, and its font link (legacy
+`Material+Icons`) and its position-0 insertion directly into
+`styles.scss` were both known, verified-in-advance discrepancies against
+the blueprint, corrected during Implementation rather than encountered
+as surprises.
+
+**The custom theme was generated, not chosen from a preset.** Angular
+Material's real per-seed-color generator is a separate schematic,
+`ng generate @angular/material:m3-theme` (alias `theme-color`) —
+undocumented in `ng add`'s own interactive flow, found by reading the
+installed package's `schematics/collection.json` directly. Run with
+`--primary-color="#1E56A0"` (a professional-blue brand color, chosen by
+the user from a short set of options rather than invented) against
+`--directory=src/styles`, it ran Google's Material Color Utilities (HCT
+color-space algorithm) and produced a real, full M3 tonal palette. One
+real tool quirk found live: the `--directory` option doesn't create a
+non-existent folder — it produced a flat `src/styles_theme-colors.scss`
+(directory + filename concatenated with no separator) instead of
+`src/styles/_theme-colors.scss`; caught immediately by checking where
+the file landed, then relocated by hand.
+
+`styles/_material-theme.scss` feeds the generated palette into
+`mat.theme()` with `typography: Roboto` and `density: -2` — the density
+value was not assumed; it was derived by grepping every
+`clamp-density()` call site across Material's real component Sass
+source and taking the tightest floor found (chips, at `-2`), guaranteeing
+the compact setting applies uniformly with no per-component silent
+truncation. Verified in the actual compiled build output afterward
+(`--mat-button-filled-container-height: 32px`, below M3's 40px spec
+default at density 0).
+
+`styles/_tokens.scss` holds Sass **variables** (not a second CSS
+custom-property layer) aliasing semantic names to Material's real M3
+system-variable names (`--mat-sys-primary`, `--mat-sys-error` for
+"warn", etc. — the exact role list confirmed by reading Material's own
+`core/tokens/m3/_md-sys-color.scss`), plus a genuinely new spacing unit/
+radius/elevation scale. `styles.scss`'s Tailwind `@theme` block is the
+only place these are turned into real runtime custom properties
+(`--color-primary`, `--spacing`, `--radius-*`, `--shadow-*`) — a
+deliberate one-layer design, since a naive two-layer version (tokens.scss
+defining `--color-primary` at `:root`, Tailwind's `@theme` also defining
+`--color-primary: var(--color-primary)`) is a genuine CSS custom-property
+self-reference cycle per spec, not just redundant — verified this
+wouldn't happen by inspecting the real compiled CSS, which shows
+`--color-primary: var(--mat-sys-primary)` resolving cleanly with no
+cycle.
+
+Tailwind v4 (`4.3.3`, deduped against `@angular/build`'s own transitive
+dependency) wired via `postcss.config.json` (auto-discovered by
+`@angular/build:application`, zero `angular.json` changes) and
+`@import 'tailwindcss';` inside `styles.scss` — Sass flags this with a
+deprecation warning (`@import` is deprecated in Dart Sass generally) but
+still passes it through unresolved to the compiled CSS since `tailwindcss`
+isn't a resolvable Sass partial, letting `@tailwindcss/postcss` process
+it correctly afterward — confirmed by inspecting the actual compiled
+output for real generated utility classes (`.bg-primary`,
+`.rounded-md`, `.shadow-elevation-2`), not just trusting that the build
+didn't error.
+
+`index.html`'s font link was corrected from the schematic's default
+legacy `Material+Icons` to `Material+Symbols+Outlined`, matching
+blueprint §13; confirmed in the compiled output that the Symbols
+`@font-face` rule is what actually ships. `shared/icon-names.ts` was
+scaffolded with the frozen-object pattern and zero entries — no feature
+consumes an icon yet, so none were invented.
+
+Verified live end-to-end: `npm install` clean (same 3 moderate,
+dev-tooling-only `npm audit` advisories as Feature 0's baseline, no new
+ones from Material/Tailwind); `ng lint` zero errors; `ng test` passes (2
+tests, unchanged); `ng build --configuration=production` succeeds at
+330.49 kB raw / 83.90 kB estimated transfer (up from Feature 0's
+232.43 kB / 63.23 kB, still well inside the existing 500 kB/1 MB budget,
+no budget change needed). Manual verification used a temporary
+`MatButtonModule`/`MatIconModule` smoke test in `app.component`
+(confirming custom theme color, compact density, Tailwind utility
+classes, and the Material Symbols glyph all render correctly together),
+reverted before commit so the feature's diff stays scoped to
+design-system files only. `angular.json` picked up an analytics UUID
+during a schematic run — surfaced to the user explicitly rather than
+silently committed or silently stripped; kept, by the user's explicit
+choice.)_

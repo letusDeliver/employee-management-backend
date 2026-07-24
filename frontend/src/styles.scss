@@ -1,1 +1,40 @@
-/* You can add global styles to this file, and also import other style files */
+// Composition root (blueprint §14). Material's theme defines the color/typography/
+// density system; Tailwind's `@theme` block below re-exposes the same tokens
+// (from `styles/_tokens.scss`) under Tailwind's own utility-generating namespaces —
+// one palette, two consumers, never two independent definitions.
+@use './styles/material-theme';
+@use './styles/tokens';
+
+@import 'tailwindcss';
+
+@theme {
+  --color-primary: #{tokens.$color-primary};
+  --color-on-primary: #{tokens.$color-on-primary};
+  --color-primary-container: #{tokens.$color-primary-container};
+  --color-on-primary-container: #{tokens.$color-on-primary-container};
+
+  --color-accent: #{tokens.$color-accent};
+  --color-on-accent: #{tokens.$color-on-accent};
+  --color-accent-container: #{tokens.$color-accent-container};
+  --color-on-accent-container: #{tokens.$color-on-accent-container};
+
+  --color-warn: #{tokens.$color-warn};
+  --color-on-warn: #{tokens.$color-on-warn};
+  --color-warn-container: #{tokens.$color-warn-container};
+  --color-on-warn-container: #{tokens.$color-on-warn-container};
+
+  --color-surface: #{tokens.$color-surface};
+  --color-on-surface: #{tokens.$color-on-surface};
+  --color-outline: #{tokens.$color-outline};
+
+  --spacing: #{tokens.$spacing-unit};
+
+  --radius-sm: #{tokens.$radius-sm};
+  --radius-md: #{tokens.$radius-md};
+  --radius-lg: #{tokens.$radius-lg};
+  --radius-full: #{tokens.$radius-full};
+
+  --shadow-elevation-1: #{tokens.$elevation-1};
+  --shadow-elevation-2: #{tokens.$elevation-2};
+  --shadow-elevation-3: #{tokens.$elevation-3};
+}

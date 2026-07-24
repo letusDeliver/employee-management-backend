@@ -1,0 +1,33 @@
+// The one place Angular Material's M3 theme is defined (blueprint §13).
+// Color palettes come from `_theme-colors.scss`, generated via:
+//   ng generate @angular/material:m3-theme --primary-color="#1E56A0"
+// Regenerate that file (not this one) to change the seed brand color.
+@use '@angular/material' as mat;
+@use './theme-colors';
+
+html {
+  height: 100%;
+
+  @include mat.theme(
+    (
+      color: (
+        primary: theme-colors.$primary-palette,
+        tertiary: theme-colors.$tertiary-palette,
+      ),
+      typography: Roboto,
+      // -2: the most compact value supported by every Material component in this
+      // library without being clamped (verified against clamp-density() call sites
+      // across the component set — chips is the tightest at -2, others allow more).
+      density: -2,
+    )
+  );
+}
+
+body {
+  color-scheme: light;
+  background-color: var(--mat-sys-surface);
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-body-medium);
+  margin: 0;
+  height: 100%;
+}
