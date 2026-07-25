@@ -1,0 +1,10 @@
+<mat-nav-list>
+  @for (item of items(); track item.route) {
+    <a mat-list-item [routerLink]="item.route" routerLinkActive="active-nav-item">
+      <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
+      <span matListItemTitle>{{ item.label }}</span>
+    </a>
+  } @empty {
+    <p class="px-4 py-2 text-sm">No navigation items yet.</p>
+  }
+</mat-nav-list>

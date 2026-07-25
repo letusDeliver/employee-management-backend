@@ -16,6 +16,8 @@ feature by feature against the real backend API, following
 - **Styling**: SCSS composition root + Angular Material 3 (custom theme)
   + Tailwind CSS v4, one `_tokens.scss` design-token source of truth
 - **Forms**: Typed Reactive Forms
+- **Auth**: in-memory access token (`SessionStore`), httpOnly-cookie refresh
+  (never `localStorage`/`sessionStorage`), functional guards/interceptors
 - **Linting**: ESLint (`@angular-eslint`)
 - **Formatting**: Prettier
 - **Testing**: Vitest
@@ -82,8 +84,11 @@ src/
 └── styles.scss                # composition root — theme + Tailwind @theme block
 ```
 
-Most of this is currently empty scaffolding (`.gitkeep`-marked) — see
-`CLAUDE.md`'s Progress Log for exactly what has real content so far.
+`core/{auth,http,notifications}`, `layout/{public-layout,shell}`, and
+`features/{landing,auth,dashboard}` now have real content (Feature 2);
+the rest (`shared/components`, `features/{employees,users,account}`) is
+still empty scaffolding (`.gitkeep`-marked) — see `CLAUDE.md`'s Progress
+Log for exactly what has real content so far.
 
 ## Documentation
 
@@ -102,4 +107,6 @@ Most of this is currently empty scaffolding (`.gitkeep`-marked) — see
 
 - [x] Feature 0 — Angular project scaffolding, tooling, environments, folder skeleton
 - [x] Feature 1 — Angular Material, Tailwind CSS, theming, design tokens, design system
-- [ ] Landing Page, Authentication, Dashboard, Employees, Users, Account (order TBD)
+- [x] Feature 2 — Authentication: `SessionStore`, guards, interceptors, Login/Register, Shell, real Dashboard (welcome + profile card)
+- [ ] Feature 3 — real Landing Page content, Dashboard quick-nav cards/widgets region
+- [ ] Employees, Users, Account (order TBD)

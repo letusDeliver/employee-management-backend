@@ -6,6 +6,13 @@
  * Empty until a feature actually needs an icon — entries are added as features consume
  * them, never speculatively.
  */
-export const ICON_NAMES = {} as const satisfies Record<string, string>;
+export const ICON_NAMES = {
+  logout: 'logout',
+  accountCircle: 'account_circle',
+  menu: 'menu',
+  visibility: 'visibility',
+  visibilityOff: 'visibility_off',
+  error: 'error',
+} as const satisfies Record<string, string>;
 
 export type IconName = keyof typeof ICON_NAMES;

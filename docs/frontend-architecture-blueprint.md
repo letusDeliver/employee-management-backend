@@ -3,9 +3,12 @@
 **Status:** Approved and in active use. The backend prerequisite
 (§7.1/§19) shipped and was verified live (see `backend/CLAUDE.md`'s
 "Permission Resolution Enhancement" entry). Feature 0 (Angular Project
-Initialization) is complete — see `frontend/CLAUDE.md`'s Progress Log.
-Feature 1 (Angular Material, Tailwind CSS, theming, design tokens) is
-next, following the same 8-phase workflow (`frontend/CLAUDE.md`).
+Initialization) and Feature 1 (Angular Material, Tailwind CSS, theming,
+design tokens) are complete — see `frontend/CLAUDE.md`'s Progress Log.
+Feature 2 (Authentication — `SessionStore`, guards, interceptors,
+Login/Register, `ShellComponent`, placeholder-but-real
+`DashboardPageComponent`) is next, following the same 8-phase workflow
+(`frontend/CLAUDE.md`).
 
 This blueprint is the frontend's equivalent of the backend's
 `CLAUDE.md` + `planning/feature-NN-*.md` combination: a durable
@@ -41,6 +44,22 @@ handbook kept in sync, one commit per feature).
   reads `environment.*` directly, everything else injects the
   `API_BASE_URL` token. See `frontend/CLAUDE.md`'s Progress Log for
   everything else Feature 0 verified live.
+- v5 (this revision) — architectural decision made during Feature 2
+  (Authentication) planning, recorded here so it binds every later
+  feature, not just Feature 2's own handbook chapter: **`ShellComponent`
+  is structurally complete as of Feature 2** (Header, Sidebar,
+  Breadcrumbs, Footer, router-outlet — all real, final components, not
+  placeholders) and **`DashboardPageComponent` is a real component from
+  Feature 2 onward**, not a stub to be replaced. See §3 and §4.3 for the
+  specifics this amends. The governing rule for every feature from here
+  on: **extend this architecture additively (new `nav-config.ts`
+  entries, new template sections, new menu items) — never restructure
+  the Shell, the Dashboard route/guard, or `SessionStore`'s shape to
+  accommodate a later feature.** If a future feature ever seems to need
+  a structural change here, that itself is a signal to stop and get
+  explicit approval before proceeding, exactly like any other
+  architectural deviation (see `frontend/CLAUDE.md`'s Non-Negotiable
+  Rules).
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:
@@ -178,6 +197,7 @@ frontend/
 │   │   │   │                                  #  permissions come from the backend response, not
 │   │   │   │                                  #  a frontend-computed mirror)
 │   │   │   ├── http/
+│   │   │   │   ├── credentials.interceptor.ts # clones every request with withCredentials: true
 │   │   │   │   ├── auth.interceptor.ts       # attaches Authorization: Bearer <token>
 │   │   │   │   ├── refresh.interceptor.ts    # single-flight 401 → refresh → retry
 │   │   │   │   └── error.interceptor.ts      # HttpErrorResponse → ApiError, global notifications
@@ -316,6 +336,24 @@ Two layouts, selected by route, not two separate apps:
 - **Content**: the routed feature's own smart component.
 - **Footer**: minimal — build/version info, nothing interactive.
 
+**Architectural note (added in Feature 2, see revision v5):**
+`ShellComponent` — Header, Sidebar, Breadcrumbs, Footer — is built as
+final, structurally complete chrome in Feature 2, not a partial
+placeholder. `SidebarComponent` renders `nav-config.ts` via `*ngFor`,
+starting as an **empty array** and gaining one entry per feature as
+Employees/Users/Account ship — the empty state is a data fact (no
+entries yet), not an unfinished component. `HeaderComponent`'s user menu
+ships with **Logout** in Feature 2; **Account** is added as a one-line
+menu item once the Account feature exists. `BreadcrumbsComponent` is
+fully generic from Feature 2 onward, driven by whatever routes set
+`data.breadcrumb`. **The Toolbar described above is not part of
+`ShellComponent`** — it is `PageHeaderComponent`'s primary-action slot
+(§11), instantiated inside each feature's own page template, built
+whenever the first feature that needs a primary action arrives. No
+future feature should need to restructure the Shell itself — only add
+to `nav-config.ts`, add a menu item, or set `data.breadcrumb` on its own
+routes.
+
 ---
 
 ## 4. Application Flow, Landing Page & Dashboard
@@ -417,6 +455,17 @@ calls beyond what `SessionStore` already holds from login/`/auth/me`):
   restructuring of the Dashboard itself required. **Nothing is built
   in this region now**; it renders empty/absent until a real widget
   exists.
+
+**Architectural note (added in Feature 2, see revision v5):**
+`DashboardPageComponent` is built as a **real** component in Feature 2
+(it is the app's post-login/register redirect target and needs to
+exist for auth to be end-to-end testable), not a throwaway placeholder.
+Feature 2 delivers the welcome message and profile summary card in
+full — both need nothing but `SessionStore`, which Feature 2 builds
+anyway. Feature 3 adds the quick-navigation cards and the reserved
+widgets region as **template additions to this same component** — same
+file, same route, same guard, same redirect logic. No later feature
+should need to replace or restructure this component, only add to it.
 
 ---
 
@@ -626,11 +675,26 @@ never actually returns.
    <SessionStore.accessToken()>` to outgoing API requests (skipped for
    `/auth/login`, `/auth/register`, `/auth/refresh` themselves, which
    don't need or don't yet have a token).
-2. **Credentials** — `withCredentials: true` applied globally via the
-   `HttpClient` provider configuration (not per-call), so the refresh
-   cookie round-trips on every cross-origin call between
-   `localhost:4200` and `localhost:3000` in dev — harmless on requests
-   that have no cookie to send.
+2. **`credentialsInterceptor`** — corrected in v5 (verified against the
+   installed `@angular/common/http` typings during Feature 2 planning):
+   `provideHttpClient()` has **no** global "always send credentials"
+   feature — its only feature functions are `withInterceptors`,
+   `withInterceptorsFromDi`, `withXsrfConfiguration`,
+   `withNoXsrfProtection`, `withJsonpSupport`,
+   `withRequestsMadeViaParent`, and `withFetch`; `withCredentials` only
+   ever exists as a per-request option. The earlier wording ("applied
+   globally via the HttpClient provider configuration") described a
+   mechanism that doesn't exist. **Corrected design**: a small,
+   dedicated functional interceptor that unconditionally clones every
+   outgoing request with `{ withCredentials: true }`, registered first
+   in the `withInterceptors([...])` array — functionally global (every
+   request passes through it), just implemented as an interceptor like
+   the other three, not a separate provider flag. Kept as its own
+   interceptor rather than folded into `authInterceptor`, since
+   `authInterceptor` explicitly skips `/auth/login|register|refresh` —
+   exactly the calls that still need credentials sent (to receive/send
+   the refresh cookie) even though they don't need a Bearer token.
+   Harmless on requests that have no cookie to send.
 3. **`refreshInterceptor`** — on a `401` from any call other than
    `/auth/refresh` itself (avoiding an infinite loop): pause, trigger
    exactly one in-flight `POST /auth/refresh` (concurrent 401s within
@@ -817,8 +881,18 @@ template is immediately recognizable as project code.
 
 ## 12. Core Layer
 
-- **Interceptors**: `authInterceptor`, `refreshInterceptor`,
-  `errorInterceptor` (§7).
+- **Interceptors**: `credentialsInterceptor`, `authInterceptor`,
+  `errorInterceptor`, `refreshInterceptor` (§7) — in that order in
+  `withInterceptors([...])`. This order is deliberate, not incidental:
+  Angular runs interceptors in array order outbound, but in *reverse*
+  order on the response/error path, so `refreshInterceptor` (last in the
+  array, closest to the real HTTP call) sees a 401 *before*
+  `errorInterceptor` does — letting it silently refresh-and-retry without
+  a spurious error toast ever flashing for a transparently-recovered
+  session. Found and corrected during Feature 2 implementation (an
+  earlier draft of this section listed `refreshInterceptor` before
+  `errorInterceptor`, which would have shown a toast on every silent
+  refresh).
 - **Guards**: `authGuard`, `redirectIfAuthenticatedGuard`,
   `permissionGuard` (§5/§7).
 - **Tokens**: `API_BASE_URL` (an `InjectionToken` sourced from

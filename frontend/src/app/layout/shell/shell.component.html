@@ -1,0 +1,20 @@
+<div class="flex h-screen flex-col">
+  <app-header [user]="user()" (menuToggle)="sidenav.toggle()" (logout)="logout()" />
+
+  <mat-sidenav-container class="flex-1">
+    <mat-sidenav #sidenav [mode]="isHandset() ? 'over' : 'side'" [opened]="!isHandset()">
+      <app-sidebar [items]="sidebarItems()" />
+    </mat-sidenav>
+
+    <mat-sidenav-content>
+      <div class="p-4">
+        <app-breadcrumbs />
+      </div>
+      <div class="p-4">
+        <router-outlet />
+      </div>
+    </mat-sidenav-content>
+  </mat-sidenav-container>
+
+  <app-footer />
+</div>

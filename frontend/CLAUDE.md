@@ -92,9 +92,9 @@ its own separate branch if explicitly requested.
 | State | Signals + `computed()`; RxJS at true stream boundaries only | Introduced per-feature |
 | Styling | SCSS composition root | ✅ Feature 0 |
 | Design system | Angular Material 3 (custom theme), Tailwind CSS v4 | ✅ Feature 1 |
-| Routing | Angular Router | ✅ Feature 0 (scaffold only; real routes per-feature) |
-| HTTP | Angular `HttpClient`, functional interceptors | ✅ Feature 0 (extension point only) |
-| Forms | Typed Reactive Forms (**not** Signal Forms — see blueprint §9) | Introduced per-feature |
+| Routing | Angular Router | ✅ Feature 2 (public/shell route tree, guards) |
+| HTTP | Angular `HttpClient`, functional interceptors | ✅ Feature 2 (credentials/auth/error/refresh) |
+| Forms | Typed Reactive Forms (**not** Signal Forms — see blueprint §9) | ✅ Feature 2 (Login/Register) |
 | Linting | ESLint via `@angular-eslint/schematics@21.4.0` | ✅ Feature 0 |
 | Formatting | Prettier (reconciled with `backend/.prettierrc.json`) | ✅ Feature 0 |
 | Testing | Vitest (Angular 21's default test runner) | ✅ Feature 0 (harness only) |
@@ -118,7 +118,8 @@ EmployeeListPageComponent` automatically — verified live during Feature
 
 - [x] Feature 0 — Angular Project Initialization
 - [x] Feature 1 — Angular Material, Tailwind CSS, theming, design tokens, design system
-- [ ] Feature 2+ — Landing Page, Auth, Dashboard, Employees, Users, Account (order TBD)
+- [x] Feature 2 — Authentication (SessionStore, guards, interceptors, Login/Register, Shell, real Dashboard)
+- [ ] Feature 3+ — real Landing Page, Dashboard quick-nav/widgets, Employees, Users, Account (order TBD)
 
 _(Feature 0 — Angular Project Initialization — completed, on the
 `frontend` branch. Scaffolded via `npx @angular/cli@21.2.19 new frontend`
@@ -326,3 +327,114 @@ design-system files only. `angular.json` picked up an analytics UUID
 during a schematic run — surfaced to the user explicitly rather than
 silently committed or silently stripped; kept, by the user's explicit
 choice.)_
+
+_(Feature 2 — Authentication — completed, on the `frontend` branch.
+Scope confirmed in Phase 1/2 discussion before any code: `SessionStore`,
+the 3 guards, the 4 interceptors, Login/Register, both layout shells
+(`PublicLayoutComponent`, `ShellComponent`), and a **real** (not
+placeholder) `DashboardPageComponent` — Landing Page's actual content and
+Dashboard's quick-nav/widgets region stay Feature 3's job. The blueprint
+itself was amended (revision v5) with this decision recorded explicitly:
+`ShellComponent` is structurally complete as of this feature; future
+features extend `nav-config.ts`/menu items/breadcrumb data, never
+restructure the Shell, the Dashboard route/guard, or `SessionStore`'s
+shape.
+
+Every contract was verified against the real backend before writing
+code, not assumed: `POST /auth/register`/`login` return
+`{ message, user, accessToken }` plus a `Set-Cookie: refreshToken`
+scoped to `path=/api/v1/auth`; `POST /auth/refresh` returns **only**
+`{ accessToken }` — no `user` — which is why `AuthService.restoreSession()`
+exists as a two-step refresh-then-`/me` chain for `authGuard`'s
+bootstrap/reload path, distinct from `refreshInterceptor`'s simpler
+mid-session token-only refresh. `user` includes `roles`/`permissions`
+(§7.1's shipped backend enhancement) plus `profileImageUrl`/
+`profileImagePublicId`/`createdAt`/`updatedAt` — no Decimal/Date
+asymmetry like Employees will have, so `auth.models.ts` is a single
+shared interface, deliberately skipping a dto/model/mapper split that
+would have been premature here.
+
+**A real correction to the blueprint's own text**, found by reading the
+installed `@angular/common/http` typings rather than trusting the
+existing prose: `provideHttpClient()` has no global "always send
+credentials" provider feature (only `withInterceptors`,
+`withInterceptorsFromDi`, `withXsrfConfiguration`,
+`withNoXsrfProtection`, `withJsonpSupport`, `withRequestsMadeViaParent`,
+`withFetch` exist) — §7's "applied globally via the HttpClient provider
+configuration" described a mechanism that doesn't exist. Replaced with a
+real `credentialsInterceptor`, registered first in the array. A second,
+subtler correction was found by reasoning through Angular's actual
+interceptor chain semantics (array order = outbound order, but
+**reverse** array order for the response/error path): the interceptor
+array is `[credentials, auth, error, refresh]`, not the more intuitive
+`[..., refresh, error]` — `refreshInterceptor` needs to be closer to the
+real HTTP call than `errorInterceptor` so it can silently retry a 401
+before `errorInterceptor` ever sees it, otherwise every successful
+silent refresh would flash a spurious error toast first.
+
+**Five real bugs were found and fixed during this feature's own browser
+verification** (per the user's explicit request to check the actual
+rendered app after every step, not just build/lint output) — none
+caught by code review:
+
+1. `app.component.html` still held Feature 0's Angular CLI placeholder
+   marketing content *above* `<router-outlet />` — every routed page was
+   rendering correctly the whole time, just invisible below the
+   placeholder. Fixed by finally replacing it with a bare
+   `<router-outlet />` (and trimming the now-dead `title` signal from
+   `app.component.ts`/`.spec.ts`).
+2. `refreshInterceptor` only excluded `/auth/refresh` from its
+   "401 → attempt silent refresh" logic, not `/auth/login`/`/auth/register`
+   — a failed login (wrong password) triggered a spurious `/auth/refresh`
+   call, and *that* call's own 401 ("Refresh token missing") masked the
+   real login failure message shown to the user. Fixed with a shared
+   `AUTH_ENDPOINTS_WITHOUT_SESSION` constant excluding all 3 endpoints
+   from both `authInterceptor` and `refreshInterceptor`.
+3. `BreadcrumbsComponent` crashed on first render (`Cannot read
+   properties of undefined (reading 'url')`) — it walks the live
+   `ActivatedRoute` tree synchronously during construction, but the
+   deeper `dashboard` child node can exist before the router has
+   attached its `snapshot`. Fixed by guarding on `child?.snapshot`, not
+   just `child`'s existence.
+4. Login/Register used a plain `navigateByUrl` after success, leaving
+   `/login`/`/register` in browser history for the Back button to
+   return to post-authentication. Fixed with `{ replaceUrl: true }`.
+5. Chrome's back/forward cache restored an entire frozen pre-login page
+   — JS heap and all — on Back, bypassing every guard and briefly
+   showing stale unauthenticated UI to an actually-still-logged-in user
+   (confirmed via the browser console's own "Page entered Back-Forward
+   Cache" message). Fixed two ways together: a `pageshow`/
+   `event.persisted` handler in `app.component.ts` forces a real reload
+   when a bfcache restoration is detected, and `redirectIfAuthenticatedGuard`
+   was hardened to attempt a silent `restoreSession()` before deciding
+   — previously only `authGuard` did this, an inconsistency that would
+   have shown the login form to a still-logged-in visitor on any genuine
+   fresh reload of `/login`, not just the bfcache case.
+
+`shared/utils/extract-error-message.util.ts` centralizes the
+`HttpErrorResponse` → message extraction shared by `errorInterceptor`
+and both auth forms — one real behavior, not duplicated three times.
+`shared/directives/has-permission.directive.ts` and
+`PageHeaderComponent` remain unbuilt — no feature yet has a
+template-level permission gate or a primary-action slot to need them;
+first likely consumer is Employees. `core/error-handling/
+global-error-handler.ts` stays empty — orthogonal to this feature.
+
+Verified live end-to-end against the real running backend (no mocks):
+register (new email → real `201`, cookie set with the correct path,
+duplicate email → real inline `409` banner), login (correct/wrong
+credentials → real inline banner, not a generic message), logout
+(cookie actually cleared, confirmed in DevTools), deep-link to
+`/dashboard` while logged out → `/login?returnUrl=%2Fdashboard` →
+login → lands back on the original URL, already-authenticated visits to
+`/`/`/login`/`/register` bounced to `/dashboard`, a genuine hard reload
+on `/dashboard` surviving via silent refresh, `localStorage`/
+`sessionStorage` confirmed empty in DevTools throughout, and
+`refreshInterceptor`'s single-flight dedup confirmed via a temporary
+`window.__debugAuth` probe (two concurrent forced-401 calls produced
+exactly one `/auth/refresh` network call), removed before commit.
+`ng build`/`ng lint`/`ng test` all clean throughout. See
+`docs/frontend-architecture-blueprint.md`'s revision v5 for the
+Shell/Dashboard "extend, don't restructure" decision and the
+`credentialsInterceptor`/interceptor-order corrections made during this
+feature.)_

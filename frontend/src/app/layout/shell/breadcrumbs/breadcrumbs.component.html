@@ -1,0 +1,11 @@
+@if (breadcrumbs().length) {
+  <nav aria-label="Breadcrumb">
+    <ol class="flex items-center gap-2 text-sm">
+      @for (crumb of breadcrumbs(); track crumb.url) {
+        <li>
+          <a [routerLink]="crumb.url">{{ crumb.label }}</a>
+        </li>
+      }
+    </ol>
+  </nav>
+}
