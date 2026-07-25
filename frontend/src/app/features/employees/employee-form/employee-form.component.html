@@ -1,7 +1,10 @@
 <h1 class="mb-4 text-2xl font-medium">{{ isEditMode ? 'Edit Employee' : 'New Employee' }}</h1>
 
 @if (isEditMode && employeeStore.selectedLoading()) {
-  <p>Loading...</p>
+  <div class="flex items-center gap-2">
+    <mat-progress-spinner diameter="24" mode="indeterminate" aria-label="Loading employee" />
+    <span>Loading...</span>
+  </div>
 } @else {
   <mat-card class="max-w-lg">
     <mat-card-content>
@@ -24,9 +27,15 @@
 
         <mat-form-field>
           <mat-label>Salary</mat-label>
-          <input matInput type="number" formControlName="salary" />
-          @if (form.controls.salary.hasError('notPositive') && form.controls.salary.touched) {
+          <input matInput type="text" inputmode="decimal" formControlName="salary" />
+          @if (form.controls.salary.hasError('required') && form.controls.salary.touched) {
+            <mat-error>Salary is required.</mat-error>
+          } @else if (form.controls.salary.hasError('notANumber') && form.controls.salary.touched) {
+            <mat-error>Enter a valid number (e.g. 85000 or 85000.50).</mat-error>
+          } @else if (form.controls.salary.hasError('notPositive') && form.controls.salary.touched) {
             <mat-error>Salary must be a positive number.</mat-error>
+          } @else if (form.controls.salary.hasError('tooLarge') && form.controls.salary.touched) {
+            <mat-error>Salary seems unreasonably high - double-check this value.</mat-error>
           }
         </mat-form-field>
 
@@ -35,7 +44,9 @@
           <input matInput [matDatepicker]="picker" formControlName="dateOfJoining" />
           <mat-datepicker-toggle matIconSuffix [for]="picker" />
           <mat-datepicker #picker />
-          @if (form.controls.dateOfJoining.hasError('futureDate') && form.controls.dateOfJoining.touched) {
+          @if (form.controls.dateOfJoining.hasError('required') && form.controls.dateOfJoining.touched) {
+            <mat-error>Date of joining is required.</mat-error>
+          } @else if (form.controls.dateOfJoining.hasError('futureDate') && form.controls.dateOfJoining.touched) {
             <mat-error>Date of joining cannot be in the future.</mat-error>
           }
         </mat-form-field>
@@ -59,14 +70,27 @@
         </mat-form-field>
 
         @if (serverError(); as message) {
-          <p class="text-sm" role="alert">{{ message }}</p>
+          <div class="mb-2 flex items-center gap-2 rounded-md bg-warn p-3 text-on-warn" role="alert">
+            <mat-icon>{{ icons.error }}</mat-icon>
+            <span>{{ message }}</span>
+          </div>
         }
 
-        <div class="mt-2 flex gap-2">
-          <button mat-flat-button color="primary" type="submit" [disabled]="submitting()">
+        <div class="mt-2 flex items-center gap-2">
+          <button
+            mat-flat-button
+            color="primary"
+            type="submit"
+            [disabled]="submitting() || (form.invalid && form.touched)"
+          >
             {{ isEditMode ? 'Save Changes' : 'Create Employee' }}
           </button>
-          <a mat-stroked-button routerLink="/employees">Cancel</a>
+          <a mat-stroked-button [routerLink]="submitting() ? null : '/employees'" [attr.aria-disabled]="submitting()">
+            Cancel
+          </a>
+          @if (submitting()) {
+            <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Saving" />
+          }
         </div>
       </form>
     </mat-card-content>

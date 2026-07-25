@@ -1,6 +1,6 @@
 <h2 mat-dialog-title>Documents</h2>
 
-<mat-dialog-content class="flex flex-col gap-3">
+<mat-dialog-content class="flex max-h-[60vh] flex-col gap-3 overflow-y-auto">
   @if (sessionStore.hasAnyPermission('employee:update:any')) {
     <app-file-upload
       [accept]="documentAccept"
@@ -13,21 +13,33 @@
   }
 
   @if (employeeStore.documentUploading()) {
-    <mat-progress-spinner diameter="24" mode="indeterminate" aria-label="Uploading document" />
+    <div class="flex items-center gap-2">
+      <mat-progress-spinner diameter="24" mode="indeterminate" aria-label="Uploading document" />
+      <span class="text-sm">Uploading...</span>
+    </div>
   }
 
   @if (rejectionError(); as message) {
-    <p class="text-sm" role="alert">{{ message }}</p>
+    <div class="flex items-center gap-2 rounded-md bg-warn p-3 text-on-warn" role="alert">
+      <mat-icon>{{ icons.error }}</mat-icon>
+      <span>{{ message }}</span>
+    </div>
   }
   @if (employeeStore.documentsError(); as message) {
-    <p class="text-sm" role="alert">{{ message }}</p>
+    <div class="flex items-center gap-2 rounded-md bg-warn p-3 text-on-warn" role="alert">
+      <mat-icon>{{ icons.error }}</mat-icon>
+      <span>{{ message }}</span>
+    </div>
   }
 
   @if (employeeStore.documentsLoading()) {
-    <p>Loading...</p>
-  } @else if (employeeStore.documents().length === 0) {
+    <div class="flex items-center gap-2">
+      <mat-progress-spinner diameter="24" mode="indeterminate" aria-label="Loading documents" />
+      <span>Loading...</span>
+    </div>
+  } @else if (employeeStore.documents().length === 0 && !employeeStore.documentsError()) {
     <p class="text-sm">No documents uploaded yet.</p>
-  } @else {
+  } @else if (employeeStore.documents().length > 0) {
     <ul class="flex flex-col gap-2">
       @for (document of employeeStore.documents(); track document.id) {
         <li class="flex items-center justify-between gap-2 rounded-md border p-2">
@@ -41,9 +53,13 @@
             </div>
           </div>
           @if (sessionStore.hasAnyPermission('employee:update:any')) {
-            <button mat-icon-button type="button" (click)="confirmDelete(document)" aria-label="Delete document">
-              <mat-icon>{{ icons.delete }}</mat-icon>
-            </button>
+            @if (employeeStore.deletingDocumentIds().has(document.id)) {
+              <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Deleting document" />
+            } @else {
+              <button mat-icon-button type="button" (click)="confirmDelete(document)" aria-label="Delete document">
+                <mat-icon>{{ icons.delete }}</mat-icon>
+              </button>
+            }
           }
         </li>
       }

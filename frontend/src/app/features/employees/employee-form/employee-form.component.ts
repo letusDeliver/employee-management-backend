@@ -1,4 +1,5 @@
-import { Component, OnInit, effect, inject, signal } from '@angular/core';
+import { Component, DestroyRef, OnInit, effect, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AbstractControl, FormControl, ReactiveFormsModule, ValidationErrors, Validators } from '@angular/forms';
 import { FormBuilder } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -6,13 +7,22 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatDatepickerModule } from '@angular/material/datepicker';
 import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 
+import { ICON_NAMES } from '../../../shared/icon-names';
 import { extractErrorMessage } from '../../../shared/utils/extract-error-message.util';
+import { notBlankValidator } from '../../../shared/validators/not-blank.validator';
 import { notFutureDateValidator } from '../../../shared/validators/not-future-date.validator';
 import { positiveNumberValidator } from '../../../shared/validators/positive-number.validator';
 import { uuidValidator } from '../../../shared/validators/uuid.validator';
 import { EmployeeStore } from '../data-access/employee.store';
+
+// Mirrors the backend's own sanity bound (employee.validation.js) - a
+// generous ceiling meant to catch garbled/pasted-in-error input (a
+// 20-digit number, a misplaced extra zero), not to constrain real salaries.
+const MAX_SALARY = 100_000_000;
 
 /**
  * Employees-specific (not a shared validator, unlike `notFutureDate`/
@@ -41,7 +51,9 @@ function selfManagedValidator(employeeId: string | null) {
     MatCardModule,
     MatDatepickerModule,
     MatFormFieldModule,
+    MatIconModule,
     MatInputModule,
+    MatProgressSpinnerModule,
     RouterLink,
   ],
   templateUrl: './employee-form.component.html',
@@ -50,6 +62,7 @@ function selfManagedValidator(employeeId: string | null) {
 export class EmployeeFormPageComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly destroyRef = inject(DestroyRef);
   protected readonly employeeStore = inject(EmployeeStore);
   private readonly formBuilder = inject(FormBuilder);
 
@@ -57,13 +70,16 @@ export class EmployeeFormPageComponent implements OnInit {
   protected readonly isEditMode = this.employeeId !== null;
   protected readonly submitting = signal(false);
   protected readonly serverError = signal<string | null>(null);
+  protected readonly icons = ICON_NAMES;
 
   private formPatched = false;
 
   protected readonly form = this.formBuilder.nonNullable.group({
-    department: ['', Validators.required],
-    jobTitle: ['', Validators.required],
-    salary: [0, [Validators.required, positiveNumberValidator]],
+    department: ['', notBlankValidator],
+    jobTitle: ['', notBlankValidator],
+    // A plain text control, not type="number" - see positiveNumberValidator's
+    // own comment for why a native number input is the wrong tool here.
+    salary: ['', [Validators.required, positiveNumberValidator(MAX_SALARY)]],
     userId: ['', uuidValidator],
     managerId: ['', [uuidValidator, selfManagedValidator(this.employeeId)]],
     // A plain (nullable) FormControl instance bypasses nonNullable.group's
@@ -75,11 +91,15 @@ export class EmployeeFormPageComponent implements OnInit {
   constructor() {
     effect(() => {
       const employee = this.employeeStore.selected();
-      if (employee && !this.formPatched) {
+      // isEditMode guard is required, not redundant: EmployeeStore.selected is a
+      // singleton signal that outlives this component - without it, opening
+      // "New Employee" right after editing another record would patch this
+      // blank create form with that other employee's still-cached data.
+      if (employee && this.isEditMode && !this.formPatched) {
         this.form.patchValue({
           department: employee.department,
           jobTitle: employee.jobTitle,
-          salary: employee.salary,
+          salary: String(employee.salary),
           dateOfJoining: employee.dateOfJoining,
           userId: employee.userId ?? '',
           managerId: employee.managerId ?? '',
@@ -105,22 +125,37 @@ export class EmployeeFormPageComponent implements OnInit {
     this.submitting.set(true);
 
     const raw = this.form.getRawValue();
-    const request = {
+    const base = {
       department: raw.department,
       jobTitle: raw.jobTitle,
-      salary: raw.salary,
+      // Safe: positiveNumberValidator already confirmed this parses cleanly.
+      salary: Number(raw.salary),
       // Safe: Validators.required on this control already gated submission above.
       dateOfJoining: raw.dateOfJoining as Date,
-      userId: raw.userId || undefined,
-      managerId: raw.managerId || undefined,
     };
 
+    // Create omits an empty userId/managerId (nothing to unlink yet); edit
+    // sends null instead, so clearing a previously-set field actually
+    // clears it server-side rather than silently leaving it unchanged
+    // (see UpdateEmployeeRequest's own comment).
     const result$ =
       this.isEditMode && this.employeeId
-        ? this.employeeStore.updateEmployee(this.employeeId, request)
-        : this.employeeStore.createEmployee(request);
+        ? this.employeeStore.updateEmployee(this.employeeId, {
+            ...base,
+            userId: raw.userId || null,
+            managerId: raw.managerId || null,
+          })
+        : this.employeeStore.createEmployee({
+            ...base,
+            userId: raw.userId || undefined,
+            managerId: raw.managerId || undefined,
+          });
 
-    result$.subscribe({
+    // takeUntilDestroyed both cancels the real in-flight HTTP request (Angular
+    // aborts on unsubscribe) and prevents a late response from navigating or
+    // setting state after the user has already left this page - e.g. Cancel,
+    // or the browser back button, while a submit is still pending.
+    result$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (employee) => {
         this.submitting.set(false);
         this.router.navigate(['/employees', employee.id]);

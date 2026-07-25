@@ -31,4 +31,12 @@ export interface CreateEmployeeRequestDto {
   managerId?: string;
 }
 
-export type UpdateEmployeeRequestDto = Partial<CreateEmployeeRequestDto>;
+/** Mirrors `UpdateEmployeeRequest`'s widened `userId`/`managerId` (see its own comment) - not `Partial<CreateEmployeeRequestDto>`. */
+export interface UpdateEmployeeRequestDto {
+  userId?: string | null;
+  department?: string;
+  jobTitle?: string;
+  salary?: number;
+  dateOfJoining?: string;
+  managerId?: string | null;
+}

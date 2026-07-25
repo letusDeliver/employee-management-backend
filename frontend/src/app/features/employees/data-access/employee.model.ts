@@ -33,4 +33,18 @@ export interface CreateEmployeeRequest {
   managerId?: string;
 }
 
-export type UpdateEmployeeRequest = Partial<CreateEmployeeRequest>;
+/**
+ * Not `Partial<CreateEmployeeRequest>` - `userId`/`managerId` are widened to
+ * `string | null` (not just `string | undefined`), since an update needs to
+ * express "clear this link" explicitly. Omitting the key means "leave it
+ * as-is" (PATCH semantics); `null` means "unset it" - the backend's
+ * `updateEmployeeSchema` distinguishes the two the same way.
+ */
+export interface UpdateEmployeeRequest {
+  userId?: string | null;
+  department?: string;
+  jobTitle?: string;
+  salary?: number;
+  dateOfJoining?: Date;
+  managerId?: string | null;
+}

@@ -678,3 +678,48 @@ JSON, field tables, and the document's own "last synchronized" header).
 See `docs/frontend-architecture-blueprint.md` §19 for what this
 unblocks next: `frontend/CLAUDE.md`'s `SessionStore` can now be written
 against the real field from day one instead of a temporary assumption.)_
+
+_(`PATCH /employees/:id` — allow explicit `null` to clear `userId`/
+`managerId` — 2026-07-26. Not a numbered feature; a small, surgically-
+scoped correction found while building the frontend's Employees edit
+form (`frontend/CLAUDE.md`, Feature 6). `updateEmployeeSchema`
+(`employee.validation.js`) is `createEmployeeSchema.partial()`, and
+`createEmployeeSchema`'s `userId`/`managerId` are `.optional()` only —
+no way to express "clear this link" over PATCH, since an omitted key
+means "leave it as-is" and a JSON body can't send "the key that isn't
+there." Fixed by widening just these two fields on the update schema
+to `.nullable().optional()` (via `.extend()`, not touching
+`createEmployeeSchema` itself, since creation has no existing link to
+clear). No repository/service change was needed — `employee.repository.js`'s
+`update()` already just spreads `data` into `prisma.employee.update()`,
+and both columns are already nullable scalars in `schema.prisma`.
+Verified live: linked a real `Employee` to a `User`, sent
+`{"userId": null}`, confirmed both the response and a fresh `GET` show
+`userId: null`; confirmed omitting the key instead (a normal partial
+update touching only other fields) leaves the previous value untouched
+— the two are not equivalent, which is the whole point. `handbook/
+API_ENDPOINTS.md`'s `PATCH /employees/:id` entry updated (Request Body
+and Edge Cases sections); Swagger regenerates correctly from the schema
+change with no manual doc edit needed there.)_
+
+_(Employee create/update — trim department/jobTitle, cap salary — 2026-07-26.
+Not a numbered feature; two more small validation corrections found
+during the same frontend edge-case hardening pass as the entry above
+(`frontend/CLAUDE.md`, Feature 6 enhancement round). `createEmployeeSchema`'s
+`department`/`jobTitle` gained `.trim()` before `.min(1, ...)` — a
+whitespace-only value ("   ") previously passed validation (it has
+length, just no meaningful content) and would have been stored as-is;
+now rejected with the same "is required" message an empty string gets,
+and any accepted value is stored trimmed (verified live: `"  Engineering  "`
+saves as `"Engineering"`). `salary` gained `.max(100_000_000, 'Salary
+seems unreasonably high')` — a sanity ceiling, not a real business
+constraint, meant to catch garbled/mistyped input (an extra digit, a
+misplaced decimal) rather than ever constrain a genuine salary; mirrored
+on the frontend's own validator so this is caught inline before a
+request even fires. Verified live: a whitespace-only `department` and a
+salary of `999999999` both now `400` with the expected messages; a
+`department` sent with leading/trailing spaces round-trips as the
+trimmed value. `handbook/API_ENDPOINTS.md`'s `POST /employees` entry
+updated (Request Body, Validation Rules, Error Responses sections) —
+`PATCH /employees/:id` inherits both rules via `createEmployeeSchema.partial()`
+with no separate doc changes needed there.)_

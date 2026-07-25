@@ -43,6 +43,11 @@ export class EmployeeStore {
   readonly documentsLoading = signal(false);
   readonly documentsError = signal<string | null>(null);
   readonly documentUploading = signal(false);
+  // Tracks which specific document(s) are mid-delete, so the dialog can
+  // disable just that row's button - without this, a slow delete request
+  // leaves its row fully clickable, letting a second click fire a
+  // redundant DELETE for the same id.
+  readonly deletingDocumentIds = signal<ReadonlySet<string>>(new Set());
 
   loadList(): void {
     this.error.set(null);
@@ -143,10 +148,22 @@ export class EmployeeStore {
 
   deleteDocument(employeeId: string, documentId: string): void {
     this.documentsError.set(null);
+    this.deletingDocumentIds.update((current) => new Set(current).add(documentId));
 
-    this.employeeService.deleteDocument(employeeId, documentId).subscribe({
-      next: () => this.documents.update((current) => current.filter((doc) => doc.id !== documentId)),
-      error: (error: unknown) => this.documentsError.set(extractErrorMessage(error)),
-    });
+    this.employeeService
+      .deleteDocument(employeeId, documentId)
+      .pipe(
+        finalize(() =>
+          this.deletingDocumentIds.update((current) => {
+            const next = new Set(current);
+            next.delete(documentId);
+            return next;
+          }),
+        ),
+      )
+      .subscribe({
+        next: () => this.documents.update((current) => current.filter((doc) => doc.id !== documentId)),
+        error: (error: unknown) => this.documentsError.set(extractErrorMessage(error)),
+      });
   }
 }

@@ -737,3 +737,75 @@ directions. `ng build`/`ng lint`/`ng test` all clean throughout. See
 `handbook/frontend-06-employees.md` for the full account — this was the
 last feature on the original roadmap; further frontend work is
 enhancement-phase from here.)_
+
+_(Employees create/edit/documents — edge-case hardening pass — 2026-07-26.
+Not a numbered feature; a live-testing follow-up on Feature 6, found by
+deliberately trying to break the create/edit form and the documents
+dialog rather than just re-confirming the happy path. Nine real issues
+fixed, none by code review alone:
+
+1. **Salary's `type="number"` input silently reported an empty value
+   whenever what was typed didn't parse as a number** (a real, user-
+   screenshotted bug: `--876876` was visibly typed, yet the form said
+   "Salary is required") - a known HTML quirk where a number input's
+   `.value` collapses to `""` on any unparseable entry, which Angular
+   then sees as `null`. Fixed by switching Salary to `type="text"
+   inputmode="decimal"` and moving all parsing into `positiveNumberValidator`
+   itself (now a factory taking a `max`, operating on the raw string,
+   rejecting non-numeric-format input with a new `notANumber` error
+   instead of silently reporting "required").
+2. **The Create/Save button never reflected form validity** - only
+   `submitting()` disabled it, so it stayed clickable next to a visible
+   error. Fixed: `[disabled]="submitting() || (form.invalid && form.touched)"` -
+   untouched/blank forms still look inviting, but the moment a submit
+   attempt (or an edit) leaves the form invalid, the button goes inert
+   until it's fixed.
+3. **Cancel had no guard against an in-flight submit** - clicking
+   Cancel right after Create/Save could leave the request running in
+   the background, with a late success response calling `router.navigate()`
+   to the new employee's page after the user already left. Fixed two
+   ways together: Cancel's `routerLink` becomes `null` (a no-op link)
+   while `submitting()`, and the submit subscription now pipes through
+   `takeUntilDestroyed(this.destroyRef)` - Angular aborts the real HTTP
+   request on unsubscribe, so navigating away for *any* reason (Cancel,
+   back button) cleanly cancels it instead of letting it resolve into a
+   dead component. The same `takeUntilDestroyed` + a new `deleting`
+   signal (disabling Documents/Edit/Delete/Back while active) was added
+   to `EmployeeDetailPageComponent`'s delete flow for the same reason.
+4. **The documents dialog showed "No documents uploaded yet." at the
+   same time as a fetch-error banner** - `documents` stays `[]` on a
+   failed load, and the empty-state branch didn't know to check for an
+   error first. Fixed by gating the empty-state message on
+   `!documentsError()`.
+5. **Every error banner in Employees was a bare, unstyled `<p>`** -
+   inconsistent with the `bg-warn`/icon banner Login/Register/Account
+   already use. Standardized all of them (create/edit form's
+   `serverError`, the detail page's `selectedError`/`deleteError`, the
+   documents dialog's `rejectionError`/`documentsError`) to the same
+   pattern.
+6. Plain "Loading..." text in the edit form, detail page, and documents
+   dialog replaced with the same `MatProgressSpinner` pattern Account
+   already established, for visual consistency.
+7. **A slow document-delete request left its row fully clickable** -
+   a second click would fire a redundant `DELETE` for the same id.
+   Fixed with a new `EmployeeStore.deletingDocumentIds` signal (a `Set`
+   of in-flight document ids), letting the dialog swap that row's
+   delete button for a small spinner while its own request is pending.
+8. **Documents dialog's scroll container hardened explicitly**
+   (`max-h-[60vh] overflow-y-auto` on `mat-dialog-content`) rather than
+   relying on Material's implicit default - not full pagination (no
+   realistic per-employee document count would need it, and the backend
+   endpoint doesn't support it), a deliberate proportionality call, not
+   an oversight.
+9. **Department/Job Title accepted whitespace-only input** ("   ") as
+   valid - added a new `notBlankValidator` (mirrors the backend's own
+   `.trim().min(1)` fix, see `backend/CLAUDE.md`'s matching entry),
+   replacing plain `Validators.required` for both fields with no
+   template changes needed (it reuses the same `required` error key).
+
+All nine verified: build/lint/test clean throughout; the two backend-
+paired fixes (unlink-via-null from the previous round, trim, and the
+salary cap) were additionally verified live via direct `curl` calls
+against the running server, not just inferred from reading the schema.
+See `backend/CLAUDE.md`'s matching entries for the two small backend
+validation corrections this pass also required.)_

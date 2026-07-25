@@ -1,9 +1,11 @@
 import { CurrencyPipe, DatePipe } from '@angular/common';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 
 import { SessionStore } from '../../../core/auth/session.store';
@@ -22,7 +24,7 @@ import { EmployeeStore } from '../data-access/employee.store';
  */
 @Component({
   selector: 'app-employee-detail-page',
-  imports: [MatCardModule, MatButtonModule, MatIconModule, RouterLink, DatePipe, CurrencyPipe],
+  imports: [MatCardModule, MatButtonModule, MatIconModule, MatProgressSpinnerModule, RouterLink, DatePipe, CurrencyPipe],
   templateUrl: './employee-detail-page.component.html',
   styleUrl: './employee-detail-page.component.scss',
 })
@@ -30,12 +32,14 @@ export class EmployeeDetailPageComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly dialog = inject(MatDialog);
+  private readonly destroyRef = inject(DestroyRef);
   protected readonly sessionStore = inject(SessionStore);
   protected readonly userDirectory = inject(UserDirectoryService);
   protected readonly employeeStore = inject(EmployeeStore);
   protected readonly icons = ICON_NAMES;
 
   protected readonly deleteError = signal<string | null>(null);
+  protected readonly deleting = signal(false);
 
   ngOnInit(): void {
     const id = this.route.snapshot.paramMap.get('id');
@@ -78,10 +82,19 @@ export class EmployeeDetailPageComponent implements OnInit {
       .afterClosed()
       .subscribe((confirmed: boolean | undefined) => {
         if (confirmed) {
-          this.employeeStore.deleteEmployee(employee.id).subscribe({
-            next: () => this.router.navigate(['/employees']),
-            error: (error: unknown) => this.deleteError.set(extractErrorMessage(error)),
-          });
+          this.deleteError.set(null);
+          this.deleting.set(true);
+
+          this.employeeStore
+            .deleteEmployee(employee.id)
+            .pipe(takeUntilDestroyed(this.destroyRef))
+            .subscribe({
+              next: () => this.router.navigate(['/employees']),
+              error: (error: unknown) => {
+                this.deleting.set(false);
+                this.deleteError.set(extractErrorMessage(error));
+              },
+            });
         }
       });
   }

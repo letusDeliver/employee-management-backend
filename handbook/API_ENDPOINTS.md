@@ -2139,9 +2139,9 @@ None.
 | Field           | Type              | Required | Notes                                                                                                                                                           |
 | --------------- | ----------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `userId`        | string (UUID)     | No       | Links this Employee to a login account. Omit for an HR-only record with no system access.                                                                       |
-| `department`    | string            | Yes      | Free-text, min 1 character — not a normalized `Department` table (see Known Gaps).                                                                              |
-| `jobTitle`      | string            | Yes      | Free-text, min 1 character.                                                                                                                                     |
-| `salary`        | number            | Yes      | Must be a positive number.                                                                                                                                      |
+| `department`    | string            | Yes      | Free-text, trimmed then min 1 character after trimming (whitespace-only is rejected) — not a normalized `Department` table (see Known Gaps).                    |
+| `jobTitle`      | string            | Yes      | Free-text, trimmed then min 1 character after trimming.                                                                                                        |
+| `salary`        | number            | Yes      | Must be a positive number, capped at 100,000,000 (a sanity ceiling, not a real business limit).                                                                |
 | `dateOfJoining` | string (ISO date) | Yes      | Coerced to a `Date`. Cannot be in the future.                                                                                                                   |
 | `managerId`     | string (UUID)     | No       | Must reference an existing `Employee.id`. Cannot equal the created record's own id (checked in the service, since the id doesn't exist yet at validation time). |
 
@@ -2152,9 +2152,16 @@ Enforced by `src/modules/employees/employee.validation.js`'s
 
 - `userId`/`managerId`: if present, must be syntactically valid UUIDs
   (Zod's `.uuid()`).
-- `department`/`jobTitle`: non-empty strings.
-- `salary`: must be a positive number. Custom message:
-  `"Salary must be a positive number"`.
+- `department`/`jobTitle`: `.trim()`ed first, then must be non-empty —
+  a whitespace-only value ("   ") is rejected with the same
+  `"Department is required"`/`"Job title is required"` message an
+  entirely empty one gets, and the **stored** value is the trimmed one
+  (confirmed live: `"  Engineering  "` is saved as `"Engineering"`).
+- `salary`: must be a positive number, capped at 100,000,000. Custom
+  messages: `"Salary must be a positive number"` /
+  `"Salary seems unreasonably high"`. The cap is a sanity ceiling meant
+  to catch garbled input (an extra digit, a pasted-in-error value), not
+  a real business constraint.
 - `dateOfJoining`: coerced via `z.coerce.date()`, then `.refine()`d to
   reject any date after "now". Custom message:
   `"Date of joining cannot be in the future"`.
@@ -2208,6 +2215,8 @@ Enforced by `src/modules/employees/employee.validation.js`'s
 | ------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `400`  | Missing required field(s)                            | e.g. `"department: Invalid input: expected string, received undefined"` (joined per field) | Any of `department`/`jobTitle`/`salary`/`dateOfJoining` absent                                                                              |
 | `400`  | Negative/zero salary                                 | `"salary: Salary must be a positive number"`                                               | `salary <= 0`                                                                                                                               |
+| `400`  | Salary over the sanity ceiling                       | `"salary: Salary seems unreasonably high"`                                                 | `salary > 100,000,000`                                                                                                                       |
+| `400`  | Whitespace-only `department`/`jobTitle`               | `"department: Department is required"` (or `jobTitle:`)                                    | `"   "` — trimmed to empty before the length check                                                                                          |
 | `400`  | Future `dateOfJoining`                               | `"dateOfJoining: Date of joining cannot be in the future"`                                 | Date is after "now"                                                                                                                         |
 | `400`  | Invalid UUID for `userId`/`managerId`                | Zod's default UUID-format message                                                          | Malformed UUID string supplied                                                                                                              |
 | `400`  | Malformed JSON body                                  | `"Invalid JSON in request body"`                                                           | Same as every other JSON-body endpoint                                                                                                      |
@@ -2957,6 +2966,15 @@ the fields you want to change.
 }
 ```
 
+**`userId`/`managerId` additionally accept explicit `null`** (widened
+beyond `createEmployeeSchema`'s own `.optional()`-only rule for these two
+fields) — this is the only way to *clear* an existing link. Omitting the
+key entirely means "leave it as-is"; sending `null` means "unset it":
+
+```json
+{ "userId": null }
+```
+
 ## 7. Validation Rules
 
 Same per-field rules as `POST /employees` (Section 7 there), applied only
@@ -3021,6 +3039,7 @@ behave identically, applied to whichever fields are sent.
 | Updating a record that was soft-deleted moments earlier     | `404` — `findById`'s `deletedAt: null` filter applies to updates too, not just reads                                                                                        |
 | Concurrent updates to the same record from two requests     | Last write wins — no optimistic-locking/version check exists; **not independently verified under true concurrency**, same honestly-flagged gap as elsewhere in this project |
 | Setting `managerId` to a _different_, valid Employee's `id` | `200` — no cycle-detection beyond the direct self-reference check (a longer manager cycle, e.g. A→B→A, is **not** currently detected — a known, undemonstrated gap)         |
+| Sending `{"userId": null}` (or `managerId`) to clear an existing link | `200` — the column is set to `NULL`. Verified live: linked a real `Employee` to a `User`, sent `{"userId": null}`, confirmed the response and a fresh `GET` both show `userId: null`. Omitting the key instead of sending `null` leaves the previous value untouched — the two are not equivalent. |
 
 ## 13. Security Testing
 
