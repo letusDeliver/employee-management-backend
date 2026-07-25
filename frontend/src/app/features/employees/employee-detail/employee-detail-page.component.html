@@ -1,0 +1,54 @@
+@if (employeeStore.selectedLoading()) {
+  <p>Loading...</p>
+} @else if (employeeStore.selectedError(); as message) {
+  <p class="text-sm" role="alert">{{ message }}</p>
+} @else if (employeeStore.selected(); as employee) {
+  <h1 class="mb-4 text-2xl font-medium">{{ employee.jobTitle }}</h1>
+
+  <mat-card class="max-w-lg">
+    <mat-card-content>
+      <dl class="flex flex-col gap-2">
+        <div>
+          <dt class="text-sm">Department</dt>
+          <dd>{{ employee.department }}</dd>
+        </div>
+        <div>
+          <dt class="text-sm">Employee</dt>
+          <dd>{{ displayName(employee.userId) ?? '—' }}</dd>
+        </div>
+        <div>
+          <dt class="text-sm">Salary</dt>
+          <dd>{{ employee.salary | currency: 'USD' }}</dd>
+        </div>
+        <div>
+          <dt class="text-sm">Date of Joining</dt>
+          <dd>{{ employee.dateOfJoining | date: 'mediumDate' }}</dd>
+        </div>
+      </dl>
+
+      @if (deleteError(); as message) {
+        <p class="mt-2 text-sm" role="alert">{{ message }}</p>
+      }
+
+      <div class="mt-4 flex gap-2">
+        <button mat-stroked-button type="button" (click)="openDocuments()">
+          <mat-icon>{{ icons.description }}</mat-icon>
+          Documents
+        </button>
+        @if (sessionStore.hasAnyPermission('employee:update:any')) {
+          <a mat-flat-button color="primary" [routerLink]="['/employees', employee.id, 'edit']">
+            <mat-icon>{{ icons.edit }}</mat-icon>
+            Edit
+          </a>
+        }
+        @if (sessionStore.hasAnyPermission('employee:delete:any')) {
+          <button mat-stroked-button color="warn" type="button" (click)="confirmDelete()">
+            <mat-icon>{{ icons.delete }}</mat-icon>
+            Delete
+          </button>
+        }
+        <a mat-button routerLink="/employees">Back to list</a>
+      </div>
+    </mat-card-content>
+  </mat-card>
+}

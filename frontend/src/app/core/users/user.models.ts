@@ -1,4 +1,4 @@
-import { AuthUser } from '../../../core/auth/auth.models';
+import { AuthUser } from '../auth/auth.models';
 
 /**
  * `GET /users` returns `sanitizeUser(user, roles)` per user - roles
@@ -6,8 +6,13 @@ import { AuthUser } from '../../../core/auth/auth.models';
  * users/user.service.js`'s `listUsers()`; matches blueprint §7.1's rule
  * that only register/login/`/auth/me` attach a resolved permission
  * set). Same `Omit` derivation as Account's `ProfilePictureResponse`
- * (`features/account/data-access/account.models.ts`) rather than a
- * hand-duplicated interface.
+ * rather than a hand-duplicated interface.
+ *
+ * Moved here from `features/users/data-access/` in Feature 6
+ * (Employees) - this shape is now a cross-feature, `core/`-owned
+ * concern (blueprint §1: cross-feature communication goes through
+ * `core/`, never a direct feature-to-feature import). See
+ * `user-directory.service.ts`.
  */
 export type UserListItem = Omit<AuthUser, 'permissions'>;
 

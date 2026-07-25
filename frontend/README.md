@@ -84,16 +84,17 @@ src/
 └── styles.scss                # composition root — theme + Tailwind @theme block
 ```
 
-`core/{auth,http,notifications}`, `layout/{public-layout,shell}`, and
-`features/{landing,auth,dashboard,account,users}` now have real content
-(Feature 2 built the shells and auth flows; Feature 3 filled in
-Landing's real content and Dashboard's quick-navigation cards + widgets
-region; Feature 4 built Account's self-service profile + profile
-picture management; Feature 5 built Users' admin-only user list).
-`shared/components/file-upload/` is also real now (Feature 4); the rest
-of `shared/components` and `features/employees` are still empty
-scaffolding (`.gitkeep`-marked) — see `CLAUDE.md`'s Progress Log for
-exactly what has real content so far.
+`core/{auth,http,notifications,users}`, `layout/{public-layout,shell}`,
+and `features/{landing,auth,dashboard,account,users,employees}` now have
+real content (Feature 2 built the shells and auth flows; Feature 3
+filled in Landing's real content and Dashboard's quick-navigation cards
++ widgets region; Feature 4 built Account's self-service profile +
+profile picture management; Feature 5 built Users' admin-only user
+list; Feature 6 built Employees' full CRUD + documents, and promoted
+`core/users/user-directory.service.ts` out of the Users feature once
+Employees needed the same name-lookup capability). `shared/components/
+{file-upload,data-table,confirm-dialog}/` are real now — see
+`CLAUDE.md`'s Progress Log for exactly what has real content so far.
 
 ## Documentation
 
@@ -116,4 +117,4 @@ exactly what has real content so far.
 - [x] Feature 3 — real Landing Page content, Dashboard quick-nav cards/widgets region
 - [x] Feature 4 — Account: self-service profile view, profile picture upload/delete
 - [x] Feature 5 — Users: admin-only, read-only user list (search + client-side sort)
-- [ ] Employees
+- [x] Feature 6 — Employees: full CRUD, documents, first real `DataTableComponent`

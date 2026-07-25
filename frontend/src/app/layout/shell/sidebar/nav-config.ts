@@ -32,4 +32,15 @@ export const NAV_CONFIG: NavItem[] = [
     description: 'View all registered users and their roles.',
     permissions: ['user:list'],
   },
+  {
+    // employee:read:any only, not also employee:read:own - GET /employees
+    // (the list this route points to) is :any-only server-side; a plain
+    // EMPLOYEE's :own only ever grants GET /employees/:id for their own
+    // record, which has no discoverable link anywhere in this UI today.
+    route: '/employees',
+    icon: ICON_NAMES.badge,
+    label: 'Employees',
+    description: 'View and manage employee records.',
+    permissions: ['employee:read:any'],
+  },
 ];

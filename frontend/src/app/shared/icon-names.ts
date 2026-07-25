@@ -19,6 +19,12 @@ export const ICON_NAMES = {
   photoCamera: 'photo_camera',
   delete: 'delete',
   search: 'search',
+  add: 'add',
+  edit: 'edit',
+  badge: 'badge',
+  uploadFile: 'upload_file',
+  download: 'download',
+  close: 'close',
 } as const satisfies Record<string, string>;
 
 export type IconName = keyof typeof ICON_NAMES;

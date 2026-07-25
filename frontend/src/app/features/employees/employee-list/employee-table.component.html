@@ -1,0 +1,34 @@
+<app-data-table
+  [columns]="columns"
+  [rows]="rows()"
+  [loading]="loading()"
+  [totalCount]="pagination().total"
+  [pageIndex]="pagination().page - 1"
+  [pageSize]="pagination().limit"
+  (pageChange)="pageChange.emit($event)"
+  (sortChange)="sortChange.emit($event)"
+>
+  <ng-template appDataTableCell="employee" let-row>
+    {{ displayName(row.userId) ?? '—' }}
+  </ng-template>
+
+  <ng-template appDataTableCell="salary" let-row>
+    <!-- USD is a placeholder default - no locale/currency config exists elsewhere in this app yet. -->
+    {{ row.salary | currency: 'USD' }}
+  </ng-template>
+
+  <ng-template appDataTableCell="dateOfJoining" let-row>
+    {{ row.dateOfJoining | date: 'mediumDate' }}
+  </ng-template>
+
+  <ng-template appDataTableCell="actions" let-row>
+    <a mat-icon-button [routerLink]="['/employees', row.id]" [attr.aria-label]="'View ' + row.jobTitle">
+      <mat-icon>{{ icons.description }}</mat-icon>
+    </a>
+    @if (sessionStore.hasAnyPermission('employee:update:any')) {
+      <a mat-icon-button [routerLink]="['/employees', row.id, 'edit']" [attr.aria-label]="'Edit ' + row.jobTitle">
+        <mat-icon>{{ icons.edit }}</mat-icon>
+      </a>
+    }
+  </ng-template>
+</app-data-table>

@@ -1,0 +1,59 @@
+<h2 mat-dialog-title>Documents</h2>
+
+<mat-dialog-content class="flex flex-col gap-3">
+  @if (sessionStore.hasAnyPermission('employee:update:any')) {
+    <app-file-upload
+      [accept]="documentAccept"
+      [maxSizeBytes]="documentMaxSizeBytes"
+      [icon]="icons.uploadFile"
+      label="Upload document"
+      (fileSelected)="onFileSelected($event)"
+      (rejected)="onFileRejected($event)"
+    />
+  }
+
+  @if (employeeStore.documentUploading()) {
+    <mat-progress-spinner diameter="24" mode="indeterminate" aria-label="Uploading document" />
+  }
+
+  @if (rejectionError(); as message) {
+    <p class="text-sm" role="alert">{{ message }}</p>
+  }
+  @if (employeeStore.documentsError(); as message) {
+    <p class="text-sm" role="alert">{{ message }}</p>
+  }
+
+  @if (employeeStore.documentsLoading()) {
+    <p>Loading...</p>
+  } @else if (employeeStore.documents().length === 0) {
+    <p class="text-sm">No documents uploaded yet.</p>
+  } @else {
+    <ul class="flex flex-col gap-2">
+      @for (document of employeeStore.documents(); track document.id) {
+        <li class="flex items-center justify-between gap-2 rounded-md border p-2">
+          <div class="flex items-center gap-2 overflow-hidden">
+            <mat-icon>{{ icons.description }}</mat-icon>
+            <div class="flex flex-col overflow-hidden">
+              <a [href]="document.url" target="_blank" rel="noopener" class="truncate">{{ document.fileName }}</a>
+              <span class="text-xs"
+                >{{ formatSize(document.size) }} · {{ document.createdAt | date: 'mediumDate' }}</span
+              >
+            </div>
+          </div>
+          @if (sessionStore.hasAnyPermission('employee:update:any')) {
+            <button mat-icon-button type="button" (click)="confirmDelete(document)" aria-label="Delete document">
+              <mat-icon>{{ icons.delete }}</mat-icon>
+            </button>
+          }
+        </li>
+      }
+    </ul>
+  }
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+  <button mat-button mat-dialog-close type="button">
+    <mat-icon>{{ icons.close }}</mat-icon>
+    Close
+  </button>
+</mat-dialog-actions>

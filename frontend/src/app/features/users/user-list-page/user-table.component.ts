@@ -4,7 +4,7 @@ import { MatChipsModule } from '@angular/material/chips';
 import { MatSort, MatSortModule } from '@angular/material/sort';
 import { MatTableDataSource, MatTableModule } from '@angular/material/table';
 
-import { UserListItem } from '../data-access/user.models';
+import { UserListItem } from '../../../core/users/user.models';
 
 /**
  * Presentational, domain-scoped (blueprint §10) - `rows` in,

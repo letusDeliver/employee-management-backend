@@ -53,6 +53,10 @@ export const routes: Routes = [
         canActivate: [permissionGuard],
         data: { breadcrumb: 'Users', permissions: ['user:list'] },
       },
+      {
+        path: 'employees',
+        loadChildren: () => import('./features/employees/employees.routes').then((m) => m.EMPLOYEES_ROUTES),
+      },
     ],
   },
 ];

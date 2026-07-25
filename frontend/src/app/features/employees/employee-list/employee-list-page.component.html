@@ -1,0 +1,15 @@
+<h1 class="mb-4 text-2xl font-medium">Employees</h1>
+
+<app-employee-toolbar (filtersChange)="onFiltersChange($event)" />
+
+@if (employeeStore.error(); as message) {
+  <p class="text-sm" role="alert">{{ message }}</p>
+} @else {
+  <app-employee-table
+    [rows]="employeeStore.employees()"
+    [loading]="employeeStore.loading()"
+    [pagination]="employeeStore.pagination()"
+    (pageChange)="onPageChange($event)"
+    (sortChange)="onSortChange($event)"
+  />
+}

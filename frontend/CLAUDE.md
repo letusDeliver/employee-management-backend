@@ -122,7 +122,7 @@ EmployeeListPageComponent` automatically — verified live during Feature
 - [x] Feature 3 — real Landing Page content, Dashboard quick-nav cards + widgets region
 - [x] Feature 4 — Account: self-service profile view, profile picture upload/delete
 - [x] Feature 5 — Users: admin-only, read-only user list (search + client-side sort)
-- [ ] Employees
+- [x] Feature 6 — Employees: full CRUD, documents, first real `DataTableComponent`
 
 _(Feature 0 — Angular Project Initialization — completed, on the
 `frontend` branch. Scaffolded via `npx @angular/cli@21.2.19 new frontend`
@@ -625,3 +625,115 @@ the server enforces the real check" philosophy. `ng build`/`ng lint`/
 `ng test` all clean throughout. See `docs/frontend-architecture-blueprint.md`'s
 revision v8 for the premature-abstraction principle recorded formally,
 now evidenced by three data points across Features 3–5.)_
+
+_(Feature 6 — Employees (full CRUD, documents, first real
+`DataTableComponent`) — completed, on the `frontend` branch, staged into
+4 checkpoints per the approved Action Plan, landing in one commit.
+Real backend contract finding, confirmed via live `curl` before any
+code: **`Employee` has no nested `user`/`manager` relation in any
+response** — `userId`/`managerId` are raw, unresolved FKs
+(`employee.repository.js` never `include`s the relation); `GET
+/employees` (list) is `employee:read:any`-**only**, not `:any`/`:own`
+like the single-record route; document upload/delete require
+`employee:update:any` with **no** `:own` variant at all. Before Phase 2
+was approved, six explicit clarifying questions were answered: how
+enrichment should be implemented (neither of the two proposed options —
+injecting `UsersStore` directly, or passing a lookup map down — matched
+blueprint §1's "never feature-to-feature import" rule; the actual
+answer was promoting the capability to `core/`), who owns lazy-load/
+cache ownership, whether `DataTableComponent` stays pure infrastructure,
+what the name-resolution fallback should be (department/job title or
+"—", never a raw id), and a request to formally document "business
+features must remain functional without optional enrichment data —
+enrichment improves the UX but must never become a functional
+dependency" as a standing principle. All answered before implementation
+began.
+
+`features/users/data-access/{user.models.ts, user.service.ts}` moved to
+`core/users/{user.models.ts, user-directory.service.ts}` (renamed
+`UserService` → `UserDirectoryService`) — the first real, lived example
+of a capability promoted to `core/` after a second feature needed it,
+not planned upfront. `UserDirectoryService` is `providedIn: 'root'`,
+single-flight cached (mirrors `refreshInterceptor`'s dedup pattern),
+`canListUsers()` gates on `user:list`, `ensureLoaded()` short-circuits
+to zero HTTP calls without that permission, `resolveDisplayName(userId)`
+returns `string | null` — never a raw id, never fabricated. Both
+`UsersStore` (already-shipped Feature 5 code) and the new
+`EmployeeTableComponent`/`EmployeeDetailPageComponent` depend downward
+on it; neither feature imports the other.
+
+`DataTableComponent` (`shared/components/data-table/`), deliberately
+deferred through Features 3 and 5, was finally built — the first
+feature whose contract (real server-side `page`/`limit`/`sortBy`/
+`order`/`search`) matches what it was designed around. Pure
+infrastructure: `columns`/`rows`/`loading`/`totalCount`/pagination
+inputs, `(pageChange)`/`(sortChange)` outputs that just re-emit the raw
+`PageEvent`/`Sort`. A new `DataTableCellDirective`
+(`ng-template[appDataTableCell]`, collected via `contentChildren()`,
+rendered via `NgTemplateOutlet`) supplies per-column rich content
+(resolved name, currency-formatted salary) with a plain-text fallback
+for every other column.
+
+First real DTO → Model → Mapper split in the app (`employee.dto.ts`/
+`employee.model.ts`/`employee.mapper.ts`) — `salary` is a Prisma
+`Decimal`, a JSON string on the wire, a `number` in the domain model,
+converted in one place, mirroring the backend's own
+`normalizeForAudit()` isolation of the identical quirk.
+`EmployeeDocument`'s domain model drops `publicId`/`resourceType`
+entirely (Cloudinary bookkeeping the frontend never reads), the same
+trimming precedent `Employee` itself set by dropping `deletedAt`. New
+shared infrastructure validated by this feature, not built
+speculatively: `shared/models/paginated.model.ts` (`Paginated` —
+deliberately non-generic, since the array is always a separate sibling
+key per endpoint, never nested inside pagination), `shared/utils/
+http-params.util.ts`, `shared/validators/{not-future-date,
+positive-number,uuid}.validator.ts`, `shared/components/confirm-dialog/`
+(first real consumer: Employees' soft-delete, then Employee documents'
+delete). Documents reuse `FileUploadComponent` (built in Feature 4
+anticipating exactly this second consumer) inside a new
+`EmployeeDocumentsDialogComponent` — upload/delete gated on
+`employee:update:any` only, matching the backend's real permission
+matrix exactly.
+
+**Three real bugs were found live during this feature, none by code
+review**: (1) `@angular/animations` had never been installed at all —
+`provideAnimationsAsync()` had nothing to resolve until this feature's
+`ConfirmDialogComponent`, the app's first real `MatDialog` usage, made
+the gap a hard build error; fixed via `npm install @angular/animations`.
+(2) **Critical, systemic**: the compact theme density (`-2`, chosen in
+Feature 1 for chips) sets `--mat-form-field-filled-label-display: none`
+— confirmed directly by grepping compiled production CSS — so **every**
+`<mat-form-field>` using Material's default "filled" appearance
+rendered with **zero label at all**, not a contrast issue, silently
+since Feature 5 (Users' search box), only unmissable once this
+feature's 6-field form made it impossible to miss (caught via the
+user's own screenshot and explicit UX pushback). No equivalent
+`--mat-form-field-outline-label-display: none` rule exists at this
+density, so fixed globally, once, via `{ provide:
+MAT_FORM_FIELD_DEFAULT_OPTIONS, useValue: { appearance: 'outline' } }`
+in `app.config.ts` — Login/Register were unaffected since Feature 2
+already set `appearance="outline"` explicitly per field. (3) A real
+user-submitted `curl` request (`userId: "test.com"`) surfaced the
+backend's raw `"userId: Invalid UUID"` 400 with no prior client-side
+warning — fixed with a new `uuidValidator` (mirrors the backend's
+`z.string().uuid()` rule) wired into both the `userId` and `managerId`
+form controls, plus inline `mat-error` messages.
+
+`angular.json`'s production budget moved twice (500kB → 550kB → 650kB)
+for genuinely eager, initial-bundle additions (`@angular/animations`,
+`provideNativeDateAdapter()`, `MAT_FORM_FIELD_DEFAULT_OPTIONS`), not
+lazy feature code — both disclosed at the time. Verified live across
+all 4 stages against two real accounts (ADMIN and a plain EMPLOYEE):
+list pagination/sort/search/filter, create/edit/delete with every
+client-side validator (required fields, positive salary, not-future
+date, self-management, UUID format) each individually confirmed against
+a real server-side equivalent, permission-gated buttons correctly
+absent for the non-admin account, document upload (PDF/jpeg/png/webp,
+reject wrong type/oversized client-side)/list/delete against the real
+Cloudinary-backed endpoints, and enrichment degrading honestly (a
+resolved name when permitted, "—" otherwise, never a crash) in both
+directions. `ng build`/`ng lint`/`ng test` all clean throughout. See
+`docs/frontend-architecture-blueprint.md`'s revision v9 and
+`handbook/frontend-06-employees.md` for the full account — this was the
+last feature on the original roadmap; further frontend work is
+enhancement-phase from here.)_

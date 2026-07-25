@@ -7,9 +7,12 @@ Initialization), Feature 1 (Angular Material, Tailwind CSS, theming,
 design tokens), Feature 2 (Authentication), Feature 3 (real Landing Page
 content, Dashboard quick-navigation cards + widgets region), Feature 4
 (Account — self-service profile view + profile picture management), and
-Feature 5 (Users — admin-only, read-only user list) are all complete —
-see `frontend/CLAUDE.md`'s Progress Log. Employees is next, following
-the same 8-phase workflow (`frontend/CLAUDE.md`).
+Feature 5 (Users — admin-only, read-only user list), and Feature 6
+(Employees — full CRUD, documents, the first real `DataTableComponent`)
+are all complete — see `frontend/CLAUDE.md`'s Progress Log. Employees
+was the last feature on the original roadmap; any further frontend work
+is now enhancement-phase, following the same 8-phase workflow
+(`frontend/CLAUDE.md`).
 
 This blueprint is the frontend's equivalent of the backend's
 `CLAUDE.md` + `planning/feature-NN-*.md` combination: a durable
@@ -104,6 +107,87 @@ handbook kept in sync, one commit per feature).
   `DataTableComponent` (deliberately still deferred to Employees, this
   feature) — rather than Users forcing a premature, dual-contract
   version of `DataTableComponent` into existence.
+- v9 (this revision) — Feature 6 (Employees) delivered full CRUD,
+  document management, and the first real `DataTableComponent`, staged
+  into 4 checkpoints landing in one commit. Real backend contract
+  finding, confirmed by live `curl` before any code: **`Employee` has no
+  nested `user`/`manager` relation in any response** — `userId`/
+  `managerId` are raw, unresolved FKs (`employee.repository.js` never
+  `include`s the relation). Rather than fabricate names client-side or
+  make the feature depend on Users always being loaded, the shared
+  capability was promoted out of `features/users/` into a new
+  **`core/users/user-directory.service.ts`** (`UserDirectoryService`) —
+  see §2/§12 for its shape. This is the first amendment to §1's
+  dependency-direction rule with a real, lived example beyond
+  `SessionStore`: both `UsersStore` (Feature 5) and
+  `EmployeeTableComponent`/`EmployeeDetailPageComponent` (this feature)
+  depend downward on `core/users/`, never on each other — the
+  feature-to-feature import blueprint §1 always prohibited, now with a
+  second concrete instance, not just the rule stated once and never
+  exercised again.
+
+  Formally recording the enrichment principle you asked to document
+  verbatim: **business features must remain functional without optional
+  enrichment data — enrichment improves the user experience but must
+  never become a functional dependency.** Concretely: `EmployeeTableComponent`/
+  `EmployeeDetailPageComponent` fire-and-forget `ensureLoaded()` with a
+  silently-swallowed error (`.subscribe({ error: () => undefined })`),
+  and `resolveDisplayName()` returns `string | null` — a caller-visible
+  `"—"` fallback, never a raw ID and never a thrown error. `UsersStore`
+  itself does **not** swallow errors the same way — that's each
+  consumer's own choice, since Users' own page genuinely needs to know
+  if its one real fetch failed, while Employees' enrichment is
+  optional by design.
+
+  `DataTableComponent` (§9/§11) is now real, built only once Employees'
+  genuine server-side pagination existed to validate its contract
+  against, per the Feature 5 premature-abstraction principle. It stayed
+  exactly as generic as planned: `columns: ColumnDef[]` + `rows: T[]` +
+  `loading`/`totalCount`/pagination inputs, `(pageChange)`/`(sortChange)`
+  outputs that only re-emit the raw `PageEvent`/`Sort` (it never fetches
+  or sorts anything itself), plus one addition not originally specified —
+  a `DataTableCellDirective` (`ng-template[appDataTableCell]`, collected
+  via `contentChildren()`, rendered via `NgTemplateOutlet`) for
+  per-column rich content (Employees' resolved-name and
+  currency-formatted salary columns), falling back to plain `row[key]`
+  text for every other column.
+
+  This is also the first feature with a real DTO/Model/Mapper split
+  (§8) — `salary` is a Prisma `Decimal`, serializing as a JSON *string*
+  but accepted as a `number` on the way in, the canonical case §8
+  always described but never had a live instance of until now.
+  `EmployeeDocument`'s domain model deliberately drops `publicId`/
+  `resourceType` entirely (Cloudinary bookkeeping the frontend never
+  reads — deletion is by `documentId`), the same trimming precedent as
+  `Employee` dropping `deletedAt`.
+
+  **One planned shared piece was deliberately *not* built**: §11's
+  `fileSize` pipe. With exactly one real consumer
+  (`EmployeeDocumentsDialogComponent`'s byte-count display), extracting
+  a shared pipe would be the same premature abstraction the Feature 5
+  principle warns against — `formatSize()` stays a private method on
+  that one component until a second real consumer justifies promoting
+  it. §11 corrected below to say so plainly rather than describe a pipe
+  that doesn't exist.
+
+  **Two more real, systemic bugs found live, neither by code review**:
+  (1) `@angular/animations` had never been installed at all —
+  `provideAnimationsAsync()` silently had nothing to resolve until this
+  feature's `ConfirmDialogComponent` (the app's first real `MatDialog`
+  usage) made the gap unmissable; fixed by installing the package. (2)
+  the compact theme density (`-2`, chosen in Feature 1 for chips) sets
+  `--mat-form-field-filled-label-display: none` — **every**
+  `<mat-form-field>` using Material's default "filled" appearance was
+  rendering **zero label**, not a contrast issue, silently since Feature
+  5 (Users' search box), only unmissable once this feature's 6-field
+  form made it impossible to miss. Fixed globally, once, via
+  `{ provide: MAT_FORM_FIELD_DEFAULT_OPTIONS, useValue: { appearance:
+  'outline' } }` — see §12/§13 for where each is now recorded. A third,
+  smaller gap (no client-side UUID-format validation on the optional
+  `userId`/`managerId` fields) was caught via a real user-submitted
+  `curl` round-trip against the live server, not the browser — fixed
+  with a new `uuidValidator` (§11), mirroring the backend's own
+  `z.string().uuid()` rule.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:
@@ -249,6 +333,9 @@ frontend/
 │   │   │   │   └── global-error-handler.ts   # non-HTTP unexpected errors (ErrorHandler override)
 │   │   │   ├── logging/
 │   │   │   │   └── logger.service.ts         # console-backed today, one seam for real logging later
+│   │   │   ├── users/                        # promoted here in Feature 6 — see §1/§12
+│   │   │   │   ├── user.models.ts            # UserListItem, UsersResponse (moved from features/users/)
+│   │   │   │   └── user-directory.service.ts # UserDirectoryService — cached, permission-aware name lookup
 │   │   │   └── config/
 │   │   │       └── app-config.ts             # InjectionToken sourced from environment.ts
 │   │   │
@@ -299,7 +386,10 @@ frontend/
 │   │           │   ├── employee.model.ts      # domain shape — salary: number, dates: Date
 │   │           │   ├── employee.mapper.ts     # dto ⇄ domain, the one place the asymmetry lives
 │   │           │   ├── employee.service.ts    # HttpClient only, one method per endpoint
-│   │           │   └── employee.store.ts      # signals: list, selected, loading, error, pagination
+│   │           │   ├── employee.store.ts      # signals: list, selected, loading, error, pagination, documents
+│   │           │   ├── employee-document.dto.ts    # wire shape (createdAt: string)
+│   │           │   ├── employee-document.model.ts  # domain shape (createdAt: Date; publicId/resourceType dropped)
+│   │           │   └── employee-document.mapper.ts # dto ⇄ domain
 │   │           ├── employee-list/             # EmployeeListPageComponent, EmployeeTableComponent, EmployeeToolbarComponent
 │   │           ├── employee-detail/           # EmployeeDetailPageComponent
 │   │           ├── employee-form/             # EmployeeFormComponent (create + edit)
@@ -324,7 +414,8 @@ frontend/
 | Folder | Exists because |
 |---|---|
 | `core/` | App-wide singletons that every feature depends on but no feature owns — session, HTTP plumbing. Importing `core/` into `core/` (a feature reaching back into another feature's internals) is the smell this boundary prevents. Note `core/auth/` deliberately has **no** permission-mapping file — see §7/§19. |
-| `shared/` | Reuse without domain coupling — but only once a real contract exists to build against (see §9's premature-abstraction principle, confirmed in Feature 5): `DataTableComponent` is reserved for Employees' genuine server-side pagination, not built speculatively ahead of it — Users (Feature 5) has its own feature-local table instead, since its contract (client-side only) doesn't match. |
+| `shared/` | Reuse without domain coupling — but only once a real contract exists to build against (see §9's premature-abstraction principle, confirmed in Feature 5, now further evidenced by Feature 6's `DataTableComponent`, built only once Employees' genuine server-side pagination existed to validate it) — Users (Feature 5) has its own feature-local table instead, since its contract (client-side only) doesn't match. |
+| `core/users/` | The one real example (Feature 6) of a capability promoted out of a feature into `core/` after the fact: `UserDirectoryService` started life inside `features/users/data-access/` (Feature 5) and was moved once Employees needed the same "resolve a display name for a `userId`" capability — proof that §1's "never feature-to-feature import" rule holds even when the second consumer arrives later, not just when two features are planned together upfront. |
 | `layout/` | Visual chrome is not a "feature" — it has no data-access layer, no store, just composition. Split into `public-layout/` and `shell/` because the two audiences (anonymous visitor vs. authenticated user) need genuinely different chrome, not one layout awkwardly toggling itself. |
 | `features/*` | Feature-first, not type-first (no app-wide `components/`, `services/` junk drawers) — mirrors the backend's `modules/auth/`, `modules/employees/` decision explicitly, for the same reason: everything about one feature is discoverable in one folder. |
 | `features/landing/` | The public entry point is architecturally a feature like any other — it lazy-loads under the public layout, has no data-access layer (nothing to fetch), and will grow its own content over time without touching `core/`/`shared/`. |
@@ -811,10 +902,13 @@ never actually returns.
   (`{ employees: EmployeeDto[]; pagination: Paginated }`,
   `{ employee: EmployeeDto }`, `{ message: string }`), **not** wrapped
   in a generic envelope type, because no such envelope exists
-  server-side (§0). The one genuinely reusable generic is
-  `Paginated<T> = { page: number; limit: number; total: number;
-  totalPages: number }`, since that shape is designed to repeat as more
-  list endpoints are added.
+  server-side (§0). The one genuinely reusable shape is
+  `Paginated = { page: number; limit: number; total: number;
+  totalPages: number }` — **not generic** (confirmed once Feature 6 gave
+  it a real second consumer): every paginated endpoint returns the
+  array itself as a separate sibling key (`{ employees, pagination }`),
+  never nested inside the pagination object, so there is no `items: T[]`
+  field for a type parameter to describe.
 - **Error handling** — a shared `ApiError { status: 'error'; message:
   string; stack?: string }` model; the `errorInterceptor` (§7) is the
   one place an `HttpErrorResponse` becomes an `ApiError`. Components
@@ -846,14 +940,21 @@ never actually returns.
   opened from a detail page without navigating away).
 - **Tables** — one generic `DataTableComponent` (`MatTable` +
   `MatPaginator` + `MatSort`), driven entirely by `columns: ColumnDef[]`
-  + `rows: T[]` + `loading` inputs and `(pageChange)`/`(sortChange)`
-  outputs. Pagination/sort/filter are **server-side**, matching the
-  real `page/limit/sortBy/order` query params the backend already
-  validates and whitelists — no pretending to paginate data the server
-  already paginated. `EmployeeTableComponent` will configure it for the
-  Employees feature; it is never forked. **Deliberately not built yet
-  as of Feature 5 (Users)** — see the premature-abstraction principle
-  below.
+  + `rows: T[]` + `loading`/`totalCount`/pagination inputs and
+  `(pageChange)`/`(sortChange)` outputs that just re-emit the raw
+  `PageEvent`/`Sort` — it never fetches or sorts anything itself.
+  Pagination/sort/filter are **server-side**, matching the real
+  `page/limit/sortBy/order` query params the backend already validates
+  and whitelists — no pretending to paginate data the server already
+  paginated. `EmployeeTableComponent` configures it for the Employees
+  feature; it is never forked. **Built in Feature 6**, once Employees'
+  genuine server-side pagination existed to validate the contract
+  against — see the premature-abstraction principle below. One addition
+  beyond the original plan: a `DataTableCellDirective`
+  (`ng-template[appDataTableCell]`, collected via `contentChildren()`,
+  rendered via `NgTemplateOutlet`) lets a consumer supply rich per-column
+  content (Employees' resolved-name and currency-formatted salary
+  columns) while every other column falls back to plain `row[key]` text.
 
   **Architectural principle (confirmed during Feature 5 — Users):**
   a shared, generic component is built only once at least one concrete,
@@ -942,30 +1043,42 @@ template is immediately recognizable as project code.
 
 ## 11. Shared Layer
 
-- **Components**: `data-table`, `page-header`, `confirm-dialog`,
-  `empty-state`, `loading-skeleton`, `file-upload` (wraps both real
-  upload endpoints' shared concerns — drag-drop, a client-side MIME/
-  size pre-check mirroring the backend's actual allow-lists: profile
-  pictures `image/jpeg|png|webp` up to 5 MB; employee documents
-  additionally `application/pdf` up to 10 MB). **Delivered in Feature 4**
-  for the profile-picture case — built for real rather than deferred,
-  since a second real consumer (Employee documents) already justified
-  it, unlike `empty-state`, still deliberately unbuilt (§4.3/revision
-  v6).
-- **Directives**: `*appHasPermission="'employee:create'"` and
-  `*appHasAnyPermission="['employee:read:any','employee:read:own']"` —
-  structural directives reading `SessionStore` (§7), the template-level
-  counterpart to `permissionGuard`.
-- **Pipes**: `fileSize` (bytes → human-readable, for
-  `EmployeeDocument.size: Int`), `roleLabel` (role name → display
-  label). A `decimalCurrency`-style formatting pipe is documented to
-  expect the **mapped domain `number`**, never the raw wire `string` —
-  reinforcing the mapper boundary rather than letting a component
-  quietly coerce a string itself.
-- **Validators**: `notFutureDateValidator`, `positiveNumberValidator` —
-  centralized once, not copy-pasted per feature, the same
-  centralization principle behind the backend keeping these rules in
-  one Zod schema file rather than scattered across services.
+- **Components**: `data-table` (built for real in Feature 6, see §9),
+  `confirm-dialog` (built in Feature 6, its first real consumer being
+  Employees' soft-delete, then Employee documents' delete), `file-upload`
+  (wraps both real upload endpoints' shared concerns — drag-drop, a
+  client-side MIME/size pre-check mirroring the backend's actual
+  allow-lists: profile pictures `image/jpeg|png|webp` up to 5 MB;
+  employee documents additionally `application/pdf` up to 10 MB).
+  **Delivered in Feature 4** for the profile-picture case, reused as-is
+  (zero changes) by Feature 6's document dialog — the second consumer
+  it was always built anticipating. `page-header`, `empty-state`, and
+  `loading-skeleton` remain deliberately unbuilt — no feature has yet
+  produced the concrete, validated need the premature-abstraction
+  principle requires (§4.3/revision v6, §9).
+- **Directives**: `*appHasPermission`/`*appHasAnyPermission` remain
+  **unbuilt** as of Feature 6 — every permission-gated element so far
+  (Employees' single "New Employee"/"Edit"/"Delete"/"Documents" buttons)
+  has been a plain `@if (sessionStore.hasAnyPermission(...))` in the
+  smart component's own template, a reasonable, honest call for a
+  single button and not yet worth a structural directive. Revisit once
+  a template needs three-or-more such checks in one place.
+- **Pipes**: none built yet. §11's originally-planned `fileSize` pipe
+  was deliberately **not** extracted in Feature 6 — `EmployeeDocumentsDialogComponent`
+  has exactly one real consumer for byte-count formatting, so a private
+  `formatSize()` method on that one component is the correct amount of
+  abstraction today, per the same premature-abstraction principle (§9).
+  `roleLabel` also remains unbuilt — Users (Feature 5) renders raw role
+  strings as chips with no relabeling need yet. Promote either the
+  moment a second real consumer exists, not before.
+- **Validators**: `notFutureDateValidator`, `positiveNumberValidator`,
+  `uuidValidator` (added in Feature 6, mirrors the backend's
+  `z.string().uuid()` rule on the optional `userId`/`managerId` fields —
+  added after a real user-submitted `curl` round-trip surfaced the
+  backend's raw `"userId: Invalid UUID"` message with no prior
+  client-side warning) — centralized once, not copy-pasted per feature,
+  the same centralization principle behind the backend keeping these
+  rules in one Zod schema file rather than scattered across services.
 - **Utilities**: `date.util.ts` (ISO-string parsing since domain models
   keep real `Date` objects, formatted at the display edge via
   `DatePipe`), `http-params.util.ts` (builds `HttpParams` from a typed
@@ -1003,9 +1116,33 @@ template is immediately recognizable as project code.
   `AuthService` (thin wrapper for the 5 real auth endpoints),
   `NotificationService` (wraps `MatSnackBar` — the one place a toast
   gets triggered from), `LoggerService` (thin console-backed wrapper
-  today).
+  today), and — **added in Feature 6** — `UserDirectoryService`
+  (`core/users/user-directory.service.ts`): a `providedIn: 'root'`
+  singleton, cached (`usersById: Map<string, UserListItem> | null`
+  signal) with the same single-flight in-flight-request dedup pattern
+  `refreshInterceptor` already uses; `canListUsers()` checks
+  `SessionStore.hasAnyPermission('user:list')`; `ensureLoaded()`
+  short-circuits to `of([])` with **zero HTTP call** if the caller lacks
+  that permission (it does not swallow a genuine HTTP error — that's
+  each consumer's own choice, see the enrichment principle in the v9
+  revision note); `resolveDisplayName(userId)` returns `string | null`,
+  never a raw id and never a fabricated value. Promoted out of
+  `features/users/data-access/` (Feature 5) once Employees needed the
+  identical capability — see §1's `core/users/` row for why this lives
+  here instead of a direct feature import.
 - **Config**: `core/config/app-config.ts` — one small object built from
   `environment.ts` (`apiBaseUrl`, `production`).
+- **App-level providers** (`app.config.ts`, outside any one feature —
+  added incrementally as real gaps surfaced, each disclosed at the time
+  rather than pre-provisioned speculatively): `MAT_ICON_DEFAULT_OPTIONS`
+  (Feature 3, the icon-font-mismatch fix, §13); `provideAnimationsAsync()`
+  (Feature 6 — `@angular/animations` had never been installed; nothing
+  needed it until this feature's `ConfirmDialogComponent`, the app's
+  first real `MatDialog` usage); `provideNativeDateAdapter()` (Feature 6,
+  for `MatDatepicker` on the employee form's `dateOfJoining` field —
+  native `Date` is already this app's domain type, no extra date library
+  introduced); `MAT_FORM_FIELD_DEFAULT_OPTIONS: { appearance: 'outline' }`
+  (Feature 6, the form-field-label density fix, §13).
 - **Error handler**: a global `ErrorHandler` override for genuinely
   unexpected (non-HTTP, e.g. template/render) errors — logs via
   `LoggerService`, shows a generic fallback notification. A distinct
@@ -1031,7 +1168,22 @@ template is immediately recognizable as project code.
   layout/spacing, not type.
 - **Density**: one global compact density setting, appropriate for a
   data-dense HR/admin tool (tables, forms) — applied once at the theme
-  level, never mixed per component.
+  level, never mixed per component. **Real, systemic bug found and
+  fixed in Feature 6**: the compact density (`-2`, chosen in Feature 1
+  for chips' tightest `clamp-density()` floor) sets
+  `--mat-form-field-filled-label-display: none` at this density —
+  confirmed directly by grepping the compiled production CSS. Every
+  `<mat-form-field>` using Material's default "filled" appearance was
+  rendering **zero label at all**, not a color/contrast issue — silently
+  broken since Feature 5 (Users' unlabeled search box), only unmissable
+  once Feature 6's 6-field employee form made it impossible to miss. No
+  equivalent `--mat-form-field-outline-label-display: none` rule exists
+  at this density (confirmed against the same compiled CSS), so fixed
+  globally, once, via `{ provide: MAT_FORM_FIELD_DEFAULT_OPTIONS,
+  useValue: { appearance: 'outline' } }` in `app.config.ts` (§12) —
+  Login/Register were unaffected since Feature 2 already set
+  `appearance="outline"` explicitly per field, now harmlessly redundant
+  with this default.
 - **Icons**: Material Symbols via `<mat-icon>`, referenced only through
   one shared `icon-names.ts` constants file — the same "frozen object
   instead of magic strings" convention the backend already uses for

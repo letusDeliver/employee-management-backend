@@ -1,9 +1,9 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { finalize } from 'rxjs';
 
+import { UserDirectoryService } from '../../../core/users/user-directory.service';
+import { UserListItem } from '../../../core/users/user.models';
 import { extractErrorMessage } from '../../../shared/utils/extract-error-message.util';
-import { UserListItem } from './user.models';
-import { UserService } from './user.service';
 
 /**
  * Signal-based Store (blueprint §6) - not NgRx. `filteredUsers` is a
@@ -14,10 +14,16 @@ import { UserService } from './user.service';
  * server-side user search" - it's the same "sort data you already have"
  * pattern `MatTableDataSource`'s client-side sorting uses, applied one
  * level up, at the Store.
+ *
+ * Sources data from `UserDirectoryService` (`core/users/`, moved here
+ * in Feature 6 alongside Employees' name-enrichment need) rather than
+ * its own HTTP call - one real fetch implementation for "all users" in
+ * the whole app, shared by this page and Employees' optional
+ * enrichment, neither importing the other.
  */
 @Injectable({ providedIn: 'root' })
 export class UsersStore {
-  private readonly userService = inject(UserService);
+  private readonly userDirectory = inject(UserDirectoryService);
 
   readonly users = signal<UserListItem[]>([]);
   readonly loading = signal(false);
@@ -38,8 +44,8 @@ export class UsersStore {
     this.error.set(null);
     this.loading.set(true);
 
-    this.userService
-      .listUsers()
+    this.userDirectory
+      .ensureLoaded()
       .pipe(finalize(() => this.loading.set(false)))
       .subscribe({
         next: (users) => this.users.set(users),
