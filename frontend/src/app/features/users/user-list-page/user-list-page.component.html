@@ -1,0 +1,17 @@
+<h1 class="mb-4 text-2xl font-medium">Users</h1>
+
+<mat-form-field class="w-full max-w-sm" subscriptSizing="dynamic">
+  <mat-label>Search by name or email</mat-label>
+  <mat-icon matPrefix>{{ icons.search }}</mat-icon>
+  <input matInput [value]="usersStore.searchTerm()" (input)="onSearchChange($event)" />
+</mat-form-field>
+
+<div class="mt-4">
+  @if (usersStore.loading()) {
+    <mat-progress-spinner diameter="32" mode="indeterminate" aria-label="Loading users" />
+  } @else if (usersStore.error(); as message) {
+    <p class="text-sm" role="alert">{{ message }}</p>
+  } @else {
+    <app-user-table [rows]="usersStore.filteredUsers()" />
+  }
+</div>

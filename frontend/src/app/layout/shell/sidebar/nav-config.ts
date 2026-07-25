@@ -25,4 +25,11 @@ export const NAV_CONFIG: NavItem[] = [
     description: 'View your profile and manage your profile picture.',
     permissions: [],
   },
+  {
+    route: '/users',
+    icon: ICON_NAMES.people,
+    label: 'Users',
+    description: 'View all registered users and their roles.',
+    permissions: ['user:list'],
+  },
 ];

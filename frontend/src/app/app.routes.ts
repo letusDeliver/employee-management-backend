@@ -1,6 +1,7 @@
 import { Routes } from '@angular/router';
 
 import { authGuard } from './core/auth/auth.guard';
+import { permissionGuard } from './core/auth/permission.guard';
 import { redirectIfAuthenticatedGuard } from './core/auth/redirect-if-authenticated.guard';
 
 export const routes: Routes = [
@@ -42,6 +43,15 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./features/account/account-page.component').then((m) => m.AccountPageComponent),
         data: { breadcrumb: 'Account' },
+      },
+      {
+        path: 'users',
+        loadComponent: () =>
+          import('./features/users/user-list-page/user-list-page.component').then(
+            (m) => m.UserListPageComponent,
+          ),
+        canActivate: [permissionGuard],
+        data: { breadcrumb: 'Users', permissions: ['user:list'] },
       },
     ],
   },

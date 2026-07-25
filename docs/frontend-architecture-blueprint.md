@@ -5,11 +5,11 @@
 "Permission Resolution Enhancement" entry). Feature 0 (Angular Project
 Initialization), Feature 1 (Angular Material, Tailwind CSS, theming,
 design tokens), Feature 2 (Authentication), Feature 3 (real Landing Page
-content, Dashboard quick-navigation cards + widgets region), and Feature
-4 (Account — self-service profile view + profile picture management)
-are all complete — see `frontend/CLAUDE.md`'s Progress Log. Employees
-and Users are next, following the same 8-phase workflow
-(`frontend/CLAUDE.md`).
+content, Dashboard quick-navigation cards + widgets region), Feature 4
+(Account — self-service profile view + profile picture management), and
+Feature 5 (Users — admin-only, read-only user list) are all complete —
+see `frontend/CLAUDE.md`'s Progress Log. Employees is next, following
+the same 8-phase workflow (`frontend/CLAUDE.md`).
 
 This blueprint is the frontend's equivalent of the backend's
 `CLAUDE.md` + `planning/feature-NN-*.md` combination: a durable
@@ -88,6 +88,22 @@ handbook kept in sync, one commit per feature).
   later). This is also the **first feature to add a real `NAV_CONFIG`
   entry** (§3/§4.3), the first live proof that Feature 3's Sidebar +
   Dashboard quick-nav mechanism actually works end-to-end.
+- v8 (this revision) — Feature 5 (Users) delivered an admin-only,
+  read-only user list (`user:list`, ADMIN-only per `prisma/seed.js`).
+  Real backend contract finding: `GET /users` has no server-side
+  pagination/sort/filter/mutation of any kind — a bare `findMany()`. This
+  is the **first route to actually exercise `permissionGuard`** and the
+  **first `NAV_CONFIG` entry with a real, restrictive permission key**
+  (Account's, Feature 4, has `permissions: []`) — both confirmed live
+  against a real ADMIN and a real non-admin account. Formally records
+  the premature-abstraction principle (see §9's Tables bullet and §1's
+  folder-purpose table): shared components are built only once a real
+  consumer has validated the contract, evidenced now by three data
+  points — `EmptyStateComponent` (deferred, Feature 3),
+  `FileUploadComponent` (built once justified, Feature 4), and
+  `DataTableComponent` (deliberately still deferred to Employees, this
+  feature) — rather than Users forcing a premature, dual-contract
+  version of `DataTableComponent` into existence.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:
@@ -308,7 +324,7 @@ frontend/
 | Folder | Exists because |
 |---|---|
 | `core/` | App-wide singletons that every feature depends on but no feature owns — session, HTTP plumbing. Importing `core/` into `core/` (a feature reaching back into another feature's internals) is the smell this boundary prevents. Note `core/auth/` deliberately has **no** permission-mapping file — see §7/§19. |
-| `shared/` | Reuse without domain coupling. A `DataTableComponent` that knows nothing about "Employee" can be reused by `users/`, future `audit-logs/`, etc. |
+| `shared/` | Reuse without domain coupling — but only once a real contract exists to build against (see §9's premature-abstraction principle, confirmed in Feature 5): `DataTableComponent` is reserved for Employees' genuine server-side pagination, not built speculatively ahead of it — Users (Feature 5) has its own feature-local table instead, since its contract (client-side only) doesn't match. |
 | `layout/` | Visual chrome is not a "feature" — it has no data-access layer, no store, just composition. Split into `public-layout/` and `shell/` because the two audiences (anonymous visitor vs. authenticated user) need genuinely different chrome, not one layout awkwardly toggling itself. |
 | `features/*` | Feature-first, not type-first (no app-wide `components/`, `services/` junk drawers) — mirrors the backend's `modules/auth/`, `modules/employees/` decision explicitly, for the same reason: everything about one feature is discoverable in one folder. |
 | `features/landing/` | The public entry point is architecturally a feature like any other — it lazy-loads under the public layout, has no data-access layer (nothing to fetch), and will grow its own content over time without touching `core/`/`shared/`. |
@@ -834,8 +850,33 @@ never actually returns.
   outputs. Pagination/sort/filter are **server-side**, matching the
   real `page/limit/sortBy/order` query params the backend already
   validates and whitelists — no pretending to paginate data the server
-  already paginated. `EmployeeTableComponent` configures it for the
-  Employees feature; it is never forked.
+  already paginated. `EmployeeTableComponent` will configure it for the
+  Employees feature; it is never forked. **Deliberately not built yet
+  as of Feature 5 (Users)** — see the premature-abstraction principle
+  below.
+
+  **Architectural principle (confirmed during Feature 5 — Users):**
+  a shared, generic component is built only once at least one concrete,
+  real consumer has validated the intended contract — never
+  speculatively ahead of that. Users (Feature 5) also renders a data
+  table, but its contract is genuinely different from what
+  `DataTableComponent` is designed around: `GET /users` has no
+  server-side pagination/sort/filter at all (a bare, unpaginated
+  `findMany()`), so Users got its own small, feature-local
+  `UserTableComponent` (client-side `MatTableDataSource`/`MatSort` over
+  an already-fully-loaded array, no `MatPaginator` — nothing here should
+  ever look like the server is paging results) instead of forcing
+  `DataTableComponent`'s first real build to serve two incompatible
+  pagination models at once. This mirrors the same reasoning already
+  applied to `EmptyStateComponent` (deferred in Feature 3, still
+  unbuilt) and validated by `FileUploadComponent` (built for real in
+  Feature 4, once two real consumers existed) — three data points now
+  supporting the same rule. If `DataTableComponent`'s eventual,
+  Employees-driven contract ever turns out to also cleanly support a
+  pure client-side mode, migrating `UserTableComponent` to it is a
+  contained, single-file change (its internal template only) —
+  `UsersStore`, `UserListPageComponent`, and `UserService` need no
+  change either way, and migrating is optional, not obligated.
 - **Forms — Typed Angular Reactive Forms, explicitly not Signal
   Forms.** Every form is a typed `FormGroup<{...}>` built with
   `FormBuilder`. **Signal Forms are deliberately not adopted in this

@@ -18,6 +18,7 @@ export const ICON_NAMES = {
   description: 'description',
   photoCamera: 'photo_camera',
   delete: 'delete',
+  search: 'search',
 } as const satisfies Record<string, string>;
 
 export type IconName = keyof typeof ICON_NAMES;

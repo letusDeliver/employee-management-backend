@@ -85,15 +85,15 @@ src/
 ```
 
 `core/{auth,http,notifications}`, `layout/{public-layout,shell}`, and
-`features/{landing,auth,dashboard,account}` now have real content
+`features/{landing,auth,dashboard,account,users}` now have real content
 (Feature 2 built the shells and auth flows; Feature 3 filled in
 Landing's real content and Dashboard's quick-navigation cards + widgets
 region; Feature 4 built Account's self-service profile + profile
-picture management). `shared/components/file-upload/` is also real now
-(Feature 4); the rest of `shared/components` and
-`features/{employees,users}` are still empty scaffolding
-(`.gitkeep`-marked) — see `CLAUDE.md`'s Progress Log for exactly what
-has real content so far.
+picture management; Feature 5 built Users' admin-only user list).
+`shared/components/file-upload/` is also real now (Feature 4); the rest
+of `shared/components` and `features/employees` are still empty
+scaffolding (`.gitkeep`-marked) — see `CLAUDE.md`'s Progress Log for
+exactly what has real content so far.
 
 ## Documentation
 
@@ -115,4 +115,5 @@ has real content so far.
 - [x] Feature 2 — Authentication: `SessionStore`, guards, interceptors, Login/Register, Shell, real Dashboard (welcome + profile card)
 - [x] Feature 3 — real Landing Page content, Dashboard quick-nav cards/widgets region
 - [x] Feature 4 — Account: self-service profile view, profile picture upload/delete
-- [ ] Employees, Users (order TBD)
+- [x] Feature 5 — Users: admin-only, read-only user list (search + client-side sort)
+- [ ] Employees

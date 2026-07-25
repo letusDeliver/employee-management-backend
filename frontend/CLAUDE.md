@@ -121,7 +121,8 @@ EmployeeListPageComponent` automatically — verified live during Feature
 - [x] Feature 2 — Authentication (SessionStore, guards, interceptors, Login/Register, Shell, real Dashboard)
 - [x] Feature 3 — real Landing Page content, Dashboard quick-nav cards + widgets region
 - [x] Feature 4 — Account: self-service profile view, profile picture upload/delete
-- [ ] Employees, Users (order TBD)
+- [x] Feature 5 — Users: admin-only, read-only user list (search + client-side sort)
+- [ ] Employees
 
 _(Feature 0 — Angular Project Initialization — completed, on the
 `frontend` branch. Scaffolded via `npx @angular/cli@21.2.19 new frontend`
@@ -562,3 +563,65 @@ message and no network request. `ng build`/`ng lint`/`ng test` all clean
 throughout. See `docs/frontend-architecture-blueprint.md`'s revision v7
 for where all of the above is recorded against the sections it amends
 (§3/§4.3, §7, §11, §12).)_
+
+_(Feature 5 — Users (admin-only, read-only user list) — completed, on
+the `frontend` branch. Before Phase 2 (Architecture) was approved, the
+user asked 5 explicit clarifying questions — what's reusable vs.
+feature-specific, whether a later migration to the shared
+`DataTableComponent` is expected and how it'd happen without a big
+refactor, whether the Smart/Presentational split still applies to a
+table this simple, whether client-side search/sort could ever be
+mistaken for server-side capability, and a request to formally document
+"avoid premature abstraction, build shared components only after a real
+consumer validates the contract" as a standing rule — all answered
+before implementation began, not deferred to after the fact.
+
+Backend contract re-verified before any code: `GET /users`
+(`authMiddleware` + `requirePermission('user:list')`) returns
+`{ users: [...] }`, each a `sanitizeUser(user, roles)` — roles only,
+never `permissions` (same pattern as Account's profile-picture
+response); `user:list` is **ADMIN-only** (`prisma/seed.js`'s
+`ROLE_PERMISSIONS`); and `user.repository.js`'s `findAll()` is a bare,
+unpaginated `findMany()` — no search/sort/filter/pagination exists
+server-side at all, and no mutation endpoints (promote/demote/delete)
+exist either. This is a genuinely read-only admin utility, not a
+trimmed-down CRUD feature.
+
+**The premature-abstraction decision, made explicit rather than
+defaulted into**: blueprint §9's `DataTableComponent` is designed
+around Employees' real, upcoming **server-side** pagination — Users'
+table has a fundamentally different contract (client-side only, since
+the backend does none of that). Rather than force `DataTableComponent`'s
+first real build to serve two incompatible pagination models at once,
+Users got its own small, feature-local `UserTableComponent`
+(`MatTableDataSource` + `MatSort`, client-side, deliberately **no**
+`MatPaginator` — nothing here should ever visually imply the server is
+paging results). `UserListPageComponent` (smart) never touches
+`MatTable` APIs directly, delegating entirely to `UserTableComponent`
+(presentational) — the seam that keeps a future migration (if
+`DataTableComponent`'s eventual contract ever turns out to also support
+a client-side mode) contained to one file, `UsersStore`/`UserService`
+untouched either way, and entirely optional, not obligated.
+`UsersStore.filteredUsers`'s doc comment states explicitly that this
+filtering is a client-side convenience over an already-fully-loaded
+array, never implying the backend supports search.
+
+**This is the first feature to actually exercise two mechanisms built
+in earlier features but never tested against a real permission
+boundary**: `permissionGuard` (built Feature 2, unused until now) and
+`NAV_CONFIG`'s permission filtering (Account's Feature 4 entry has
+`permissions: []`, visible to everyone — Users' is the first with a
+real, restrictive key). Verified live with two real accounts (registered
+fresh via `POST /auth/register`, one promoted to `ADMIN` via the
+established throwaway-DB-script pattern, deleted immediately after
+running): as ADMIN, Sidebar/Dashboard/Header all show "Users," the list
+loads both accounts with roles as chips, search filters client-side,
+column sort works (including a custom `sortingDataAccessor` for the
+`roles` array field and case-insensitive name/email comparison); as a
+plain `EMPLOYEE`, no "Users" entry appears anywhere, and navigating to
+`/users` directly redirects silently to `/dashboard` — no error, no 403
+page, matching this app's established "client-side authorization is UX,
+the server enforces the real check" philosophy. `ng build`/`ng lint`/
+`ng test` all clean throughout. See `docs/frontend-architecture-blueprint.md`'s
+revision v8 for the premature-abstraction principle recorded formally,
+now evidenced by three data points across Features 3–5.)_
