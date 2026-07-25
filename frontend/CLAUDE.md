@@ -120,7 +120,8 @@ EmployeeListPageComponent` automatically — verified live during Feature
 - [x] Feature 1 — Angular Material, Tailwind CSS, theming, design tokens, design system
 - [x] Feature 2 — Authentication (SessionStore, guards, interceptors, Login/Register, Shell, real Dashboard)
 - [x] Feature 3 — real Landing Page content, Dashboard quick-nav cards + widgets region
-- [ ] Employees, Users, Account (order TBD)
+- [x] Feature 4 — Account: self-service profile view, profile picture upload/delete
+- [ ] Employees, Users (order TBD)
 
 _(Feature 0 — Angular Project Initialization — completed, on the
 `frontend` branch. Scaffolded via `npx @angular/cli@21.2.19 new frontend`
@@ -506,3 +507,58 @@ cards). `ng build`/`ng lint`/`ng test` all clean throughout. See
 `docs/frontend-architecture-blueprint.md`'s revision v6 for where each
 of these two bugs and the `NavItem.description` addition are recorded
 against the sections they amend (§4.3, §7, §13).)_
+
+_(Feature 4 — Account (self-service profile view, profile picture
+upload/delete) — completed, on the `frontend` branch. Backend contract
+re-verified before any code, not assumed: `backend/src/modules/users/
+user.routes.js` exposes exactly `GET /users` (admin-only, unrelated),
+`POST /users/me/profile-picture`, and `DELETE /users/me/profile-picture`
+— **no endpoint exists to update name/email**, so Account is
+deliberately read-only for those fields (sourced straight from
+`SessionStore`, already populated by login/`/auth/me` — no new fetch),
+not an oversight worked around. Both profile-picture endpoints return
+`sanitizeUser(updatedUser, roles)` — roles only, **never** `permissions`
+(matches §7.1's rule that only register/login/`/auth/me` attach that) —
+modeled precisely via `ProfilePictureResponse { user: Omit<AuthUser,
+'permissions'> }` in `account.models.ts`, so the missing field is a
+type-checked fact, not just a comment.
+
+**A real design risk, caught in Phase 1 Theory before any code**: naively
+merging that response into `SessionStore.user` would have silently
+wiped `permissions` from the live session after every profile-picture
+change, breaking every `hasAnyPermission()` check app-wide with no
+error anywhere. Fixed architecturally, not defensively: `SessionStore`
+gained `updateProfileImage(url, publicId)`, merging only the two fields
+that actually changed — `AccountStore` calls this, never
+`sessionStore.user.set(response.user)`.
+
+`shared/components/file-upload/` (`FileUploadComponent`) was built for
+real this feature — unlike Feature 3's deliberate deferral of
+`EmptyStateComponent`, this one already has two justified consumers
+(this feature's profile picture now, Employee documents later), per
+blueprint §11. It's dumb (no `HttpClient`/Store injection): drag-drop +
+a real, keyboard-operable `<button>` trigger + a client-side MIME/size
+pre-check mirroring the backend's real allow-list (`image/jpeg|png|webp`,
+5 MB), emitting `fileSelected`/`rejected` — the consuming component
+decides how to surface a rejection. `AccountStore` (signals: `uploading`,
+`error`) is the first Store in this app to also own a `LiveAnnouncer`
+call — deliberately, since only the Store knows the exact moment an
+upload/delete resolves, and that async outcome has no visual focus
+change of its own (§15).
+
+**This is also the first feature to add a real `NAV_CONFIG` entry**
+(`{ route: '/account', ... }`) — the first live proof that Feature 3's
+Sidebar-link and Dashboard-quick-nav-card mechanism, built but never
+exercised, actually works end-to-end. `HeaderComponent`'s user menu
+gained the "Account" item Feature 2's blueprint note reserved for this
+exact moment.
+
+Verified live: `/account` shows name/email/roles/member-since with zero
+new network calls; uploading a real image updates the avatar
+immediately and Sidebar/Dashboard/Header all show the new "Account"
+entry for the first time; removing it reverts to a placeholder icon; a
+wrong-type or oversized file is rejected client-side with an inline
+message and no network request. `ng build`/`ng lint`/`ng test` all clean
+throughout. See `docs/frontend-architecture-blueprint.md`'s revision v7
+for where all of the above is recorded against the sections it amends
+(§3/§4.3, §7, §11, §12).)_

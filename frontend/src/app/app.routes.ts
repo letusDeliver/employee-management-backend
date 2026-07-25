@@ -11,8 +11,6 @@ export const routes: Routes = [
     children: [
       {
         path: '',
-        // DISPOSABLE - see features/landing/landing-page.component.ts's own
-        // header comment. Replaced wholesale by Feature 3.
         loadComponent: () =>
           import('./features/landing/landing-page.component').then((m) => m.LandingPageComponent),
       },
@@ -38,6 +36,12 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./features/dashboard/dashboard-page.component').then((m) => m.DashboardPageComponent),
         data: { breadcrumb: 'Dashboard' },
+      },
+      {
+        path: 'account',
+        loadComponent: () =>
+          import('./features/account/account-page.component').then((m) => m.AccountPageComponent),
+        data: { breadcrumb: 'Account' },
       },
     ],
   },

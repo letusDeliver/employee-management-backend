@@ -20,7 +20,11 @@
         <div class="font-medium">{{ currentUser.name }}</div>
         <div class="text-sm">{{ currentUser.email }}</div>
       </div>
-      <button mat-menu-item (click)="logout.emit()">
+      <button mat-menu-item type="button" routerLink="/account">
+        <mat-icon>{{ icons.accountCircle }}</mat-icon>
+        <span>Account</span>
+      </button>
+      <button mat-menu-item type="button" (click)="logout.emit()">
         <mat-icon>{{ icons.logout }}</mat-icon>
         <span>Logout</span>
       </button>

@@ -4,10 +4,11 @@
 (§7.1/§19) shipped and was verified live (see `backend/CLAUDE.md`'s
 "Permission Resolution Enhancement" entry). Feature 0 (Angular Project
 Initialization), Feature 1 (Angular Material, Tailwind CSS, theming,
-design tokens), Feature 2 (Authentication), and Feature 3 (real Landing
-Page content, Dashboard quick-navigation cards + widgets region) are all
-complete — see `frontend/CLAUDE.md`'s Progress Log. Employees, Users,
-and Account are next, following the same 8-phase workflow
+design tokens), Feature 2 (Authentication), Feature 3 (real Landing Page
+content, Dashboard quick-navigation cards + widgets region), and Feature
+4 (Account — self-service profile view + profile picture management)
+are all complete — see `frontend/CLAUDE.md`'s Progress Log. Employees
+and Users are next, following the same 8-phase workflow
 (`frontend/CLAUDE.md`).
 
 This blueprint is the frontend's equivalent of the backend's
@@ -71,6 +72,22 @@ handbook kept in sync, one commit per feature).
   Feature 1/2, surfaced only by this feature's own browser testing) were
   found and fixed; see §7 and §13 for where each is now recorded, and
   `frontend/CLAUDE.md`'s Progress Log for the full account.
+- v7 (this revision) — Feature 4 (Account) delivered self-service
+  profile viewing (name/email/roles/member-since, read directly from
+  `SessionStore` — no new fetch) and profile-picture upload/delete
+  against the two real `/users/me/profile-picture` endpoints. Real
+  backend contract finding: **no endpoint exists to update name/email**
+  (verified against `user.routes.js`) — Account is deliberately
+  read-only for those fields, not an oversight. `SessionStore` gained
+  `updateProfileImage(url, publicId)` (§7/§12) specifically because both
+  profile-picture endpoints return a `user` shape without `permissions`
+  — merging the whole response would have silently wiped it from the
+  live session. `shared/components/file-upload/` (§11) was built for
+  real, not deferred like Feature 3's `EmptyStateComponent` — it already
+  has two justified consumers (this feature, and Employee documents
+  later). This is also the **first feature to add a real `NAV_CONFIG`
+  entry** (§3/§4.3), the first live proof that Feature 3's Sidebar +
+  Dashboard quick-nav mechanism actually works end-to-end.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:
@@ -889,7 +906,11 @@ template is immediately recognizable as project code.
   upload endpoints' shared concerns — drag-drop, a client-side MIME/
   size pre-check mirroring the backend's actual allow-lists: profile
   pictures `image/jpeg|png|webp` up to 5 MB; employee documents
-  additionally `application/pdf` up to 10 MB).
+  additionally `application/pdf` up to 10 MB). **Delivered in Feature 4**
+  for the profile-picture case — built for real rather than deferred,
+  since a second real consumer (Employee documents) already justified
+  it, unlike `empty-state`, still deliberately unbuilt (§4.3/revision
+  v6).
 - **Directives**: `*appHasPermission="'employee:create'"` and
   `*appHasAnyPermission="['employee:read:any','employee:read:own']"` —
   structural directives reading `SessionStore` (§7), the template-level
@@ -934,7 +955,10 @@ template is immediately recognizable as project code.
   frontend equivalent of the backend's rule that `env.js` is the only
   file allowed to read `process.env` directly).
 - **Services**: `SessionStore` (holds `user`, `accessToken`, `roles`,
-  and — once §7.1's backend enhancement ships — `permissions`),
+  and — once §7.1's backend enhancement ships — `permissions`; also
+  exposes `updateProfileImage(url, publicId)`, added in Feature 4,
+  since the profile-picture endpoints return a `user` shape without
+  `permissions` and a wholesale merge would silently drop it),
   `AuthService` (thin wrapper for the 5 real auth endpoints),
   `NotificationService` (wraps `MatSnackBar` — the one place a toast
   gets triggered from), `LoggerService` (thin console-backed wrapper

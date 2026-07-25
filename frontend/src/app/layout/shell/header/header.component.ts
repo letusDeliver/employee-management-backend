@@ -1,4 +1,5 @@
 import { Component, input, output } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatMenuModule } from '@angular/material/menu';
@@ -9,7 +10,7 @@ import { ICON_NAMES } from '../../../shared/icon-names';
 
 @Component({
   selector: 'app-header',
-  imports: [MatToolbarModule, MatButtonModule, MatIconModule, MatMenuModule],
+  imports: [MatToolbarModule, MatButtonModule, MatIconModule, MatMenuModule, RouterLink],
   templateUrl: './header.component.html',
   styleUrl: './header.component.scss',
 })

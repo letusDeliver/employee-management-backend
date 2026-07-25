@@ -31,6 +31,18 @@ export class SessionStore {
     this.accessToken.set(null);
   }
 
+  /**
+   * Used by AccountStore after a profile-picture upload/delete.
+   * `POST`/`DELETE /users/me/profile-picture` return a `user` shape
+   * without `permissions` (blueprint §7.1 - only register/login/`/auth/me`
+   * attach that), so merging the *whole* response into `user` would
+   * silently wipe `permissions` from the live session. This merges only
+   * the two fields that actually changed.
+   */
+  updateProfileImage(profileImageUrl: string | null, profileImagePublicId: string | null): void {
+    this.user.update((current) => (current ? { ...current, profileImageUrl, profileImagePublicId } : current));
+  }
+
   hasPermission(key: string): boolean {
     return this.user()?.permissions.includes(key) ?? false;
   }

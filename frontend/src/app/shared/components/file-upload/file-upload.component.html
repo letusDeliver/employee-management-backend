@@ -1,0 +1,14 @@
+<div class="rounded-lg border border-dashed p-4 text-center" (drop)="onDrop($event)" (dragover)="onDragOver($event)">
+  <input
+    #fileInput
+    type="file"
+    class="hidden"
+    [attr.accept]="accept().join(',')"
+    (change)="onFileInputChange($event)"
+  />
+  <button mat-stroked-button type="button" (click)="browse()">
+    <mat-icon>{{ icon() }}</mat-icon>
+    {{ label() }}
+  </button>
+  <p class="mt-1 text-xs">or drag a file here</p>
+</div>

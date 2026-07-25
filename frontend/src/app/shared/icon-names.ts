@@ -16,6 +16,8 @@ export const ICON_NAMES = {
   people: 'people',
   security: 'security',
   description: 'description',
+  photoCamera: 'photo_camera',
+  delete: 'delete',
 } as const satisfies Record<string, string>;
 
 export type IconName = keyof typeof ICON_NAMES;

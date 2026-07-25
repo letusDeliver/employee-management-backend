@@ -1,3 +1,5 @@
+import { ICON_NAMES } from '../../../shared/icon-names';
+
 export interface NavItem {
   route: string;
   icon: string;
@@ -15,4 +17,12 @@ export interface NavItem {
  * its own entry as it ships, never restructuring this file or its
  * consumers.
  */
-export const NAV_CONFIG: NavItem[] = [];
+export const NAV_CONFIG: NavItem[] = [
+  {
+    route: '/account',
+    icon: ICON_NAMES.accountCircle,
+    label: 'Account',
+    description: 'View your profile and manage your profile picture.',
+    permissions: [],
+  },
+];
