@@ -3,11 +3,11 @@
 **Status:** Approved and in active use. The backend prerequisite
 (§7.1/§19) shipped and was verified live (see `backend/CLAUDE.md`'s
 "Permission Resolution Enhancement" entry). Feature 0 (Angular Project
-Initialization) and Feature 1 (Angular Material, Tailwind CSS, theming,
-design tokens) are complete — see `frontend/CLAUDE.md`'s Progress Log.
-Feature 2 (Authentication — `SessionStore`, guards, interceptors,
-Login/Register, `ShellComponent`, placeholder-but-real
-`DashboardPageComponent`) is next, following the same 8-phase workflow
+Initialization), Feature 1 (Angular Material, Tailwind CSS, theming,
+design tokens), Feature 2 (Authentication), and Feature 3 (real Landing
+Page content, Dashboard quick-navigation cards + widgets region) are all
+complete — see `frontend/CLAUDE.md`'s Progress Log. Employees, Users,
+and Account are next, following the same 8-phase workflow
 (`frontend/CLAUDE.md`).
 
 This blueprint is the frontend's equivalent of the backend's
@@ -60,6 +60,17 @@ handbook kept in sync, one commit per feature).
   explicit approval before proceeding, exactly like any other
   architectural deviation (see `frontend/CLAUDE.md`'s Non-Negotiable
   Rules).
+- v6 (this revision) — Feature 3 delivered §4.2's real Landing Page
+  content and §4.3's Dashboard quick-navigation cards + widgets region,
+  exactly as revision v5 scoped it: no restructuring of `ShellComponent`,
+  `DashboardPageComponent`, or `SessionStore`. `NavItem` (§3's
+  `nav-config.ts`) gained one additive field, `description: string`, so
+  the Dashboard's cards can show the one-line-per-module text §4.3
+  always called for — safe to add with zero migration since `NAV_CONFIG`
+  was still `[]` at the time. Two real, pre-existing bugs (latent since
+  Feature 1/2, surfaced only by this feature's own browser testing) were
+  found and fixed; see §7 and §13 for where each is now recorded, and
+  `frontend/CLAUDE.md`'s Progress Log for the full account.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:
@@ -407,9 +418,10 @@ routes.
 ### 4.2 Landing Page (`features/landing/`)
 
 Public, unauthenticated, served at `/` under `PublicLayoutComponent`.
-Purely presentational — no data-access layer, nothing to fetch. Content
-(informational, not implemented yet — this is an architectural slot,
-not copy to author right now):
+Purely presentational — no data-access layer, nothing to fetch.
+**Delivered in Feature 3** — the disposable Feature 2 stub was replaced
+wholesale, exactly as its own header comment always said it would be.
+Content:
 
 - What the application is and its purpose.
 - Key features/capabilities (a short, honest list mirroring what
@@ -445,16 +457,16 @@ calls beyond what `SessionStore` already holds from login/`/auth/me`):
   describing what that module does.
 - **A reserved widgets region** — `features/dashboard/widgets/` is an
   empty folder today, and the Dashboard template reserves a labeled
-  layout region (e.g. a `<section aria-label="More">` grid area) for
-  it. When a real widget-worthy backend capability exists in the
-  future (e.g. "my pending approvals," "recent audit activity"), it
-  becomes a self-contained component dropped into that folder and
-  registered in a small `dashboard-widgets.config.ts` array (the exact
-  same "one config array, one place to register" pattern as the
-  Sidebar's `nav-config.ts` and the future permission directive) — no
-  restructuring of the Dashboard itself required. **Nothing is built
-  in this region now**; it renders empty/absent until a real widget
-  exists.
+  layout region (`<section aria-label="More">`) for it, kept genuinely
+  separate from the quick-navigation section above. When a real
+  widget-worthy backend capability exists in the future (e.g. "my
+  pending approvals," "recent audit activity"), it becomes a
+  self-contained component dropped into that folder and registered in a
+  small `dashboard-widgets.config.ts` array (the exact same "one config
+  array, one place to register" pattern as the Sidebar's `nav-config.ts`
+  and the future permission directive) — no restructuring of the
+  Dashboard itself required. **Nothing is built in this region yet**; it
+  renders empty until a real widget exists.
 
 **Architectural note (added in Feature 2, see revision v5):**
 `DashboardPageComponent` is built as a **real** component in Feature 2
@@ -462,10 +474,22 @@ calls beyond what `SessionStore` already holds from login/`/auth/me`):
 exist for auth to be end-to-end testable), not a throwaway placeholder.
 Feature 2 delivers the welcome message and profile summary card in
 full — both need nothing but `SessionStore`, which Feature 2 builds
-anyway. Feature 3 adds the quick-navigation cards and the reserved
-widgets region as **template additions to this same component** — same
-file, same route, same guard, same redirect logic. No later feature
-should need to replace or restructure this component, only add to it.
+anyway.
+
+**Delivered in Feature 3 (see revision v6):** the quick-navigation cards
+and the reserved widgets region were added as template additions to
+this same component — same file, same route, same guard, same redirect
+logic, no restructuring. The cards are driven by a `computed()` over the
+same `NAV_CONFIG` array the Sidebar reads (permission-filtered
+identically), so the two never drift apart. Because `NAV_CONFIG` is
+still `[]` (no feature has added an entry yet), the section currently
+renders a one-line "More modules will appear here as they become
+available" message instead of any cards — an honest reflection of
+current app capability, not a bug. Building the shared `EmptyStateComponent`
+(§11) was deliberately deferred rather than reached for here — this is
+cosmetic filler text with no loading/error states behind it, and that
+component's better-justified first real use is Employees' genuine
+empty-list state.
 
 ---
 
@@ -707,7 +731,17 @@ never actually returns.
    `ApiError` and reports it to a central `NotificationService`, with an
    `HttpContext` escape hatch (e.g. `SKIP_GLOBAL_ERROR_NOTIFICATION`)
    so a form that wants to render the server's message inline isn't
-   *also* shown a duplicate toast.
+   *also* shown a duplicate toast. **Real bug found and fixed in
+   Feature 3**: `AuthService.refreshAccessToken()` didn't carry this
+   context, so `redirectIfAuthenticatedGuard`'s/`authGuard`'s routine
+   silent-restore attempt — which runs on *every* visit to `/`, `/login`,
+   or `/register`, and is expected to fail for any anonymous visitor or
+   right after logout — surfaced a raw "Refresh token missing" toast on
+   every such page load. Fixed by giving `refreshAccessToken()` the same
+   context `register()`/`login()` already used; the shared field was
+   renamed `silentErrorContext` (from `formOwnedErrorContext`) since it
+   now covers both "form renders its own error" and "this failure is a
+   normal, silent outcome," not just the former.
 
 ---
 
@@ -936,7 +970,19 @@ template is immediately recognizable as project code.
 - **Icons**: Material Symbols via `<mat-icon>`, referenced only through
   one shared `icon-names.ts` constants file — the same "frozen object
   instead of magic strings" convention the backend already uses for
-  `AUDIT_ACTIONS`/`AUDIT_ENTITY_TYPES`.
+  `AUDIT_ACTIONS`/`AUDIT_ENTITY_TYPES`. **Real bug found and fixed in
+  Feature 3**: `index.html` has always loaded the "Material Symbols
+  Outlined" web font, but `MatIconModule`'s own default `fontSet` is the
+  classic, never-loaded "Material Icons" font — every `<mat-icon>` since
+  Feature 1 was rendering its ligature text literally (e.g. `people`)
+  instead of resolving to a glyph, clipped to illegibility by the icon's
+  small fixed-size box. Latent since Feature 1/2 but only visually
+  obvious once Feature 3 put icons at a larger size on Landing's feature
+  cards. Fixed globally, once, via `{ provide: MAT_ICON_DEFAULT_OPTIONS,
+  useValue: { fontSet: 'material-symbols-outlined' } }` in
+  `app.config.ts` plus the matching `.material-symbols-outlined` CSS
+  class in `styles.scss` — every `<mat-icon>` in the app, not just
+  Feature 3's, needed exactly one shared fix.
 - **Spacing**: a clear boundary — **inside** a Material component,
   Material's own spacing tokens apply; **between** layout regions/
   components, Tailwind's spacing scale applies. Never both inside the

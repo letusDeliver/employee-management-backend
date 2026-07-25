@@ -36,15 +36,19 @@ export class AuthService {
   private readonly sessionStore = inject(SessionStore);
   private readonly baseUrl = inject(API_BASE_URL);
 
-  // register/login errors are always rendered inline by the calling form
-  // (blueprint §9) - the context flag is set here, once, rather than
-  // trusting every future caller to remember to pass it.
-  private readonly formOwnedErrorContext = new HttpContext().set(SKIP_GLOBAL_ERROR_NOTIFICATION, true);
+  // Shared by two unrelated-but-similar cases: register()/login() use it
+  // because their errors render inline in the calling form (blueprint §9);
+  // refreshAccessToken() uses it because a failed silent refresh is the
+  // *normal, expected* outcome for an anonymous visitor or an already-
+  // expired session (every visit to `/`, `/login`, `/register` while
+  // logged out triggers one via `redirectIfAuthenticatedGuard`) - never
+  // something a user should see as a raw "Refresh token missing" toast.
+  private readonly silentErrorContext = new HttpContext().set(SKIP_GLOBAL_ERROR_NOTIFICATION, true);
 
   register(request: RegisterRequest): Observable<AuthUser> {
     return this.http
       .post<AuthSuccessResponse>(`${this.baseUrl}/auth/register`, request, {
-        context: this.formOwnedErrorContext,
+        context: this.silentErrorContext,
       })
       .pipe(
         tap(({ user, accessToken }) => this.sessionStore.setSession(user, accessToken)),
@@ -55,7 +59,7 @@ export class AuthService {
   login(request: LoginRequest): Observable<AuthUser> {
     return this.http
       .post<AuthSuccessResponse>(`${this.baseUrl}/auth/login`, request, {
-        context: this.formOwnedErrorContext,
+        context: this.silentErrorContext,
       })
       .pipe(
         tap(({ user, accessToken }) => this.sessionStore.setSession(user, accessToken)),
@@ -72,10 +76,12 @@ export class AuthService {
 
   /** Used by `refreshInterceptor` when an existing session's access token has expired. */
   refreshAccessToken(): Observable<string> {
-    return this.http.post<RefreshResponse>(`${this.baseUrl}/auth/refresh`, {}).pipe(
-      tap(({ accessToken }) => this.sessionStore.accessToken.set(accessToken)),
-      map(({ accessToken }) => accessToken),
-    );
+    return this.http
+      .post<RefreshResponse>(`${this.baseUrl}/auth/refresh`, {}, { context: this.silentErrorContext })
+      .pipe(
+        tap(({ accessToken }) => this.sessionStore.accessToken.set(accessToken)),
+        map(({ accessToken }) => accessToken),
+      );
   }
 
   getCurrentUser(): Observable<AuthUser> {

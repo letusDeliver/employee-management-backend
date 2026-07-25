@@ -2,6 +2,8 @@ export interface NavItem {
   route: string;
   icon: string;
   label: string;
+  /** One-line description shown on the Dashboard's quick-navigation cards (blueprint §4.3). */
+  description: string;
   /** Empty means visible to any authenticated user - no permission gate. */
   permissions: string[];
 }

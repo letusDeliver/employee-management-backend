@@ -119,7 +119,8 @@ EmployeeListPageComponent` automatically — verified live during Feature
 - [x] Feature 0 — Angular Project Initialization
 - [x] Feature 1 — Angular Material, Tailwind CSS, theming, design tokens, design system
 - [x] Feature 2 — Authentication (SessionStore, guards, interceptors, Login/Register, Shell, real Dashboard)
-- [ ] Feature 3+ — real Landing Page, Dashboard quick-nav/widgets, Employees, Users, Account (order TBD)
+- [x] Feature 3 — real Landing Page content, Dashboard quick-nav cards + widgets region
+- [ ] Employees, Users, Account (order TBD)
 
 _(Feature 0 — Angular Project Initialization — completed, on the
 `frontend` branch. Scaffolded via `npx @angular/cli@21.2.19 new frontend`
@@ -438,3 +439,70 @@ exactly one `/auth/refresh` network call), removed before commit.
 Shell/Dashboard "extend, don't restructure" decision and the
 `credentialsInterceptor`/interceptor-order corrections made during this
 feature.)_
+
+_(Feature 3 — real Landing Page content, Dashboard quick-navigation
+cards + widgets region — completed, on the `frontend` branch. Scope was
+exactly what revision v5 deferred from Feature 2: `LandingPageComponent`
+(disposable stub replaced wholesale — hero, 3 honest feature highlights
+mirroring what the app actually does today, Register/Login CTAs) and
+`DashboardPageComponent` extended in place (same file/route/guard, no
+restructuring) with a `computed()` view over `nav-config.ts`'s
+`NAV_CONFIG` — the exact same array the Sidebar already reads,
+permission-filtered identically, so the two never drift apart. `NavItem`
+gained one additive field, `description: string`, for the one-line
+per-card text §4.3 always called for — zero-risk since `NAV_CONFIG` was
+still `[]` at the time.
+
+Confirmed in Phase 1 (Theory) before any code: since no feature
+(Employees/Users/Account) has added a `NAV_CONFIG` entry yet, the
+quick-navigation section would render zero cards today. Rather than
+build the full shared `EmptyStateComponent` (§11) for this one cosmetic
+case, the Dashboard shows a one-line "More modules will appear here as
+they become available" message — an honest reflection of current app
+capability, matching the same "no fabricated content" discipline as
+§0's "no analytics endpoint" rule. `EmptyStateComponent` itself stays
+deliberately unbuilt, reserved for Employees' genuine empty-list state,
+which is the better-justified first real use.
+
+**Two real, pre-existing bugs were found and fixed via this feature's
+own live browser testing** — both latent since Feature 1/2, neither
+caught by build/lint/test:
+
+1. **Every `<mat-icon>` in the app was rendering its ligature text
+   literally** (e.g. `<mat-icon>people</mat-icon>` showing the clipped
+   text "peo" instead of a glyph) — invisible at the small sizes Feature
+   2's header/login icons used, but unmissable once Landing's larger
+   feature-card icons made it obvious. Root cause: `index.html` has
+   always loaded the "Material Symbols Outlined" web font, but
+   `MatIconModule`'s own default `fontSet` is the classic, never-loaded
+   "Material Icons" font — a font-family mismatch, not a font-loading
+   race. Fixed globally, once: `{ provide: MAT_ICON_DEFAULT_OPTIONS,
+   useValue: { fontSet: 'material-symbols-outlined' } }` in
+   `app.config.ts`, plus the required `.material-symbols-outlined` CSS
+   class (Google's own recommended definition) added to `styles.scss`.
+2. **A "Refresh token missing" toast fired on every visit to `/`,
+   `/login`, or `/register` while logged out — including immediately
+   after logout.** `redirectIfAuthenticatedGuard` (hardened during
+   Feature 2's bfcache fix) attempts a silent `restoreSession()` on
+   every such navigation; for a genuinely anonymous visitor or a just-
+   logged-out session, that attempt is *supposed* to fail silently, but
+   `AuthService.refreshAccessToken()`'s HTTP call didn't carry the
+   `SKIP_GLOBAL_ERROR_NOTIFICATION` context `login()`/`register()`
+   already used, so `errorInterceptor` surfaced the failure as a
+   user-visible toast every time. Fixed by giving `refreshAccessToken()`
+   the same context; the shared field was renamed `silentErrorContext`
+   (from `formOwnedErrorContext`) since it now documents both reasons a
+   request might carry it, not just the form-owned one.
+
+Verified live: `/` while logged out shows the real Landing content with
+working Register/Login CTAs and correctly-rendered feature icons; a
+resize confirmed the feature-card grid stacks to one column on mobile;
+`/dashboard` while logged in shows the new "Quick navigation" section
+(the expected empty-state message, `NAV_CONFIG` still being `[]`) and a
+still-separate, still-empty "More" widgets section; no toast on
+logged-out reload or post-logout; icons render correctly everywhere
+(header menu, login/register visibility toggle, Landing's feature
+cards). `ng build`/`ng lint`/`ng test` all clean throughout. See
+`docs/frontend-architecture-blueprint.md`'s revision v6 for where each
+of these two bugs and the `NavItem.description` addition are recorded
+against the sections they amend (§4.3, §7, §13).)_

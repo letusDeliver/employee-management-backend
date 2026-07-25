@@ -85,8 +85,10 @@ src/
 ```
 
 `core/{auth,http,notifications}`, `layout/{public-layout,shell}`, and
-`features/{landing,auth,dashboard}` now have real content (Feature 2);
-the rest (`shared/components`, `features/{employees,users,account}`) is
+`features/{landing,auth,dashboard}` now have real content (Feature 2
+built the shells and auth flows; Feature 3 filled in Landing's real
+content and Dashboard's quick-navigation cards + widgets region); the
+rest (`shared/components`, `features/{employees,users,account}`) is
 still empty scaffolding (`.gitkeep`-marked) — see `CLAUDE.md`'s Progress
 Log for exactly what has real content so far.
 
@@ -108,5 +110,5 @@ Log for exactly what has real content so far.
 - [x] Feature 0 — Angular project scaffolding, tooling, environments, folder skeleton
 - [x] Feature 1 — Angular Material, Tailwind CSS, theming, design tokens, design system
 - [x] Feature 2 — Authentication: `SessionStore`, guards, interceptors, Login/Register, Shell, real Dashboard (welcome + profile card)
-- [ ] Feature 3 — real Landing Page content, Dashboard quick-nav cards/widgets region
+- [x] Feature 3 — real Landing Page content, Dashboard quick-nav cards/widgets region
 - [ ] Employees, Users, Account (order TBD)

@@ -1,6 +1,7 @@
 import { ApplicationConfig, provideBrowserGlobalErrorListeners } from '@angular/core';
 import { provideRouter } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import { MAT_ICON_DEFAULT_OPTIONS } from '@angular/material/icon';
 
 import { routes } from './app.routes';
 import { credentialsInterceptor } from './core/http/credentials.interceptor';
@@ -21,5 +22,12 @@ export const appConfig: ApplicationConfig = {
     provideHttpClient(
       withInterceptors([credentialsInterceptor, authInterceptor, errorInterceptor, refreshInterceptor]),
     ),
+    // index.html loads the "Material Symbols Outlined" web font, but
+    // MatIconModule's own default fontSet is the classic "Material Icons"
+    // font, which was never loaded - every <mat-icon> was rendering its
+    // ligature text literally (clipped by the icon's fixed-size box)
+    // instead of resolving to a glyph. One global default fixes every
+    // <mat-icon> in the app instead of a per-component fontSet override.
+    { provide: MAT_ICON_DEFAULT_OPTIONS, useValue: { fontSet: 'material-symbols-outlined' } },
   ],
 };

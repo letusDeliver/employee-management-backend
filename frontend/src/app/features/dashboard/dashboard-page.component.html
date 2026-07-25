@@ -29,6 +29,25 @@
     </mat-card-content>
   </mat-card>
 
-  <!-- Reserved for Feature 3: quick-navigation cards + widgets region (blueprint §4.3) -->
+  <section aria-label="Quick navigation" class="mt-6">
+    <h2 class="mb-2 text-lg font-medium">Quick navigation</h2>
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      @for (item of visibleNavItems(); track item.route) {
+        <mat-card [routerLink]="item.route" class="cursor-pointer">
+          <mat-card-header>
+            <mat-icon mat-card-avatar>{{ item.icon }}</mat-icon>
+            <mat-card-title>{{ item.label }}</mat-card-title>
+          </mat-card-header>
+          <mat-card-content>
+            <p class="text-sm">{{ item.description }}</p>
+          </mat-card-content>
+        </mat-card>
+      } @empty {
+        <p class="text-sm">More modules will appear here as they become available.</p>
+      }
+    </div>
+  </section>
+
+  <!-- Reserved for future widgets (blueprint §4.3) - stays empty until a real widget-worthy backend capability exists -->
   <section aria-label="More" class="mt-6"></section>
 }

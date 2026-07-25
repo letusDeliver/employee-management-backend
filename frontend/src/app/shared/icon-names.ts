@@ -13,6 +13,9 @@ export const ICON_NAMES = {
   visibility: 'visibility',
   visibilityOff: 'visibility_off',
   error: 'error',
+  people: 'people',
+  security: 'security',
+  description: 'description',
 } as const satisfies Record<string, string>;
 
 export type IconName = keyof typeof ICON_NAMES;
