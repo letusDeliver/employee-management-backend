@@ -41,7 +41,7 @@ const buildUserWhere = ({ search, role }) => {
   }
 
   if (role) {
-    where.userRoles = { some: { role: { name: role } } };
+    where.userRoles = { some: { role: { name: { equals: role, mode: 'insensitive' } } } };
   }
 
   return where;
