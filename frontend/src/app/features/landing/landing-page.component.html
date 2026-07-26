@@ -1,6 +1,6 @@
 <section class="flex min-h-full flex-col items-center justify-center gap-6 p-8 text-center">
-  <h1 class="text-3xl font-medium">Employee Management System</h1>
-  <p class="max-w-md text-lg">
+  <h1 class="ds-display">Employee Management System</h1>
+  <p class="ds-body max-w-md">
     One place to manage employee records, control who can see and change what, and keep the
     documents that go with them.
   </p>
@@ -12,10 +12,10 @@
 
 <section aria-label="Features" class="mx-auto grid w-full max-w-4xl gap-4 p-8 sm:grid-cols-3">
   @for (feature of features; track feature.title) {
-    <div class="flex flex-col items-center gap-2 rounded-lg border p-4 text-center">
+    <div class="surface-card flex flex-col items-center gap-2 p-4 text-center">
       <mat-icon>{{ feature.icon }}</mat-icon>
-      <h2 class="font-medium">{{ feature.title }}</h2>
-      <p class="text-sm">{{ feature.description }}</p>
+      <h2 class="ds-h3">{{ feature.title }}</h2>
+      <p class="ds-body">{{ feature.description }}</p>
     </div>
   }
 </section>
