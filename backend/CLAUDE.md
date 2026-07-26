@@ -723,3 +723,88 @@ trimmed value. `handbook/API_ENDPOINTS.md`'s `POST /employees` entry
 updated (Request Body, Validation Rules, Error Responses sections) —
 `PATCH /employees/:id` inherits both rules via `createEmployeeSchema.partial()`
 with no separate doc changes needed there.)_
+
+_(Multi-tab logout gap — access-token invalidation — 2026-07-26. Not a
+numbered feature; a real security/functionality bug reported by the user
+from live manual testing: log in, open a second tab (already
+authenticated via the shared refresh cookie), log out in that second
+tab, then go back to the first tab **without refreshing it** — it could
+still successfully call `DELETE /employees/:id`. Only refreshing the
+first tab afterward redirected to `/login`.
+
+Root-caused by reading the actual auth code before writing anything (not
+assumed): `authMiddleware` (`src/middlewares/auth.middleware.js`) verifies
+an access token by signature + expiry only — fully stateless, no DB/
+session check of any kind. `logout()` (`auth.service.js`) only ever
+revoked the one `RefreshToken` row matching the cookie sent on that
+specific request. Since the first tab's access token was issued at its
+own earlier login and is a completely separate artifact from the second
+tab's refresh-token cookie, revoking the second tab's refresh token had
+zero effect on the first tab's still-valid, unexpired access token —
+which stayed accepted for authenticated requests (including deletes)
+until its own natural `JWT_ACCESS_EXPIRES_IN` (15m) expiry. Refreshing
+the first tab was the first moment its session was ever actually
+re-checked against the server (`authGuard`'s `restoreSession()`), which
+is why *that* correctly failed and redirected to login — the reload, not
+the delete, was what finally asked the server anything.
+
+Presented three remediation options (shorten access-token lifetime only,
+frontend-only cross-tab logout sync, or real server-side access-token
+invalidation) with their trade-offs; the user chose server-side
+invalidation as the only one that actually closes the gap rather than
+narrowing or cosmetically hiding it.
+
+**Fix**: `User` gained a nullable `tokensValidAfter` column (migration
+`add_user_tokens_valid_after`) — stamped to `now()` inside
+`auth.service.js`'s `logout()`, in the same `prisma.$transaction` as the
+existing refresh-token revocation (mirrors Feature 11's mutation +
+dependent-write transaction pattern — logout can never revoke the
+refresh token without also stamping this, or the reverse).
+`authMiddleware` now does one narrow, `select`-scoped lookup
+(`userRepository.getTokensValidAfter`, deliberately not a full
+`findById` — this runs on every authenticated request, so it should
+never pull the password hash or any other column into memory just to
+check one timestamp) and rejects any access token whose `iat` claim
+predates that timestamp, replaced with the same generic "Invalid or
+expired token" message the existing catch-all already used — no new
+message that would reveal *why* a given request was rejected.
+Deliberately not cached (the user picked the "add real invalidation"
+option, not the caching layer mentioned as a future optimization in the
+options presented) — a straightforward `WHERE id = $1` lookup, revisit
+only if this measurably matters at real scale.
+
+Also surfaced, but **not fixed** (out of scope of the reported bug, and a
+rare edge case): if two token-issuing calls for the same user land
+within the exact same wall-clock second (e.g. register immediately
+followed by `/auth/refresh`), `issueTokenPair` can produce a **byte-
+identical** refresh JWT (same `sub`/`roles` payload, same `iat`, same
+`exp`, same HMAC secret ⇒ same signature), which collides with
+`RefreshToken.tokenHash`'s unique constraint and surfaces as a raw `500`
+instead of a handled error. Found only because the verification script
+below happened to fire two calls that fast; worth a real fix later
+(e.g. a low-entropy nonce/jti in the payload) but not implicated in the
+reported multi-tab issue at all — noted here so it isn't lost, same
+honest-disclosure treatment as every other known-but-deferred gap in
+this log.
+
+Verified live end-to-end (register = Tab A login; `/auth/refresh` reusing
+the same cookie jar = Tab B bootstrapping its own access token, 1+
+second apart to sidestep the collision above): before logout, both tabs'
+tokens returned `200` on `/auth/me`; Tab B's `/auth/logout` succeeded;
+Tab A's still-unexpired, pre-logout access token then correctly got
+`401` on its very next request — both `GET /auth/me` and `GET /users`
+confirmed, proving this isn't special-cased to one route but applies to
+every route behind `authMiddleware`, `DELETE /employees/:id` included.
+Re-verified logout's existing idempotency (calling it twice with an
+already-revoked cookie still returns `200` both times) still holds.
+`npm run lint` clean. One real environment snag hit and resolved during
+verification, not the bug itself: the running dev server's in-memory
+Prisma Client was stale relative to the new migration (an explicit
+`npx prisma generate` was required — `migrate dev`'s own auto-generate
+step apparently didn't take for this run), compounded by this project's
+already-documented Windows orphaned-node-process quirk (a stale process
+was still bound to port 3000 from an earlier `npm run dev`); both were
+identified and killed via `Get-CimInstance`/`Get-NetTCPConnection` before
+re-testing against a genuinely fresh process. `handbook/API_ENDPOINTS.md`'s
+`POST /auth/logout` entry updated (Purpose, Database Impact, Request
+Lifecycle, Testing Checklist sections).)_

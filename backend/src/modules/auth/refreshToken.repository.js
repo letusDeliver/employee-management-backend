@@ -14,8 +14,8 @@ const findValidByHash = (tokenHash) => {
   });
 };
 
-const revoke = (id) => {
-  return prisma.refreshToken.update({
+const revoke = (id, client = prisma) => {
+  return client.refreshToken.update({
     where: { id },
     data: { revoked: true },
   });

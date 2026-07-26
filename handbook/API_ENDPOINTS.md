@@ -1439,6 +1439,17 @@ Public/Protected:   Protected (cookie-based), but idempotent/lenient
   device," or a security response to a suspected compromise.
 - **Expected callers**: the client application, typically triggered by a
   user clicking "Log out."
+- **Multi-tab/session fix (2026-07-26)**: revoking the refresh token alone
+  used to leave any **access token** already issued to this user — in any
+  other tab, or any other device sharing the same login — fully valid
+  until its own natural expiry (`authMiddleware` verified signature+expiry
+  only, no session-state check). A user who logged out in one browser tab
+  could still perform authenticated mutations (e.g. `DELETE /employees/:id`)
+  from a second, already-open tab for up to `JWT_ACCESS_EXPIRES_IN`. Fixed
+  by also stamping `User.tokensValidAfter = now()` on every successful
+  logout; `authMiddleware` now rejects any access token whose `iat` claim
+  predates that timestamp, so logout takes effect on this user's very next
+  request anywhere, not just in the tab that called this endpoint.
 
 ## 3. Request Headers
 
@@ -1532,12 +1543,18 @@ exactly the same as when a valid cookie is present.
 
 ## 14. Database Impact
 
-- **Tables affected**: `RefreshToken` (conditionally updated).
-- **Rows updated**: at most 1 (`revoked: true`), only if a valid,
-  not-already-revoked record matching the cookie's hash exists. Zero rows
-  affected if the cookie is missing, garbage, or already revoked.
+- **Tables affected**: `RefreshToken` and `User` (both conditionally
+  updated, only if a valid, not-already-revoked `RefreshToken` record
+  matching the cookie's hash exists).
+- **Rows updated**: at most 1 `RefreshToken` (`revoked: true`) + at most 1
+  `User` (`tokensValidAfter: <now>`). Zero rows affected either way if the
+  cookie is missing, garbage, or already revoked.
 - **Rows deleted**: none.
-- **Transactions**: N/A — a single conditional write.
+- **Transactions**: yes — both writes happen in one `prisma.$transaction`,
+  so a logout can never revoke the refresh token without also stamping
+  `tokensValidAfter`, or the reverse (mirrors Feature 11's audit-log
+  transaction pattern: a mutation and its dependent write succeed or fail
+  together).
 
 ## 15. Request Lifecycle
 
@@ -1549,7 +1566,10 @@ POST /api/v1/auth/logout
 auth.controller.logout
     ├─ reads req.cookies.refreshToken
     ├─ if present: auth.service.logout(token)
-    │      └─ refreshTokenRepository.findValidByHash(...) → revoke if found (silently no-ops otherwise)
+    │      ├─ refreshTokenRepository.findValidByHash(...) → revoke if found (silently no-ops otherwise)
+    │      └─ if found: userRepository.invalidateTokensIssuedBefore(userId, now)
+    │             — this is what makes logout affect every tab/device this user has open,
+    │               not just the one that sent this request (see §2's 2026-07-26 fix)
     ├─ res.clearCookie(...)
     └─ 200 { message: 'Logged out successfully' }   (always, regardless of the above)
 ```
@@ -1590,6 +1610,15 @@ cookie jar fails with `401`.
 - ✅ Cookie actually cleared (inspect `Set-Cookie`'s `Expires` in the past)
 - ✅ Subsequent `/refresh` with the logged-out token fails (`401`)
 - ✅ Database verification: `RefreshToken.revoked` is `true` for that record
+- ✅ Database verification: `User.tokensValidAfter` is stamped to the
+  logout moment
+- ✅ **Multi-tab regression test** (verified live, 2026-07-26): register
+  (Tab A) → `/auth/refresh` reusing the same cookie jar to simulate Tab B
+  bootstrapping (`200`) → confirm both tabs' access tokens work (`200`,
+  `200`) → Tab B calls `/auth/logout` → Tab A's still-unexpired,
+  pre-logout access token now gets `401` on its very next request
+  (`GET /auth/me` and `GET /users` both confirmed) instead of continuing
+  to work until its natural expiry
 - ✅ No sensitive data leaked
 
 ---

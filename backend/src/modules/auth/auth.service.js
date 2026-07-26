@@ -110,7 +110,21 @@ const logout = async (refreshToken) => {
   const storedToken = await refreshTokenRepository.findValidByHash(hashToken(refreshToken));
 
   if (storedToken) {
-    await refreshTokenRepository.revoke(storedToken.id);
+    // One transaction: revoking the refresh token without also stamping
+    // tokensValidAfter (or vice versa, if the process died mid-way) would leave
+    // a half-finished logout - the refresh token gone but this user's other
+    // access tokens still trusted, or the reverse. Closes the multi-tab gap:
+    // revoking the refresh token alone leaves any access token already issued
+    // to this user (in any tab/device) valid until its own natural expiry,
+    // since access-token verification is otherwise fully stateless
+    // (jwt.js's verifyAccessToken is signature+expiry only). authMiddleware
+    // rejects any access token whose `iat` predates tokensValidAfter, so this
+    // logout takes effect on this user's very next request anywhere, not just
+    // in the tab that called /auth/logout.
+    await prisma.$transaction(async (tx) => {
+      await refreshTokenRepository.revoke(storedToken.id, tx);
+      await userRepository.invalidateTokensIssuedBefore(storedToken.userId, new Date(), tx);
+    });
   }
 };
 

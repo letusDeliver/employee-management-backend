@@ -13,6 +13,13 @@ model User {
   name                 String
   profileImageUrl      String?
   profileImagePublicId String?
+  // Set to "now" on every /auth/logout call for this user (see auth.service.js's
+  // `logout`). authMiddleware rejects any access token whose `iat` claim predates
+  // this timestamp - the fix for a stateless-JWT gap where a logged-out browser tab
+  // could keep using its still-unexpired, already-issued access token for up to
+  // JWT_ACCESS_EXPIRES_IN after logout. Null means "no restriction" (never logged out
+  // since this column was added).
+  tokensValidAfter     DateTime?
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
   refreshTokens        RefreshToken[]

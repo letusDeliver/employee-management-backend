@@ -30,4 +30,28 @@ const clearProfileImage = (userId, client = prisma) => {
   });
 };
 
-export default { findByEmail, findById, create, findAll, updateProfileImage, clearProfileImage };
+// Narrow `select` on purpose - this runs on every authenticated request
+// (authMiddleware), so it should never pull the password hash or any other
+// column into memory just to check one timestamp.
+const getTokensValidAfter = async (id, client = prisma) => {
+  const user = await client.user.findUnique({ where: { id }, select: { tokensValidAfter: true } });
+  return user?.tokensValidAfter ?? null;
+};
+
+const invalidateTokensIssuedBefore = (userId, timestamp, client = prisma) => {
+  return client.user.update({
+    where: { id: userId },
+    data: { tokensValidAfter: timestamp },
+  });
+};
+
+export default {
+  findByEmail,
+  findById,
+  create,
+  findAll,
+  updateProfileImage,
+  clearProfileImage,
+  getTokensValidAfter,
+  invalidateTokensIssuedBefore,
+};
