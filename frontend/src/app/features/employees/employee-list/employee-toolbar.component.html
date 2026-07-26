@@ -14,13 +14,4 @@
       <input matInput formControlName="jobTitle" />
     </mat-form-field>
   </form>
-
-  <span class="flex-1"></span>
-
-  @if (sessionStore.hasAnyPermission('employee:create')) {
-    <a mat-flat-button color="primary" routerLink="/employees/new">
-      <mat-icon>{{ icons.add }}</mat-icon>
-      New Employee
-    </a>
-  }
 </div>

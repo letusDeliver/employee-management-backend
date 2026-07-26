@@ -1,19 +1,30 @@
-<h1 class="mb-4 text-2xl font-medium">Employees</h1>
+<app-page-header title="Employees">
+  @if (sessionStore.hasAnyPermission('employee:create')) {
+    <a pageHeaderActions mat-flat-button color="primary" routerLink="/employees/new">
+      <mat-icon>{{ icons.add }}</mat-icon>
+      New Employee
+    </a>
+  }
+</app-page-header>
 
 <app-employee-toolbar (filtersChange)="onFiltersChange($event)" />
 
 @if (deleteError(); as message) {
-  <div class="mb-4 flex items-center gap-2 rounded-md bg-warn p-3 text-on-warn" role="alert">
-    <mat-icon>{{ icons.error }}</mat-icon>
-    <span>{{ message }}</span>
-  </div>
+  <app-inline-banner tone="error" [message]="message" />
 }
 
 @if (employeeStore.error(); as message) {
-  <div class="flex items-center gap-2 rounded-md bg-warn p-3 text-on-warn" role="alert">
-    <mat-icon>{{ icons.error }}</mat-icon>
-    <span>{{ message }}</span>
-  </div>
+  <app-inline-banner tone="error" [message]="message" />
+} @else if (!employeeStore.loading() && employeeStore.employees().length === 0) {
+  <app-empty-state
+    [icon]="icons.badge"
+    [title]="hasActiveFilters() ? 'No employees match your filters' : 'No employees yet'"
+    [description]="
+      hasActiveFilters()
+        ? 'Try a different search or clear your filters.'
+        : 'Employee records will appear here once you add one.'
+    "
+  />
 } @else {
   <app-employee-table
     [rows]="employeeStore.employees()"

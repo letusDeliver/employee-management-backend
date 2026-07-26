@@ -1,43 +1,31 @@
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Component, inject, output } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule } from '@angular/forms';
-import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
-import { RouterLink } from '@angular/router';
 import { debounceTime, distinctUntilChanged } from 'rxjs';
 
-import { SessionStore } from '../../../core/auth/session.store';
 import { ICON_NAMES } from '../../../shared/icon-names';
 import { EmployeeListQuery } from '../data-access/employee.model';
 
 export type EmployeeFilters = Partial<Pick<EmployeeListQuery, 'search' | 'department' | 'jobTitle'>>;
 
 /**
- * Presentational-ish (domain-scoped, per §10) - owns the debounced
+ * Presentational-ish (domain-scoped, per §10) - owns only the debounced
  * filter form (blueprint §6's named debounced-search example, its first
- * real consumer) and the permission-gated "New Employee" entry point.
- * `SessionStore` is injected directly here rather than reaching for the
- * still-unbuilt `*appHasPermission` directive - a single button doesn't
- * justify that shared abstraction yet (same reasoning already applied
- * to `EmptyStateComponent`/`DataTableComponent`'s deferrals).
+ * real consumer). The "New Employee" action moved to
+ * `EmployeeListPageComponent`'s `PageHeaderComponent` slot during Design
+ * System Phase 2, so this component no longer needs `SessionStore` or
+ * routing at all.
  */
 @Component({
   selector: 'app-employee-toolbar',
-  imports: [
-    ReactiveFormsModule,
-    MatFormFieldModule,
-    MatInputModule,
-    MatIconModule,
-    MatButtonModule,
-    RouterLink,
-  ],
+  imports: [ReactiveFormsModule, MatFormFieldModule, MatInputModule, MatIconModule],
   templateUrl: './employee-toolbar.component.html',
   styleUrl: './employee-toolbar.component.scss',
 })
 export class EmployeeToolbarComponent {
-  protected readonly sessionStore = inject(SessionStore);
   protected readonly icons = ICON_NAMES;
 
   readonly filtersChange = output<EmployeeFilters>();
