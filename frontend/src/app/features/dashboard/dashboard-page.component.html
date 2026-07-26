@@ -1,51 +1,51 @@
 @if (sessionStore.user(); as user) {
-  <h1 class="mb-4 text-2xl font-medium">Welcome back, {{ user.name }}</h1>
+  <app-page-header [title]="'Welcome back, ' + user.name" />
 
-  <mat-card class="max-w-md">
-    <mat-card-header>
-      <mat-card-title>Your profile</mat-card-title>
-    </mat-card-header>
-    <mat-card-content>
-      <dl class="flex flex-col gap-2">
-        <div>
-          <dt class="text-sm">Name</dt>
-          <dd>{{ user.name }}</dd>
-        </div>
-        <div>
-          <dt class="text-sm">Email</dt>
-          <dd>{{ user.email }}</dd>
-        </div>
-        <div>
-          <dt class="text-sm">Roles</dt>
-          <dd>
-            <mat-chip-set>
-              @for (role of user.roles; track role) {
-                <mat-chip>{{ role }}</mat-chip>
-              }
-            </mat-chip-set>
-          </dd>
-        </div>
-      </dl>
-    </mat-card-content>
-  </mat-card>
+  <div class="surface-card max-w-md p-6">
+    <h3 class="ds-h3 mb-2">Your profile</h3>
+    <dl class="flex flex-col gap-2">
+      <div>
+        <dt class="ds-label">Name</dt>
+        <dd class="ds-body">{{ user.name }}</dd>
+      </div>
+      <div>
+        <dt class="ds-label">Email</dt>
+        <dd class="ds-body">{{ user.email }}</dd>
+      </div>
+      <div>
+        <dt class="ds-label">Roles</dt>
+        <dd>
+          <mat-chip-set>
+            @for (role of user.roles; track role) {
+              <mat-chip>{{ role }}</mat-chip>
+            }
+          </mat-chip-set>
+        </dd>
+      </div>
+    </dl>
+  </div>
 
   <section aria-label="Quick navigation" class="mt-6">
-    <h2 class="mb-2 text-lg font-medium">Quick navigation</h2>
-    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      @for (item of visibleNavItems(); track item.route) {
-        <mat-card [routerLink]="item.route" class="cursor-pointer">
-          <mat-card-header>
-            <mat-icon mat-card-avatar>{{ item.icon }}</mat-icon>
-            <mat-card-title>{{ item.label }}</mat-card-title>
-          </mat-card-header>
-          <mat-card-content>
-            <p class="text-sm">{{ item.description }}</p>
-          </mat-card-content>
-        </mat-card>
-      } @empty {
-        <p class="text-sm">More modules will appear here as they become available.</p>
-      }
-    </div>
+    <app-section-header title="Quick navigation" />
+    @if (visibleNavItems().length > 0) {
+      <div class="mt-2 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        @for (item of visibleNavItems(); track item.route) {
+          <a [routerLink]="item.route" class="surface-card-interactive flex flex-col gap-2 p-4">
+            <div class="flex items-center gap-2">
+              <mat-icon>{{ item.icon }}</mat-icon>
+              <h3 class="ds-h3">{{ item.label }}</h3>
+            </div>
+            <p class="ds-body">{{ item.description }}</p>
+          </a>
+        }
+      </div>
+    } @else {
+      <app-empty-state
+        [icon]="icons.people"
+        title="No modules available yet"
+        description="More modules will appear here as they become available."
+      />
+    }
   </section>
 
   <!-- Reserved for future widgets (blueprint §4.3) - stays empty until a real widget-worthy backend capability exists -->
