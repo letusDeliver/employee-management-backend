@@ -1,4 +1,4 @@
-<h1 class="mb-4 text-2xl font-medium">Users</h1>
+<app-page-header title="Users" />
 
 <mat-form-field class="w-full max-w-sm" subscriptSizing="dynamic">
   <mat-label>Search by name or email</mat-label>
@@ -10,7 +10,15 @@
   @if (usersStore.loading()) {
     <mat-progress-spinner diameter="32" mode="indeterminate" aria-label="Loading users" />
   } @else if (usersStore.error(); as message) {
-    <p class="text-sm" role="alert">{{ message }}</p>
+    <app-inline-banner tone="error" [message]="message" />
+  } @else if (usersStore.filteredUsers().length === 0) {
+    <app-empty-state
+      [icon]="icons.people"
+      [title]="usersStore.searchTerm() ? 'No users match your search' : 'No users yet'"
+      [description]="
+        usersStore.searchTerm() ? 'Try a different name or email.' : 'Registered users will appear here.'
+      "
+    />
   } @else {
     <app-user-table [rows]="usersStore.filteredUsers()" />
   }

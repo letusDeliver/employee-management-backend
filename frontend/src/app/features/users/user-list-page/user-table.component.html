@@ -28,9 +28,5 @@
 
     <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
     <tr mat-row *matRowDef="let row; columns: displayedColumns"></tr>
-
-    <tr class="mat-row" *matNoDataRow>
-      <td class="p-4 text-sm" [attr.colspan]="displayedColumns.length">No users match your search.</td>
-    </tr>
   </table>
 </div>

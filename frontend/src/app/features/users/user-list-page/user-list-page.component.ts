@@ -4,6 +4,9 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 
+import { EmptyStateComponent } from '../../../shared/components/empty-state/empty-state.component';
+import { InlineBannerComponent } from '../../../shared/components/inline-banner/inline-banner.component';
+import { PageHeaderComponent } from '../../../shared/components/page-header/page-header.component';
 import { ICON_NAMES } from '../../../shared/icon-names';
 import { UsersStore } from '../data-access/users.store';
 import { UserTableComponent } from './user-table.component';
@@ -15,7 +18,16 @@ import { UserTableComponent } from './user-table.component';
  */
 @Component({
   selector: 'app-user-list-page',
-  imports: [MatFormFieldModule, MatInputModule, MatIconModule, MatProgressSpinnerModule, UserTableComponent],
+  imports: [
+    MatFormFieldModule,
+    MatInputModule,
+    MatIconModule,
+    MatProgressSpinnerModule,
+    UserTableComponent,
+    PageHeaderComponent,
+    InlineBannerComponent,
+    EmptyStateComponent,
+  ],
   templateUrl: './user-list-page.component.html',
   styleUrl: './user-list-page.component.scss',
 })
