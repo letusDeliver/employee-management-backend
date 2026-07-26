@@ -1,0 +1,13 @@
+<div class="mb-4 flex flex-wrap items-end gap-2">
+  <form [formGroup]="form" class="flex flex-wrap gap-2">
+    <mat-form-field class="w-72" subscriptSizing="dynamic">
+      <mat-label>Search by name or email</mat-label>
+      <mat-icon matPrefix>{{ icons.search }}</mat-icon>
+      <input matInput formControlName="search" />
+    </mat-form-field>
+    <mat-form-field subscriptSizing="dynamic">
+      <mat-label>Role</mat-label>
+      <input matInput formControlName="role" />
+    </mat-form-field>
+  </form>
+</div>
