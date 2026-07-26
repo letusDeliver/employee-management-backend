@@ -1,4 +1,4 @@
-<h1 class="mb-4 text-2xl font-medium">{{ isEditMode ? 'Edit Employee' : 'New Employee' }}</h1>
+<app-page-header [title]="isEditMode ? 'Edit Employee' : 'New Employee'" />
 
 @if (isEditMode && employeeStore.selectedLoading()) {
   <div class="flex items-center gap-2">
@@ -6,9 +6,8 @@
     <span>Loading...</span>
   </div>
 } @else {
-  <mat-card class="mx-auto max-w-2xl">
-    <mat-card-content>
-      <form [formGroup]="form" (ngSubmit)="submit()" class="flex flex-col gap-2">
+  <div class="surface-card mx-auto max-w-2xl p-6">
+    <form [formGroup]="form" (ngSubmit)="submit()" class="flex flex-col gap-2">
         <div class="grid gap-x-4 gap-y-1 sm:grid-cols-2">
           <mat-form-field class="w-full">
             <mat-label>Department</mat-label>
@@ -72,9 +71,8 @@
         </div>
 
         @if (serverError(); as message) {
-          <div class="mb-2 flex items-center gap-2 rounded-md bg-warn p-3 text-on-warn" role="alert">
-            <mat-icon>{{ icons.error }}</mat-icon>
-            <span>{{ message }}</span>
+          <div class="mb-2">
+            <app-inline-banner tone="error" [message]="message" />
           </div>
         }
 
@@ -95,6 +93,5 @@
           </button>
         </div>
       </form>
-    </mat-card-content>
-  </mat-card>
+  </div>
 }

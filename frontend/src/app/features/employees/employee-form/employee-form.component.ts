@@ -4,13 +4,14 @@ import { AbstractControl, FormControl, ReactiveFormsModule, ValidationErrors, Va
 import { FormBuilder } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
-import { MatCardModule } from '@angular/material/card';
 import { MatDatepickerModule } from '@angular/material/datepicker';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 
+import { InlineBannerComponent } from '../../../shared/components/inline-banner/inline-banner.component';
+import { PageHeaderComponent } from '../../../shared/components/page-header/page-header.component';
 import { ICON_NAMES } from '../../../shared/icon-names';
 import { extractErrorMessage } from '../../../shared/utils/extract-error-message.util';
 import { notBlankValidator } from '../../../shared/validators/not-blank.validator';
@@ -48,13 +49,14 @@ function selfManagedValidator(employeeId: string | null) {
   imports: [
     ReactiveFormsModule,
     MatButtonModule,
-    MatCardModule,
     MatDatepickerModule,
     MatFormFieldModule,
     MatIconModule,
     MatInputModule,
     MatProgressSpinnerModule,
     RouterLink,
+    PageHeaderComponent,
+    InlineBannerComponent,
   ],
   templateUrl: './employee-form.component.html',
   styleUrl: './employee-form.component.scss',
