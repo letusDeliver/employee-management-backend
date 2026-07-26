@@ -1902,7 +1902,7 @@ None.
 | `page`    | number | `1`         | No       | Integer `>= 1`            | `0` or negative → `400`.                                                                        |
 | `limit`   | number | `10`        | No       | Integer `1`-`100`         | `0`, negative, or `> 100` → `400` (rejected, not silently clamped).                             |
 | `search`  | string | _(none)_    | No       | Any string                 | Case-insensitive partial match across `name` and `email`. An empty `search=` is treated identically to omitting it entirely. |
-| `role`    | string | _(none)_    | No       | Any string                 | Exact match against a role **name** (e.g. `ADMIN`) via the `userRoles`/`Role` relation. Not validated against the real `Role` table — an unmatched value simply returns zero rows, same behavior as Employees' `department`/`jobTitle` filters. |
+| `role`    | string | _(none)_    | No       | Any string                 | Case-insensitive **exact** match against a role **name** (e.g. `ADMIN`, `admin`, and `Admin` all match) via the `userRoles`/`Role` relation. Not validated against the real `Role` table — an unmatched value simply returns zero rows, same behavior as Employees' `department`/`jobTitle` filters. |
 | `sortBy`  | string | `createdAt` | No       | `name`, `email`, `createdAt` | Whitelisted — any other value → `400`, never passed through to Prisma's `orderBy` directly. Roles are multi-valued and deliberately not sortable. |
 | `order`   | string | `desc`      | No       | `asc`, `desc`               | Any other value → `400`.                                                                        |
 
@@ -1978,6 +1978,7 @@ request, `total` is the count across **all** matching pages, and
 | 3   | Out-of-bounds `page`/`limit`  | `?page=0` / `?limit=999`    | `400`                                                                 |
 | 4   | Search by name or email       | `?search=jane`               | `200`, only matching rows                                             |
 | 5   | Role filter, real role        | `?role=ADMIN`                | `200`, only users holding that role                                   |
+| 5b  | Role filter, different case   | `?role=admin` / `?role=Admin` | `200`, identical `total` to `?role=ADMIN` — case-insensitive          |
 | 6   | Role filter, unknown value    | `?role=NOT_A_REAL_ROLE`      | `200`, `{ "users": [], "pagination": { "total": 0 } }` — not an error |
 | 7   | Sort ascending vs. descending | `?sortBy=name&order=asc/desc` | `200`, order reversed between the two calls                          |
 | 8   | Invalid `sortBy`              | `?sortBy=password`           | `400`                                                                 |

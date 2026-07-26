@@ -857,3 +857,67 @@ refresh token being replayed after the legitimate rotation already
 happened. No evidence this has ever fired in practice; flagged as a
 real, known gap for a future pass, not treated as in-scope of "the
 token stuff" the way the deleted-user gap was.)_
+
+_(Users — Server-Side Pagination, Sorting, Search, Role Filtering —
+2026-07-26, on branch `feature/14-users-pagination-sorting-filtering`
+(merged to `main`). Not a numbered feature; brings `GET /users` up to
+the same maturity `GET /employees` reached in Feature 10 — this endpoint
+had been a bare, unpaginated `findMany()` since Feature 9, a known,
+named gap explicitly called out in `handbook/API_ENDPOINTS.md` at the
+time ("no pagination — fine at current scale"). Full Theory →
+Architecture → Action Plan discussion held with the user first,
+including an explicit fork decision on the one real cross-cutting risk
+this change introduces: the frontend's `UserDirectoryService` calls this
+same endpoint bare (no params) expecting *every* user back, for its
+name-resolution cache. Always-paginating `GET /users` would have
+silently truncated that cache to 10 users. Presented three options
+(always paginate + have the directory service request the max page
+size; keep pagination opt-in; split into two endpoints) — the user chose
+the first: one uniform endpoint contract, with the directory service
+explicitly requesting `limit=100` (the server's own max) since it needs
+"the whole directory," not a paginated admin view. Documented as a
+named, revisit-if-it-matters cap, not treated as fully solved.
+
+New `user.validation.js` (`listUsersQuerySchema`) mirrors
+`employee.validation.js`'s `listEmployeesQuerySchema` exactly — `page`/
+`limit` (defaults `1`/`10`, capped at `100`), `search` (across `name`/
+`email`, no join needed since both live directly on `User`, unlike
+Employees' search which reaches through a relation), a new `role` filter
+(exact match against a role **name** via the `userRoles`/`Role`
+relation — one `EXISTS` subquery, no N+1, and a deliberate choice over
+denormalizing a role column onto `User`, since the relation is genuinely
+many-to-many), and a `sortBy` allowlist (`name`/`email`/`createdAt` —
+roles are multi-valued and deliberately not sortable). `user.repository.js`
+gained a paired `count()` alongside a `findAll()` that now accepts
+`{ where, orderBy, skip, take }` instead of a bare no-arg call.
+`user.service.js`'s `listUsers()` runs the page query and count query in
+parallel via `Promise.all` (not a `$transaction`) — the identical,
+already-accepted trade-off from Feature 10, and now also resolves
+`rbacRepository.getRoleNamesForUsers` scoped to just the current page's
+user ids, a strict improvement over the old behavior (which resolved
+roles for the entire table on every call). The same unconditional
+secondary `id ASC` tiebreaker as Feature 10 keeps ordering deterministic
+across repeated/paged calls.
+
+**One real bug was found and fixed after this shipped, via the user's
+own live browser testing, not code review**: the `role` filter used
+Prisma's plain `equals`, which is case-sensitive — `role=admin` or
+`role=Employee` silently matched nothing even though `role=ADMIN`/
+`role=EMPLOYEE` worked, since the seeded role names are uppercase. Fixed
+by switching to `{ equals: role, mode: 'insensitive' }`, the same
+case-insensitivity `search` already had. Verified live: `admin`,
+`Admin`, and `ADMIN` all now return the identical, correct total.
+
+Verified live end-to-end against the real running server (a throwaway
+test account registered, promoted to `ADMIN` via the established direct-
+Prisma-script pattern, and deleted again afterward, per this project's
+standing convention): default pagination, explicit page/limit, search
+across name/email, role filter (including case variations and an
+unmatched value correctly returning zero rows, not an error), sort in
+both directions with the deterministic tiebreaker confirmed via repeated
+identical calls, and `400`s on out-of-bounds `limit`/invalid `sortBy`.
+`npm run lint` clean throughout. `handbook/API_ENDPOINTS.md` and
+`backend/README.md` updated to match — see the frontend's matching entry
+in `frontend/CLAUDE.md` for the client-side half of this pass, including
+the new shared `list-query-state` pattern this established as reusable
+for future list screens.)_
