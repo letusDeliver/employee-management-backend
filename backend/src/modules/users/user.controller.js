@@ -1,8 +1,8 @@
 import userService from './user.service.js';
 
 const list = async (req, res) => {
-  const users = await userService.listUsers();
-  res.status(200).json({ users });
+  const { users, pagination } = await userService.listUsers(req.validatedQuery);
+  res.status(200).json({ users, pagination });
 };
 
 const uploadProfilePicture = async (req, res) => {

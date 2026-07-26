@@ -157,8 +157,9 @@ in Postman's cookie jar once register/login/refresh sets it.
   token issuance now just means "the account exists correctly, log in
   again" — no longer the "account exists but is structurally broken" gap
   documented since Feature 7.
-- **`GET /users` has no pagination** — fine at current scale, a natural
-  future improvement once the user count grows.
+- ~~**`GET /users` has no pagination**~~ — **closed** by the Users
+  Server-Side Pagination/Sorting/Filtering pass (2026-07-26); see that
+  endpoint's current entry.
 - **No self-service way to change a user's role** — by design (see
   `GET /users`'s Security Testing section). Role assignment is a
   direct-database operation for testing purposes, same as every prior
@@ -171,10 +172,10 @@ in Postman's cookie jar once register/login/refresh sets it.
   is manually assigned to it via a direct database script — accounts
   registered after the migration are unaffected, since `register()` always
   assigns the default `EMPLOYEE` role.
-- **`GET /users` still has no pagination** — the identical gap `GET
-/employees` had before Feature 10 closed it there; out of scope for
-  Feature 10, a candidate for its own future pass if the user count ever
-  grows large enough to matter.
+- ~~**`GET /users` still has no pagination**~~ — the identical gap `GET
+  /employees` had before Feature 10 closed it there; out of scope for
+  Feature 10 itself, but **closed** by the later Users Server-Side
+  Pagination/Sorting/Filtering pass (2026-07-26).
 - **No way to view the `AuditLog` table via the API** — Feature 11 added
   the write path only (every `Employee` create/update/soft-delete is
   now logged, inside the same transaction as the mutation), by confirmed
@@ -1856,15 +1857,15 @@ I'm authenticated" check.
 ## 1. Endpoint Information
 
 ```
-Feature:            RBAC Redesign (Feature 9)
-Endpoint:           List All Users
-Description:        Returns every registered user (requires the `user:list` permission)
+Feature:            Users Server-Side Pagination, Sorting, Filtering (2026-07-26)
+Endpoint:           List Users
+Description:        Returns a paginated, searchable, filterable, sortable slice of registered users
 Method:             GET
 URL:                /api/v1/users
 API Version:        v1
 Module:             modules/users
 Authentication:     Yes (Bearer access token)
-Authorization:      `user:list` permission required (granted to ADMIN only, as seeded)
+Authorization:      `user:list` permission required (ADMIN only, as seeded)
 Public/Protected:   Protected
 ```
 
@@ -1872,12 +1873,17 @@ Public/Protected:   Protected
 
 - **Why it exists**: gives an administrator visibility into all
   registered accounts — this project's first real, concrete use of a
-  permission check and the first authorization-gated endpoint.
+  permission check and the first authorization-gated endpoint. As of this
+  pass, it also scales the way `GET /employees` already does (Feature 10)
+  — returning a bounded page instead of the entire table.
 - **Business problem solved**: user management/oversight — "who is
-  registered in this system."
+  registered in this system," plus, as of this pass, "find a specific
+  person quickly" and "see everyone with a given role."
 - **Expected callers**: any user whose roles resolve to the `user:list`
-  permission — only `ADMIN`, per the seeded `RolePermission` grants, not a
-  hard-coded role-name check anymore.
+  permission — only `ADMIN`, per the seeded `RolePermission` grants.
+  Also called internally, with `limit=100` and no other params, by the
+  frontend's `UserDirectoryService` to build its name-resolution cache
+  for Employees (see Performance Notes below for the cap this implies).
 
 ## 3. Request Headers
 
@@ -1891,10 +1897,16 @@ None.
 
 ## 5. Query Parameters
 
-**None currently implemented.** This is a real, current limitation — no
-`page`/`limit`/`sort`/`order` support exists yet (see the Global
-Reference's "Known Gaps" section and `handbook/08-rbac.md`). Every call
-returns the entire `User` table.
+| Name      | Type   | Default     | Required | Allowed Values           | Notes                                                                                          |
+| --------- | ------ | ----------- | -------- | ------------------------- | ------------------------------------------------------------------------------------------------ |
+| `page`    | number | `1`         | No       | Integer `>= 1`            | `0` or negative → `400`.                                                                        |
+| `limit`   | number | `10`        | No       | Integer `1`-`100`         | `0`, negative, or `> 100` → `400` (rejected, not silently clamped).                             |
+| `search`  | string | _(none)_    | No       | Any string                 | Case-insensitive partial match across `name` and `email`. An empty `search=` is treated identically to omitting it entirely. |
+| `role`    | string | _(none)_    | No       | Any string                 | Exact match against a role **name** (e.g. `ADMIN`) via the `userRoles`/`Role` relation. Not validated against the real `Role` table — an unmatched value simply returns zero rows, same behavior as Employees' `department`/`jobTitle` filters. |
+| `sortBy`  | string | `createdAt` | No       | `name`, `email`, `createdAt` | Whitelisted — any other value → `400`, never passed through to Prisma's `orderBy` directly. Roles are multi-valued and deliberately not sortable. |
+| `order`   | string | `desc`      | No       | `asc`, `desc`               | Any other value → `400`.                                                                        |
+
+`search` and `role` combine with **AND** when both are present.
 
 ## 6. Request Body
 
@@ -1902,9 +1914,11 @@ None.
 
 ## 7. Validation Rules
 
-No body/query to validate. The only check is authorization —
-`requirePermission('user:list')` resolves the caller's roles to a
-permission set and confirms `user:list` is granted.
+Enforced by the new `src/modules/users/user.validation.js`'s
+`listUsersQuerySchema` (Zod), via `validateMiddleware(schema, 'query')` —
+mirrors `employee.validation.js`'s `listEmployeesQuerySchema` exactly.
+Every field above is coerced/bounded/whitelisted before the service ever
+sees it; nothing reaches Prisma unvalidated.
 
 ## 8. Successful Response
 
@@ -1922,44 +1936,53 @@ permission set and confirms `user:list` is granted.
       "createdAt": "2026-07-04T13:56:29.996Z",
       "updatedAt": "2026-07-04T13:56:29.996Z",
       "roles": []
-    },
-    {
-      "id": "ebea9f2d-f331-40b8-968a-386dd88d4576",
-      "email": "jwt.test@example.com",
-      "name": "JWT Test",
-      "profileImageUrl": null,
-      "profileImagePublicId": null,
-      "createdAt": "2026-07-04T14:42:46.216Z",
-      "updatedAt": "2026-07-04T14:42:46.216Z",
-      "roles": []
     }
-  ]
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 25,
+    "totalPages": 3
+  }
 }
 ```
 
-**As of Feature 12**: every user entry now includes
-`profileImageUrl`/`profileImagePublicId`, `null` until that user uploads
-a profile picture.
-
-| Field   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `users` | An array of every `User` row in the database, each sanitized (no `password`), each with a `roles` array. Order is whatever the database returns by default (no explicit `ORDER BY` — do not rely on a particular order). Note `jane.doe@example.com` above: an account created **before** the Feature 9 migration, now showing `roles: []` — its old `role` enum value was dropped, not migrated, per the "clean cut-over" decision (see the Global Reference's Known Gaps). |
+`users` is up to `limit` sanitized rows (no `password`) matching the
+search/filter, ordered by `sortBy`/`order` plus an unconditional
+secondary `id ASC` tiebreaker for deterministic ordering across
+repeated/paged calls. Each entry's `roles` array is resolved only for
+the users on this page, not the whole table. Note `jane.doe@example.com`
+above: an account created **before** the Feature 9 migration, still
+showing `roles: []` — its old `role` enum value was dropped, not
+migrated (see the Global Reference's Known Gaps). `pagination` is the
+same shape `GET /employees` already returns: `page`/`limit` echo the
+request, `total` is the count across **all** matching pages, and
+`totalPages` is `Math.ceil(total / limit)`.
 
 ## 9. Error Responses
 
 | Status | Reason                                         | Response (`message`)                                                                      | When                                                                    |
 | ------ | ---------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `400`  | `page`/`limit` out of bounds                   | Zod's bounds-violation message                                                            | `page < 1`, `limit < 1`, or `limit > 100`                               |
+| `400`  | Invalid `sortBy`                               | Zod's enum message listing the allowed values                                             | Any value outside `name`/`email`/`createdAt`                            |
+| `400`  | Invalid `order`                                | Zod's enum message                                                                         | Any value other than `asc`/`desc`                                       |
 | `401`  | No/invalid/expired access token                | Same messages as `/auth/me` (`"Authentication required"` or `"Invalid or expired token"`) | `authMiddleware` runs first, identically to every other protected route |
 | `403`  | Valid token, but roles don't grant `user:list` | `"You do not have permission to perform this action"`                                     | Any authenticated `EMPLOYEE` or `MANAGER`                               |
 
 ## 10. Postman Test Cases
 
-| #   | Case                             | Expected                  |
-| --- | -------------------------------- | ------------------------- |
-| 1   | Valid `ADMIN` token              | `200`, array of all users |
-| 2   | Valid `EMPLOYEE`/`MANAGER` token | `403`                     |
-| 3   | No token                         | `401`                     |
-| 4   | Garbage token                    | `401`                     |
+| #   | Case                          | Query                      | Expected                                                              |
+| --- | ----------------------------- | --------------------------- | ---------------------------------------------------------------------- |
+| 1   | Default call                  | _(none)_                   | `200`, `page: 1`, `limit: 10`                                         |
+| 2   | Explicit pagination           | `?page=2&limit=1`           | `200`, a different single row than page 1                            |
+| 3   | Out-of-bounds `page`/`limit`  | `?page=0` / `?limit=999`    | `400`                                                                 |
+| 4   | Search by name or email       | `?search=jane`               | `200`, only matching rows                                             |
+| 5   | Role filter, real role        | `?role=ADMIN`                | `200`, only users holding that role                                   |
+| 6   | Role filter, unknown value    | `?role=NOT_A_REAL_ROLE`      | `200`, `{ "users": [], "pagination": { "total": 0 } }` — not an error |
+| 7   | Sort ascending vs. descending | `?sortBy=name&order=asc/desc` | `200`, order reversed between the two calls                          |
+| 8   | Invalid `sortBy`              | `?sortBy=password`           | `400`                                                                 |
+| 9   | As `EMPLOYEE` token           | _(any)_                    | `403`                                                                 |
+| 10  | No token                      | _(any)_                    | `401`                                                                 |
 
 ## 11. Negative Testing
 
@@ -1967,15 +1990,19 @@ a profile picture.
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A `roles` claim manually crafted into a forged JWT (signed with the wrong secret) | `401` — fails signature verification before authorization is even checked                                                                                           |
 | Wrong HTTP method (`POST /users`)                                                 | `404` — no route registered for `POST` on this path                                                                                                                 |
-| Attempting to pass `role=ADMIN` as a query string (`?role=ADMIN`)                 | No effect — this endpoint resolves permissions from `req.user.roles` on the verified token exclusively; query parameters are not consulted for authorization at all |
+| `?sortBy=password` or any real-but-unlisted `User` column                        | `400` — the whitelist rejects it before it ever reaches Prisma's `orderBy`, regardless of whether the column actually exists                                       |
+| SQL injection attempt in `search`/`role`                                          | Treated as a literal string — Prisma's parameterized `contains`/`equals` neutralizes it; no query-structure risk                                                    |
+| Non-numeric `page`/`limit` (e.g. `?page=abc`)                                     | `400` — Zod's `coerce.number()` fails, reported as a type-mismatch                                                                                                  |
 
 ## 12. Edge Cases
 
 | Scenario                                                                                                                   | Expected Behavior                                                                                                                                                                                                                                                                                                                                                                                        |
 | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A user is promoted to `ADMIN` in the database, but calls this endpoint using their still-valid, pre-promotion access token | `403` — the token's `roles` claim is frozen at issuance; a fresh login or `/refresh` is required before the promotion takes effect. **Directly observed and verified live**, both during Feature 8's original testing and again after the Feature 9 permission-based rewrite — the specific mechanism changed (role → permission resolution), but the stale-token propagation delay behaves identically. |
-| Empty `User` table (no users registered at all — unlikely in practice since an `ADMIN` had to register first)              | `200`, `{ "users": [] }`                                                                                                                                                                                                                                                                                                                                                                                 |
-| Very large number of users                                                                                                 | Currently returns all of them in one response — no pagination; a real scalability limit worth knowing before this table grows large                                                                                                                                                                                                                                                                      |
+| No users match the search/filter/role at all                                                                              | `200`, `{ "users": [], "pagination": { "total": 0, "totalPages": 0, ... } }` — not an error                                                                                                                                                                                                                                                                                                              |
+| `page` beyond the last page (e.g. `page=999` with only 3 real pages)                                                      | `200`, `{ "users": [] }` — an out-of-range page is an empty slice, not a `404`                                                                                                                                                                                                                                                                                                                          |
+| Multiple users sharing the identical `sortBy` value (e.g. same `createdAt` second)                                        | The unconditional `id ASC` secondary sort breaks the tie deterministically — verified live with repeated identical calls returning the same order                                                                                                                                                                                                                                                       |
+| A user with zero roles (`roles: []`) and an active `?role=` filter                                                        | Never matches any `role` filter value — correctly excluded, no error                                                                                                                                                                                                                                                                                                                                     |
 
 ## 13. Security Testing
 
@@ -1993,89 +2020,124 @@ a profile picture.
   data is added).
 - **Mass assignment**: N/A — this is a read-only endpoint, nothing is
   written.
-- **BOLA (Broken Object Level Authorization)**: not directly applicable
-  today, since this endpoint returns _all_ users rather than looking one
-  up by a client-supplied ID — but this is exactly the kind of endpoint
-  where BOLA becomes relevant the moment a `GET /users/:id` variant is
-  ever added (a natural candidate for Employee CRUD or a future user-
-  management feature) — worth remembering when that happens.
+- **BOLA (Broken Object Level Authorization)**: not directly applicable —
+  returns a filtered collection, not a client-supplied ID lookup — but
+  this is exactly the kind of endpoint where BOLA becomes relevant the
+  moment a `GET /users/:id` variant is ever added.
 - **Sensitive data exposure**: verify **every single entry** in the
   `users` array is missing `password`, not just spot-checking the first
   one.
+- **Query-parameter injection**: confirm `sortBy` is truly whitelisted —
+  attempt every real `User` column that isn't in the allowed list (e.g.
+  `password`, `id`, `tokensValidAfter`) and confirm each is rejected with
+  `400`, not silently accepted or passed through to a raw query.
+- **Resource exhaustion via `limit`**: confirm the server-side cap
+  (`100`) actually rejects a larger request rather than silently
+  clamping it.
 
 ## 14. Database Impact
 
-- **Tables affected**: `User` (read, all rows), `UserRole`+`Role` (read,
-  once per distinct role name to build the `roles` array for every user
-  in the list), `Role`/`Permission`/`RolePermission` (read, once per
-  distinct role name in `req.user.roles`, via the permission cache, to
-  authorize the request itself).
+- **Tables affected**: `User` (read, filtered/sorted/paginated),
+  `UserRole`+`Role` (read, batched once for just the current page's user
+  ids — not the whole table), `Role`/`Permission`/`RolePermission` (read,
+  via the permission cache, to authorize the request itself).
 - **Rows affected**: none inserted/updated/deleted.
-- **Transactions**: N/A.
+- **Queries per request**: two, run concurrently via `Promise.all` — one
+  `findMany` (the page of results) and one `count` (the total across all
+  matching pages), the same pattern and accepted non-transactional
+  trade-off as `GET /employees` (Feature 10).
 
 ## 15. Request Lifecycle
 
 ```
-GET /api/v1/users
+GET /api/v1/users?search=...&role=...&sortBy=...&order=...&page=...&limit=...
 Authorization: Bearer <accessToken>
-    ↓
-(global middleware chain)
     ↓
 authMiddleware
     ├─ fails → 401
     └─ succeeds → req.user = { id, roles }
     ↓
 requirePermission('user:list')
-    ├─ permissionCache.getPermissionKeysForRoles(req.user.roles)
-    │    └─ cache miss → rbacRepository.getPermissionKeysForRoles(...)
-    ├─ 'user:list' not granted → 403
-    └─ 'user:list' granted → next()
+    ↓ (403 if not granted)
+validateMiddleware(listUsersQuerySchema, 'query')
+    ↓ (400 on Zod failure; result lands on req.validatedQuery, not req.query)
+user.controller.list → user.service.listUsers(req.validatedQuery)
+    ├─ buildUserWhere({ search, role })
+    ├─ Promise.all([
+    │    userRepository.findAll({ where, orderBy: [{[sortBy]: order}, {id: 'asc'}], skip, take }),
+    │    userRepository.count(where),
+    │  ])
+    └─ rbacRepository.getRoleNamesForUsers(pageUserIds)   [one batched query, page-scoped]
     ↓
-user.controller.list → user.service.listUsers()
-    ↓
-user.repository.findAll()
-    ├─ rbacRepository.getRoleNamesForUsers(userIds)   [one batched query]
-    └─ sanitizeUser(user, roles) applied to every record
-    ↓
-200 { users: [...] }
+200 { users: [...], pagination: {...} }
 ```
-
-**Middleware for this endpoint specifically**: `authMiddleware` **then**
-`requirePermission('user:list')` — the order is the entire security model
-of this route, same principle as Feature 8's `requireRole('ADMIN')`, now
-resolved through the permission tables instead of a hard-coded role name.
 
 ## 16. Performance Notes
 
-- `findAll()` is an unfiltered `SELECT *` — fine at current scale, but the
-  first endpoint in this API where pagination will eventually matter.
-- Role-name-to-permission resolution is cached in-memory (a few minutes'
-  TTL — see `src/utils/permissionCache.js`) — most requests hit the cache,
-  not the database, for the authorization check itself.
-- `listUsers()` batches its role lookup into one query for all users
-  (`getRoleNamesForUsers`), not one query per user — avoids an N+1 query
-  pattern that would otherwise scale linearly with the user count.
-- No index concern here since there's no `WHERE` clause at all (a full
-  table scan is unavoidable for "return everyone," regardless of
-  indexing).
+- Two queries per request (`findMany` + `count`), run concurrently via
+  `Promise.all`, not a `$transaction` — identical trade-off to
+  `GET /employees` (Feature 10): the two queries can reflect slightly
+  different moments under concurrent writes, accepted as fine for an HR
+  application.
+- Role resolution (`getRoleNamesForUsers`) is now scoped to the current
+  page's user ids, not the whole table — strictly cheaper than the
+  pre-pagination behavior, not just neutral.
+- `search` uses `contains`/`mode: 'insensitive'` (Postgres `ILIKE`) across
+  `name`/`email` — a sequential scan at this data size, same documented
+  trade-off as Employees' search (a future `pg_trgm` index is the upgrade
+  path if this table grows large enough to matter; not needed today).
+  Unlike Employees, this search needs no join — both fields live directly
+  on `User`.
+- `email` already carries a real unique-constraint B-tree index; `name`
+  does not — a deliberate, explicitly-considered choice, left unindexed
+  for now, matching Employees' own unindexed `department`/`jobTitle`
+  precedent. Revisit only if sorting/searching by name is measurably slow
+  at real scale.
+- **A real cross-cutting constraint worth knowing**: the frontend's
+  `UserDirectoryService` (used by Employees for name-resolution
+  enrichment) calls this same endpoint with `limit=100` and no other
+  params, relying on it to represent "the whole directory." If this
+  organization's registered-user count ever exceeds 100, that cache
+  silently stops containing every user — enrichment degrades gracefully
+  (a name just won't resolve, never a crash), but this is a known, named
+  cap worth remembering if the user base grows past three digits.
+- `limit`'s hard cap (100) bounds the worst-case single-request cost
+  regardless of what's asked for.
 
 ## 17. Interview Notes
 
-See `handbook/08-rbac.md` and the Feature 9 planning doc in full. The
-single most important question for this endpoint: _"A user was just
+See `handbook/08-rbac.md` for the original permission-check reasoning
+(unchanged by this pass) and Feature 10's entry for the pagination/
+sorting/filtering pattern this endpoint now mirrors. The single most
+important pre-existing question for this endpoint: _"A user was just
 promoted to `ADMIN` — why can't they access this endpoint yet with their
-current session?"_ — answered fully there, and directly observed during
-both this endpoint's original development and its Feature 9 rewrite. A
-second, Feature-9-specific question: _"Why check a permission key instead
-of a role name directly?"_ — because the set of things `ADMIN` can do is
-now data (`RolePermission` rows), not code; granting `MANAGER` the same
-`user:list` access later is a seed-data change, not a code change.
+current session?"_ — answered fully in `handbook/08-rbac.md`, and
+directly observed during both this endpoint's original development and
+its Feature 9 rewrite. Two questions specific to this pass:
+
+- **Q: Why does `GET /users` return a bounded page instead of everyone,
+  when the frontend's directory-enrichment cache actually wants
+  everyone?** Because always paginating keeps one uniform endpoint
+  contract — Swagger describes one shape, not "paginated sometimes,
+  everyone other times" depending on which params happen to be present.
+  The directory service adapts by requesting the maximum allowed page
+  size instead of the endpoint growing a second, inconsistent mode.
+- **Q: Why filter by role *name* through a relation instead of adding a
+  denormalized role column to `User`?** `User`↔`Role` is genuinely
+  many-to-many (`UserRole`) — a user can hold more than one role
+  (observably true in this dataset). A single denormalized column
+  couldn't represent that; the relation filter (`userRoles: { some: {
+  role: { name } } }`) compiles to one `EXISTS` subquery, no N+1.
 
 ## 18. cURL Examples
 
 ```bash
-# As ADMIN
+# As ADMIN, default pagination
 curl -i http://localhost:3000/api/v1/users -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Search + role filter + sort
+curl -i "http://localhost:3000/api/v1/users?search=jane&role=ADMIN&sortBy=name&order=asc" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # As EMPLOYEE (expect 403)
 curl -i http://localhost:3000/api/v1/users -H "Authorization: Bearer $EMPLOYEE_TOKEN"
@@ -2096,13 +2158,25 @@ routinely re-promote after resetting your local database.
 
 ## 20. Testing Checklist
 
-- ✅ Success as `ADMIN` (`200`, full user list)
+- ✅ Success as `ADMIN` (`200`, default `page: 1`/`limit: 10`)
+- ✅ Pagination math correct across pages; `page` beyond the last page
+  returns an empty array, not a `404`
+- ✅ Search matches `name`/`email`, case-insensitive
+- ✅ Role filter matches real roles; an unmatched role returns zero rows,
+  not an error
+- ✅ Sort ascending/descending both confirmed, including the deterministic
+  `id ASC` tiebreaker on repeated identical calls
+- ✅ `400` on out-of-bounds `page`/`limit` and on any `sortBy`/`order`
+  outside the whitelist
 - ✅ `403` as `EMPLOYEE`/`MANAGER`
 - ✅ `401` with no token (confirms auth runs before authorization)
 - ✅ `401` with garbage token
 - ✅ Every entry in the response missing `password`
 - ✅ Role-promotion propagation delay confirmed (stale token still `403`
   until a fresh login)
+- ✅ Frontend's `UserDirectoryService` (Employees' name-enrichment cache)
+  re-verified live against the new paginated contract, not just this
+  endpoint in isolation
 - ✅ No sensitive data leaked
 - ✅ Logs verified: no tokens/secrets logged
 

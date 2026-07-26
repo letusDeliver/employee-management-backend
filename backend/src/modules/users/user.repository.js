@@ -12,8 +12,12 @@ const create = (data, client = prisma) => {
   return client.user.create({ data });
 };
 
-const findAll = (client = prisma) => {
-  return client.user.findMany();
+const findAll = ({ where = {}, orderBy, skip, take }) => {
+  return prisma.user.findMany({ where, orderBy, skip, take });
+};
+
+const count = (where = {}) => {
+  return prisma.user.count({ where });
 };
 
 const updateProfileImage = (userId, { url, publicId }, client = prisma) => {
@@ -54,6 +58,7 @@ export default {
   findById,
   create,
   findAll,
+  count,
   updateProfileImage,
   clearProfileImage,
   getTokensValidAfter,

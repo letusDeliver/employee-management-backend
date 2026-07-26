@@ -3,7 +3,8 @@ import { z } from 'zod';
 import registry from '../../docs/openapi.registry.js';
 import { bearerAuth } from '../../docs/components/security.js';
 import { errorResponse, jsonResponse } from '../../docs/components/responses.js';
-import { UserPublicSchema } from '../../docs/components/schemas.js';
+import { PaginationMetaSchema, UserPublicSchema } from '../../docs/components/schemas.js';
+import { listUsersQuerySchema } from './user.validation.js';
 
 const TAG = ['Users'];
 
@@ -11,12 +12,23 @@ registry.registerPath({
   method: 'get',
   path: '/users',
   tags: TAG,
-  summary: 'List all registered users',
+  summary: 'List registered users',
   description:
-    "Requires the 'user:list' permission (ADMIN by default). password is stripped from every entry.",
+    "Requires the 'user:list' permission (ADMIN by default). password is stripped from every entry. Paginated, searchable (search matches User.name/email), filterable by role name, sortable. An unconditional secondary `id ASC` sort keeps ordering deterministic across pages.",
   security: [{ [bearerAuth.name]: [] }],
+  request: { query: listUsersQuerySchema },
   responses: {
-    200: jsonResponse('OK', z.object({ users: z.array(UserPublicSchema) })),
+    200: jsonResponse(
+      'OK',
+      z.object({ users: z.array(UserPublicSchema), pagination: PaginationMetaSchema }),
+    ),
+    400: errorResponse(
+      'A query parameter failed validation (e.g. limit over 100, or an unknown sortBy value)',
+      {
+        status: 'error',
+        message: 'limit: Too big: expected number to be <=100',
+      },
+    ),
     401: errorResponse('Missing, invalid, or expired access token'),
     403: errorResponse("Caller lacks the 'user:list' permission", {
       status: 'error',
