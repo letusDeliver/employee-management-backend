@@ -2,7 +2,6 @@ import { CurrencyPipe, DatePipe } from '@angular/common';
 import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
-import { MatCardModule } from '@angular/material/card';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
@@ -11,6 +10,8 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { SessionStore } from '../../../core/auth/session.store';
 import { UserDirectoryService } from '../../../core/users/user-directory.service';
 import { ConfirmDialogComponent } from '../../../shared/components/confirm-dialog/confirm-dialog.component';
+import { InlineBannerComponent } from '../../../shared/components/inline-banner/inline-banner.component';
+import { PageHeaderComponent } from '../../../shared/components/page-header/page-header.component';
 import { ICON_NAMES } from '../../../shared/icon-names';
 import { extractErrorMessage } from '../../../shared/utils/extract-error-message.util';
 import { EmployeeDocumentsDialogComponent } from '../employee-documents/employee-documents-dialog.component';
@@ -24,7 +25,16 @@ import { EmployeeStore } from '../data-access/employee.store';
  */
 @Component({
   selector: 'app-employee-detail-page',
-  imports: [MatCardModule, MatButtonModule, MatIconModule, MatProgressSpinnerModule, RouterLink, DatePipe, CurrencyPipe],
+  imports: [
+    MatButtonModule,
+    MatIconModule,
+    MatProgressSpinnerModule,
+    RouterLink,
+    DatePipe,
+    CurrencyPipe,
+    PageHeaderComponent,
+    InlineBannerComponent,
+  ],
   templateUrl: './employee-detail-page.component.html',
   styleUrl: './employee-detail-page.component.scss',
 })

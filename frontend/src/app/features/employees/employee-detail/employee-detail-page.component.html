@@ -4,70 +4,69 @@
     <span>Loading...</span>
   </div>
 } @else if (employeeStore.selectedError(); as message) {
-  <div class="flex items-center gap-2 rounded-md bg-warn p-3 text-on-warn" role="alert">
-    <mat-icon>{{ icons.error }}</mat-icon>
-    <span>{{ message }}</span>
-  </div>
+  <app-inline-banner tone="error" [message]="message" />
 } @else if (employeeStore.selected(); as employee) {
-  <h1 class="mb-4 text-2xl font-medium">{{ employee.jobTitle }}</h1>
+  <app-page-header [title]="employee.jobTitle" />
 
-  <mat-card class="mx-auto max-w-lg">
-    <mat-card-content>
-      <dl class="flex flex-col gap-2">
-        <div>
-          <dt class="text-sm">Department</dt>
-          <dd>{{ employee.department }}</dd>
-        </div>
-        <div>
-          <dt class="text-sm">Employee</dt>
-          <dd>{{ displayName(employee.userId) ?? '—' }}</dd>
-        </div>
-        <div>
-          <dt class="text-sm">Salary</dt>
-          <dd>{{ employee.salary | currency: 'USD' }}</dd>
-        </div>
-        <div>
-          <dt class="text-sm">Date of Joining</dt>
-          <dd>{{ employee.dateOfJoining | date: 'mediumDate' }}</dd>
-        </div>
-      </dl>
-
-      @if (deleteError(); as message) {
-        <div class="mt-2 flex items-center gap-2 rounded-md bg-warn p-3 text-on-warn" role="alert">
-          <mat-icon>{{ icons.error }}</mat-icon>
-          <span>{{ message }}</span>
-        </div>
-      }
-
-      <div class="mt-4 flex items-center gap-2">
-        <button mat-stroked-button type="button" [disabled]="deleting()" (click)="openDocuments()">
-          <mat-icon>{{ icons.description }}</mat-icon>
-          Documents
-        </button>
-        @if (sessionStore.hasAnyPermission('employee:update:any')) {
-          <a
-            mat-flat-button
-            color="primary"
-            [routerLink]="deleting() ? null : ['/employees', employee.id, 'edit']"
-            [attr.aria-disabled]="deleting()"
-          >
-            <mat-icon>{{ icons.edit }}</mat-icon>
-            Edit
-          </a>
-        }
-        @if (sessionStore.hasAnyPermission('employee:delete:any')) {
-          <button mat-stroked-button color="warn" type="button" [disabled]="deleting()" (click)="confirmDelete()">
-            <mat-icon>{{ icons.delete }}</mat-icon>
-            Delete
-          </button>
-        }
-        @if (deleting()) {
-          <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Deleting" />
-        }
-        <a mat-button [routerLink]="deleting() ? null : '/employees'" [attr.aria-disabled]="deleting()">
-          Back to list
-        </a>
+  <div class="surface-card mx-auto max-w-lg p-6">
+    <dl class="flex flex-col gap-2">
+      <div>
+        <dt class="ds-label">Department</dt>
+        <dd class="ds-body">{{ employee.department }}</dd>
       </div>
-    </mat-card-content>
-  </mat-card>
+      <div>
+        <dt class="ds-label">Employee</dt>
+        <dd class="ds-body">{{ displayName(employee.userId) ?? '—' }}</dd>
+      </div>
+      <div>
+        <dt class="ds-label">Salary</dt>
+        <dd class="ds-body">{{ employee.salary | currency: 'USD' }}</dd>
+      </div>
+      <div>
+        <dt class="ds-label">Date of Joining</dt>
+        <dd class="ds-body">{{ employee.dateOfJoining | date: 'mediumDate' }}</dd>
+      </div>
+    </dl>
+
+    @if (deleteError(); as message) {
+      <div class="mt-2">
+        <app-inline-banner tone="error" [message]="message" />
+      </div>
+    }
+
+    <div class="mt-4 flex items-center gap-2">
+      <button mat-stroked-button type="button" [disabled]="deleting()" (click)="openDocuments()">
+        <mat-icon>{{ icons.description }}</mat-icon>
+        Documents
+      </button>
+      @if (sessionStore.hasAnyPermission('employee:update:any')) {
+        <a
+          mat-flat-button
+          color="primary"
+          [routerLink]="deleting() ? null : ['/employees', employee.id, 'edit']"
+          [attr.aria-disabled]="deleting()"
+        >
+          <mat-icon>{{ icons.edit }}</mat-icon>
+          Edit
+        </a>
+      }
+      @if (sessionStore.hasAnyPermission('employee:delete:any')) {
+        <button mat-stroked-button color="warn" type="button" [disabled]="deleting()" (click)="confirmDelete()">
+          <mat-icon>{{ icons.delete }}</mat-icon>
+          Delete
+        </button>
+      }
+      @if (deleting()) {
+        <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Deleting" />
+      }
+      <a
+        mat-button
+        class="whitespace-nowrap"
+        [routerLink]="deleting() ? null : '/employees'"
+        [attr.aria-disabled]="deleting()"
+      >
+        Back to list
+      </a>
+    </div>
+  </div>
 }
