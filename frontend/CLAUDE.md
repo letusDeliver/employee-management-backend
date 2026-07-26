@@ -1068,3 +1068,89 @@ automation tool available in this environment) — worth a quick manual
 check (multi-tab logout → attempt an action in the stale tab → confirm
 one clear "session expired" toast, no duplicate raw-message toast) next
 time the app is run interactively.)_
+
+_(Design System — Phase 2 (Application) — 2026-07-26. Rolls out every
+Phase 1 primitive (`docs/design-system.md` §7) across the 8 screens
+Phase 1 deliberately shipped with zero consumers: Landing, Dashboard,
+Account, Users, and Employees (List, Detail, Form, Documents dialog).
+Full Theory → Architecture → Action Plan sequence run before any code,
+per the standing 8-phase workflow; scope was explicitly presentation-
+only throughout - no Store/Service/DTO/routing/guard/interceptor change
+anywhere in the whole rollout.
+
+**Git workflow changed mid-rollout, at the user's explicit request**: a
+separate branch per screen (`design-system/<screen>`), cut from `main`
+(which was already fast-forward-identical to `frontend` at the time),
+each tested live in the browser and approved before its own `--ff-only`
+merge to `main` - a deliberate, one-off departure from this file's
+single-long-lived-`frontend`-branch convention, scoped to this rollout.
+
+**Two real structural decisions, not just class swaps**, both flagged
+and approved before implementation:
+1. Every static `<mat-card>` (Dashboard's profile card, Account,
+   Employee Detail, Employee Form) was replaced with a plain
+   `<div class="surface-card">` - Material's default `raised` `mat-card`
+   appearance renders a shadow unconditionally, which was silently
+   violating the border-means-static/shadow-means-interactive rule
+   (`docs/design-system.md` §4) on every one of these purely static
+   cards. Dashboard's clickable nav tiles became `.surface-card-interactive`
+   real `<a [routerLink]>` elements instead (kept native/keyboard-focusable
+   by construction, not an ARIA workaround).
+2. `EmployeeToolbarComponent` lost its permission-gated "New Employee"
+   button entirely - relocated into `EmployeeListPageComponent`'s new
+   `PageHeaderComponent` `[pageHeaderActions]` slot, the same place every
+   other screen's page-level action now lives. The toolbar is purely the
+   filter form now, dropping its `SessionStore`/`MatButtonModule`/
+   `RouterLink` dependencies.
+
+**A third, smaller consistency decision**: Users' empty state moved from
+inside `UserTableComponent`'s `*matNoDataRow` (a raw `<td>` message) to
+the page level in `UserListPageComponent`, hiding the table and showing
+`EmptyStateComponent` instead - matching Employees' identical pattern
+(both list screens now distinguish "no data at all" from "no matches for
+the current search/filters" with the same shared component, not two
+different empty-state conventions for near-identical screens).
+
+**No design-system component API changes were needed anywhere** - every
+screen's real markup, checked against all six components' actual
+`.ts` inputs/outputs/content-projection slots before writing any
+template code, mapped cleanly onto an existing contract. Confirms
+Phase 1's six components were sized correctly on the first attempt.
+
+**One real bug found via live verification, not code review**: after
+replacing Employee Detail's `<mat-card>` with `.surface-card`, "Back to
+list" wrapped onto a second line - `.surface-card`'s `p-6` padding is a
+few pixels wider than `mat-card`'s old internal default, just enough to
+tip that one flex row over. Fixed with `whitespace-nowrap` on the link,
+caught by the user's own screenshot, not anticipated in the Action Plan.
+
+**Closing Design Consistency Audit** (`docs/design-system.md` §11): a
+full grep across every migrated screen for `mat-card`, ad-hoc Tailwind
+text-size classes, `bg-warn`/`role="alert"` hand-rolled banners, and bare
+empty-state text found exactly one straggler - the Documents dialog's
+"Uploading…" status span had kept a leftover `text-sm` class while every
+sibling inline-spinner status text elsewhere (including its own
+"Loading…") is unstyled; removed for consistency. Login/Register still
+use `mat-card` and their own established inline-only error convention -
+confirmed as **intentionally out of scope** (never part of the approved
+migration order, and Login/Register's inline-error pattern was already a
+deliberate, documented choice since Feature 2/the redesign pass), not a
+miss.
+
+`ng build`/`ng lint`/`ng test` clean after every one of the 9 commits
+(8 screens + the audit fix). Every screen was manually verified live in
+the browser by the user (responsive, keyboard, token-discipline per the
+dark-mode-deferred decision below) before its commit was merged - the
+one place in this project's history where that per-screen verification
+loop is fully documented turn-by-turn rather than summarized after the
+fact. See `docs/design-system.md`'s updated status line for the closing
+state.
+
+**Dark-mode scope was clarified before work began, not assumed**: since
+`_material-theme.scss` hardcodes `color-scheme: light` with no dark
+palette anywhere yet (dark mode is `docs/design-system.md` §9's own
+separate future "roadmap Phase 4"), "verify dark-mode compatibility"
+for this rollout was scoped to a token-discipline check only - confirming
+every color/spacing value traces to a Sass token or `--mat-sys-*` role,
+never a hardcoded hex/px - rather than an actual visual dark-theme
+toggle, which doesn't exist to check against yet.)_

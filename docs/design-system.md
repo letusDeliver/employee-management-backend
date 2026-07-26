@@ -1,11 +1,15 @@
 # Design System
 
-**Status:** Phase 1 (Foundation) complete — tokens, primitives, and shared components
-exist and compile cleanly, but are not yet wired into any screen. Phase 2 (Application)
-rolls them out across Landing, Dashboard, Users, Employees, Account, and shared
-components; see [`../frontend/CLAUDE.md`](../frontend/CLAUDE.md)'s Progress Log for
-status and [`frontend-architecture-blueprint.md`](./frontend-architecture-blueprint.md)
-§13/§14 for how this relates to the app's Material/Tailwind theming.
+**Status:** Phase 1 (Foundation) and Phase 2 (Application) both complete — every
+primitive in §7 is wired into Landing, Dashboard, Account, Users, and Employees
+(list/detail/form/documents dialog), verified screen-by-screen in a live browser.
+The closing Design Consistency Audit (§11) found and fixed one straggler; see
+[`../frontend/CLAUDE.md`](../frontend/CLAUDE.md)'s Progress Log for the full account.
+Login/Register intentionally remain outside this rollout (their own established
+mat-card/inline-error convention, never part of the approved migration scope) —
+noted as known follow-up work, not a defect. See
+[`frontend-architecture-blueprint.md`](./frontend-architecture-blueprint.md) §13/§14
+for how this relates to the app's Material/Tailwind theming.
 
 This document is the frontend's internal design system: the reusable visual language
 every current and future feature inherits from, so a new feature never has to invent a
