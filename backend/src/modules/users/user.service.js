@@ -30,11 +30,46 @@ export const attachPermissions = async (sanitizedUser, roles) => {
   return { ...sanitizedUser, permissions };
 };
 
-const listUsers = async () => {
-  const users = await userRepository.findAll();
-  const roleNamesByUserId = await rbacRepository.getRoleNamesForUsers(users.map((user) => user.id));
+const buildUserWhere = ({ search, role }) => {
+  const where = {};
 
-  return users.map((user) => sanitizeUser(user, roleNamesByUserId.get(user.id) ?? []));
+  if (search) {
+    where.OR = [
+      { name: { contains: search, mode: 'insensitive' } },
+      { email: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+
+  if (role) {
+    where.userRoles = { some: { role: { name: role } } };
+  }
+
+  return where;
+};
+
+const listUsers = async (query) => {
+  const { page, limit, sortBy, order, ...filters } = query;
+  const where = buildUserWhere(filters);
+
+  // A trailing `id` tiebreaker keeps ordering deterministic across pages,
+  // same reasoning as employee.service.js's listEmployees.
+  const [users, total] = await Promise.all([
+    userRepository.findAll({
+      where,
+      orderBy: [{ [sortBy]: order }, { id: 'asc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    userRepository.count(where),
+  ]);
+
+  const roleNamesByUserId = await rbacRepository.getRoleNamesForUsers(users.map((user) => user.id));
+  const sanitized = users.map((user) => sanitizeUser(user, roleNamesByUserId.get(user.id) ?? []));
+
+  return {
+    users: sanitized,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
 };
 
 // A fixed, deterministic public_id (not a fresh one per upload) combined
