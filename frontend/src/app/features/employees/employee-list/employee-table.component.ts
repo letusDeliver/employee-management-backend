@@ -3,7 +3,9 @@ import { Component, inject, input, output } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { PageEvent } from '@angular/material/paginator';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { Sort } from '@angular/material/sort';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
 
 import { SessionStore } from '../../../core/auth/session.store';
@@ -34,6 +36,8 @@ import { Employee } from '../data-access/employee.model';
     RouterLink,
     MatButtonModule,
     MatIconModule,
+    MatProgressSpinnerModule,
+    MatTooltipModule,
   ],
   templateUrl: './employee-table.component.html',
   styleUrl: './employee-table.component.scss',
@@ -46,9 +50,11 @@ export class EmployeeTableComponent {
   readonly rows = input.required<Employee[]>();
   readonly loading = input(false);
   readonly pagination = input.required<Paginated>();
+  readonly deletingIds = input<ReadonlySet<string>>(new Set());
 
   readonly pageChange = output<PageEvent>();
   readonly sortChange = output<Sort>();
+  readonly deleteRequested = output<Employee>();
 
   protected readonly columns: ColumnDef[] = [
     { key: 'department', header: 'Department', sortable: true },

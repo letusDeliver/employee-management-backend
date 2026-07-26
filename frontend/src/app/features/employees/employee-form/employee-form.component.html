@@ -6,68 +6,70 @@
     <span>Loading...</span>
   </div>
 } @else {
-  <mat-card class="max-w-lg">
+  <mat-card class="mx-auto max-w-2xl">
     <mat-card-content>
       <form [formGroup]="form" (ngSubmit)="submit()" class="flex flex-col gap-2">
-        <mat-form-field>
-          <mat-label>Department</mat-label>
-          <input matInput formControlName="department" />
-          @if (form.controls.department.invalid && form.controls.department.touched) {
-            <mat-error>Department is required.</mat-error>
-          }
-        </mat-form-field>
+        <div class="grid gap-x-4 gap-y-1 sm:grid-cols-2">
+          <mat-form-field class="w-full">
+            <mat-label>Department</mat-label>
+            <input matInput formControlName="department" />
+            @if (form.controls.department.invalid && form.controls.department.touched) {
+              <mat-error>Department is required.</mat-error>
+            }
+          </mat-form-field>
 
-        <mat-form-field>
-          <mat-label>Job Title</mat-label>
-          <input matInput formControlName="jobTitle" />
-          @if (form.controls.jobTitle.invalid && form.controls.jobTitle.touched) {
-            <mat-error>Job title is required.</mat-error>
-          }
-        </mat-form-field>
+          <mat-form-field class="w-full">
+            <mat-label>Job Title</mat-label>
+            <input matInput formControlName="jobTitle" />
+            @if (form.controls.jobTitle.invalid && form.controls.jobTitle.touched) {
+              <mat-error>Job title is required.</mat-error>
+            }
+          </mat-form-field>
 
-        <mat-form-field>
-          <mat-label>Salary</mat-label>
-          <input matInput type="text" inputmode="decimal" formControlName="salary" />
-          @if (form.controls.salary.hasError('required') && form.controls.salary.touched) {
-            <mat-error>Salary is required.</mat-error>
-          } @else if (form.controls.salary.hasError('notANumber') && form.controls.salary.touched) {
-            <mat-error>Enter a valid number (e.g. 85000 or 85000.50).</mat-error>
-          } @else if (form.controls.salary.hasError('notPositive') && form.controls.salary.touched) {
-            <mat-error>Salary must be a positive number.</mat-error>
-          } @else if (form.controls.salary.hasError('tooLarge') && form.controls.salary.touched) {
-            <mat-error>Salary seems unreasonably high - double-check this value.</mat-error>
-          }
-        </mat-form-field>
+          <mat-form-field class="w-full">
+            <mat-label>Salary</mat-label>
+            <input matInput type="text" inputmode="decimal" formControlName="salary" />
+            @if (form.controls.salary.hasError('required') && form.controls.salary.touched) {
+              <mat-error>Salary is required.</mat-error>
+            } @else if (form.controls.salary.hasError('notANumber') && form.controls.salary.touched) {
+              <mat-error>Enter a valid number (e.g. 85000 or 85000.50).</mat-error>
+            } @else if (form.controls.salary.hasError('notPositive') && form.controls.salary.touched) {
+              <mat-error>Salary must be a positive number.</mat-error>
+            } @else if (form.controls.salary.hasError('tooLarge') && form.controls.salary.touched) {
+              <mat-error>Salary seems unreasonably high - double-check this value.</mat-error>
+            }
+          </mat-form-field>
 
-        <mat-form-field>
-          <mat-label>Date of Joining</mat-label>
-          <input matInput [matDatepicker]="picker" formControlName="dateOfJoining" />
-          <mat-datepicker-toggle matIconSuffix [for]="picker" />
-          <mat-datepicker #picker />
-          @if (form.controls.dateOfJoining.hasError('required') && form.controls.dateOfJoining.touched) {
-            <mat-error>Date of joining is required.</mat-error>
-          } @else if (form.controls.dateOfJoining.hasError('futureDate') && form.controls.dateOfJoining.touched) {
-            <mat-error>Date of joining cannot be in the future.</mat-error>
-          }
-        </mat-form-field>
+          <mat-form-field class="w-full">
+            <mat-label>Date of Joining</mat-label>
+            <input matInput [matDatepicker]="picker" formControlName="dateOfJoining" />
+            <mat-datepicker-toggle matIconSuffix [for]="picker" />
+            <mat-datepicker #picker />
+            @if (form.controls.dateOfJoining.hasError('required') && form.controls.dateOfJoining.touched) {
+              <mat-error>Date of joining is required.</mat-error>
+            } @else if (form.controls.dateOfJoining.hasError('futureDate') && form.controls.dateOfJoining.touched) {
+              <mat-error>Date of joining cannot be in the future.</mat-error>
+            }
+          </mat-form-field>
 
-        <mat-form-field>
-          <mat-label>Linked user ID (optional)</mat-label>
-          <input matInput formControlName="userId" />
-          @if (form.controls.userId.hasError('invalidUuid') && form.controls.userId.touched) {
-            <mat-error>Must be a valid UUID.</mat-error>
-          }
-        </mat-form-field>
+          <mat-form-field class="w-full">
+            <mat-label>Linked user ID (optional)</mat-label>
+            <input matInput formControlName="userId" />
+            @if (form.controls.userId.hasError('invalidUuid') && form.controls.userId.touched) {
+              <mat-error>Must be a valid UUID.</mat-error>
+            }
+          </mat-form-field>
 
-        <mat-form-field>
-          <mat-label>Manager's employee ID (optional)</mat-label>
-          <input matInput formControlName="managerId" />
-          @if (form.controls.managerId.hasError('selfManaged') && form.controls.managerId.touched) {
-            <mat-error>An employee cannot be their own manager.</mat-error>
-          } @else if (form.controls.managerId.hasError('invalidUuid') && form.controls.managerId.touched) {
-            <mat-error>Must be a valid UUID.</mat-error>
-          }
-        </mat-form-field>
+          <mat-form-field class="w-full">
+            <mat-label>Manager's employee ID (optional)</mat-label>
+            <input matInput formControlName="managerId" />
+            @if (form.controls.managerId.hasError('selfManaged') && form.controls.managerId.touched) {
+              <mat-error>An employee cannot be their own manager.</mat-error>
+            } @else if (form.controls.managerId.hasError('invalidUuid') && form.controls.managerId.touched) {
+              <mat-error>Must be a valid UUID.</mat-error>
+            }
+          </mat-form-field>
+        </div>
 
         @if (serverError(); as message) {
           <div class="mb-2 flex items-center gap-2 rounded-md bg-warn p-3 text-on-warn" role="alert">
@@ -76,7 +78,13 @@
           </div>
         }
 
-        <div class="mt-2 flex items-center gap-2">
+        <div class="mt-2 flex items-center justify-end gap-2">
+          @if (submitting()) {
+            <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Saving" />
+          }
+          <a mat-stroked-button [routerLink]="submitting() ? null : '/employees'" [attr.aria-disabled]="submitting()">
+            Cancel
+          </a>
           <button
             mat-flat-button
             color="primary"
@@ -85,12 +93,6 @@
           >
             {{ isEditMode ? 'Save Changes' : 'Create Employee' }}
           </button>
-          <a mat-stroked-button [routerLink]="submitting() ? null : '/employees'" [attr.aria-disabled]="submitting()">
-            Cancel
-          </a>
-          @if (submitting()) {
-            <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Saving" />
-          }
         </div>
       </form>
     </mat-card-content>

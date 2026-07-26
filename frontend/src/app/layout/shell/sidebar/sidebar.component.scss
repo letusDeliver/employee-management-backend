@@ -1,4 +1,39 @@
+// See header.component.scss for why this is Sass interpolation, not var(--color-*).
+@use '../../../../styles/tokens';
+
 :host {
   display: block;
   width: 240px;
+}
+
+// Both the hover state-layer and .active-nav-item render as a rounded pill with zero
+// gap between consecutive items by default, so hovering the item directly above (or
+// below) the active one visually merges the two pills together.
+mat-nav-list a {
+  margin-block: 2px;
+}
+
+// The class was already being toggled by routerLinkActive since Feature 2 — this rule
+// never existed, so there was previously no visual way to tell which section of the
+// app you were in. CSS custom properties inherit through the real DOM regardless of
+// Angular's view-encapsulation scoping attributes, so overriding
+// --mat-list-list-item-* here reaches MatListItem's internal elements without needing
+// ::ng-deep.
+.active-nav-item {
+  position: relative;
+  --mat-list-list-item-label-text-color: #{tokens.$color-on-primary-container};
+  --mat-list-list-item-leading-icon-color: #{tokens.$color-on-primary-container};
+  background-color: #{tokens.$color-primary-container};
+  border-radius: #{tokens.$radius-sm};
+}
+
+.active-nav-item::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: var(--radius-full);
+  background-color: #{tokens.$color-primary};
 }

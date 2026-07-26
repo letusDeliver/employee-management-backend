@@ -1,3 +1,36 @@
+// See header.component.scss for why this is Sass interpolation, not var(--color-*).
+@use '../../../styles/tokens';
+
+// --mat-sys-surface and --mat-sys-background are the same generated hex in this
+// theme (confirmed in the compiled CSS) - the sidenav container/content/header all
+// rendered one indistinguishable tone with only a 1px border between them. Using
+// M3's own surface-container ladder instead of inventing a gray, and confirmed
+// against the real default: mat-card's default `raised` appearance already maps to
+// `surface-container-low` (checked in card/_m3-card.scss), so the canvas below it
+// has to sit one step further down (`surface-container`) for cards to actually lift
+// off the page rather than blend into it - chrome (surface, brightest) frames a
+// recessed canvas (surface-container), and default cards (surface-container-low)
+// sit visibly between the two with zero per-card overrides needed.
+//
+// container-shape is also flattened to 0: M3's default `corner-large` (rounded)
+// shape on the sidenav clipped a rounded corner that let the content canvas's
+// different tone show through as a curved diagonal artifact where the two met -
+// confirmed by cross-referencing sidenav/_m3-sidenav.scss's base token map, not
+// guessed from the visual alone. Flat corners also match this app's "hairline
+// border over shadow/rounding" chrome language - radius stays reserved for cards.
 mat-sidenav-container {
   min-height: 0;
+  --mat-sidenav-content-background-color: var(--mat-sys-surface-container);
+  --mat-sidenav-container-background-color: var(--mat-sys-surface);
+  --mat-sidenav-container-shape: 0;
+}
+
+mat-sidenav {
+  border-inline-end: 1px solid #{tokens.$color-neutral-90};
+}
+
+.breadcrumb-bar {
+  padding: 10px 16px;
+  background-color: var(--mat-sys-surface);
+  border-bottom: 1px solid #{tokens.$color-neutral-90};
 }

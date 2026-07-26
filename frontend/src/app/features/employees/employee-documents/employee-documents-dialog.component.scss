@@ -1,3 +1,17 @@
 :host {
   display: block;
 }
+
+// A plain Tailwind `.flex` utility class on <mat-dialog-content> lost a cascade-order
+// fight against Material's own structural display rule for the element (confirmed by
+// the upload dropzone and the first document row rendering with zero gap despite
+// `gap-3` being present - gap has no effect on a non-flex container). A scoped
+// element-type selector here is one specificity level higher than a bare class, so it
+// wins unconditionally instead of depending on stylesheet concatenation order.
+mat-dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+}

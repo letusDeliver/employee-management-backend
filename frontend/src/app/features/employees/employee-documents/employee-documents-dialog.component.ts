@@ -4,6 +4,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MAT_DIALOG_DATA, MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatTooltipModule } from '@angular/material/tooltip';
 
 import { SessionStore } from '../../../core/auth/session.store';
 import { ConfirmDialogComponent } from '../../../shared/components/confirm-dialog/confirm-dialog.component';
@@ -29,7 +30,15 @@ const DOCUMENT_MAX_SIZE_BYTES = 10 * 1024 * 1024;
  */
 @Component({
   selector: 'app-employee-documents-dialog',
-  imports: [MatDialogModule, MatButtonModule, MatIconModule, MatProgressSpinnerModule, DatePipe, FileUploadComponent],
+  imports: [
+    MatDialogModule,
+    MatButtonModule,
+    MatIconModule,
+    MatProgressSpinnerModule,
+    MatTooltipModule,
+    DatePipe,
+    FileUploadComponent,
+  ],
   templateUrl: './employee-documents-dialog.component.html',
   styleUrl: './employee-documents-dialog.component.scss',
 })

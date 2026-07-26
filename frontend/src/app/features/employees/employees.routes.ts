@@ -16,7 +16,10 @@ export const EMPLOYEES_ROUTES: Routes = [
     loadComponent: () =>
       import('./employee-list/employee-list-page.component').then((m) => m.EmployeeListPageComponent),
     canActivate: [permissionGuard],
-    data: { breadcrumb: 'Employees', permissions: ['employee:read:any'] },
+    // No breadcrumb here - the parent 'employees' route in app.routes.ts now
+    // owns that single crumb. Setting it here too would show "Employees >
+    // Employees" on the list page itself (both pointing at the same URL).
+    data: { permissions: ['employee:read:any'] },
   },
   {
     path: 'new',

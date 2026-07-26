@@ -1,3 +1,14 @@
 mat-form-field {
   width: 100%;
 }
+
+// Purely additive - adds breathing room after the card title regardless of
+// Material's own internal header/content padding, rather than trying to zero out
+// and replace an internal value.
+mat-card-header {
+  margin-bottom: 12px;
+}
+
+.auth-link {
+  font-weight: 500;
+}

@@ -6,6 +6,7 @@ import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
+import { MatTooltipModule } from '@angular/material/tooltip';
 
 import { AuthService } from '../../../core/auth/auth.service';
 import { ICON_NAMES } from '../../../shared/icon-names';
@@ -21,6 +22,7 @@ import { extractErrorMessage } from '../../../shared/utils/extract-error-message
     MatFormFieldModule,
     MatIconModule,
     MatInputModule,
+    MatTooltipModule,
   ],
   templateUrl: './login-page.component.html',
   styleUrl: './login-page.component.scss',

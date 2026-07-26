@@ -1,4 +1,4 @@
-<div class="flex min-h-full items-center justify-center p-4">
+<div class="flex flex-1 items-center justify-center p-4">
   <mat-card class="w-full max-w-sm">
     <mat-card-header>
       <mat-card-title>Sign in</mat-card-title>
@@ -39,6 +39,7 @@
             (click)="togglePasswordVisibility()"
             [attr.aria-label]="hidePassword() ? 'Show password' : 'Hide password'"
             [attr.aria-pressed]="!hidePassword()"
+            [matTooltip]="hidePassword() ? 'Show password' : 'Hide password'"
           >
             <mat-icon>{{ hidePassword() ? icons.visibility : icons.visibilityOff }}</mat-icon>
           </button>
@@ -52,7 +53,7 @@
         </button>
       </form>
 
-      <p class="mt-4 text-center">Don't have an account? <a routerLink="/register">Register</a></p>
+      <p class="mt-4 text-center">Don't have an account? <a routerLink="/register" class="auth-link">Register</a></p>
     </mat-card-content>
   </mat-card>
 </div>

@@ -2,6 +2,7 @@ import { LiveAnnouncer } from '@angular/cdk/a11y';
 import { Injectable, inject, signal } from '@angular/core';
 import { finalize } from 'rxjs';
 
+import { NotificationService } from '../../../core/notifications/notification.service';
 import { SessionStore } from '../../../core/auth/session.store';
 import { extractErrorMessage } from '../../../shared/utils/extract-error-message.util';
 import { AccountService } from './account.service';
@@ -20,6 +21,7 @@ export class AccountStore {
   private readonly accountService = inject(AccountService);
   private readonly sessionStore = inject(SessionStore);
   private readonly liveAnnouncer = inject(LiveAnnouncer);
+  private readonly notificationService = inject(NotificationService);
 
   readonly uploading = signal(false);
   readonly error = signal<string | null>(null);
@@ -37,6 +39,7 @@ export class AccountStore {
           // session user with this response, which lacks `permissions`.
           this.sessionStore.updateProfileImage(user.profileImageUrl, user.profileImagePublicId);
           this.liveAnnouncer.announce('Profile picture updated.');
+          this.notificationService.showSuccess('Profile picture updated.');
         },
         error: (error: unknown) => this.error.set(extractErrorMessage(error)),
       });
@@ -53,6 +56,7 @@ export class AccountStore {
         next: (user) => {
           this.sessionStore.updateProfileImage(user.profileImageUrl, user.profileImagePublicId);
           this.liveAnnouncer.announce('Profile picture removed.');
+          this.notificationService.showSuccess('Profile picture removed.');
         },
         error: (error: unknown) => this.error.set(extractErrorMessage(error)),
       });

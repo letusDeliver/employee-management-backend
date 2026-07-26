@@ -1,6 +1,7 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { Observable, finalize, tap } from 'rxjs';
 
+import { NotificationService } from '../../../core/notifications/notification.service';
 import { extractErrorMessage } from '../../../shared/utils/extract-error-message.util';
 import { Paginated } from '../../../shared/models/paginated.model';
 import { EmployeeDocument } from './employee-document.model';
@@ -28,6 +29,7 @@ const DEFAULT_PAGINATION: Paginated = { page: 1, limit: 10, total: 0, totalPages
 @Injectable({ providedIn: 'root' })
 export class EmployeeStore {
   private readonly employeeService = inject(EmployeeService);
+  private readonly notificationService = inject(NotificationService);
 
   readonly employees = signal<Employee[]>([]);
   readonly pagination = signal<Paginated>(DEFAULT_PAGINATION);
@@ -95,7 +97,10 @@ export class EmployeeStore {
 
   createEmployee(request: CreateEmployeeRequest): Observable<Employee> {
     return this.employeeService.create(request).pipe(
-      tap((employee) => this.employees.update((current) => [employee, ...current])),
+      tap((employee) => {
+        this.employees.update((current) => [employee, ...current]);
+        this.notificationService.showSuccess('Employee created successfully.');
+      }),
     );
   }
 
@@ -106,13 +111,17 @@ export class EmployeeStore {
         if (this.selected()?.id === id) {
           this.selected.set(employee);
         }
+        this.notificationService.showSuccess('Employee updated successfully.');
       }),
     );
   }
 
   deleteEmployee(id: string): Observable<void> {
     return this.employeeService.delete(id).pipe(
-      tap(() => this.employees.update((current) => current.filter((existing) => existing.id !== id))),
+      tap(() => {
+        this.employees.update((current) => current.filter((existing) => existing.id !== id));
+        this.notificationService.showSuccess('Employee deleted successfully.');
+      }),
     );
   }
 
@@ -141,7 +150,10 @@ export class EmployeeStore {
       .uploadDocument(employeeId, file)
       .pipe(finalize(() => this.documentUploading.set(false)))
       .subscribe({
-        next: (document) => this.documents.update((current) => [document, ...current]),
+        next: (document) => {
+          this.documents.update((current) => [document, ...current]);
+          this.notificationService.showSuccess('Document uploaded successfully.');
+        },
         error: (error: unknown) => this.documentsError.set(extractErrorMessage(error)),
       });
   }
@@ -162,7 +174,10 @@ export class EmployeeStore {
         ),
       )
       .subscribe({
-        next: () => this.documents.update((current) => current.filter((doc) => doc.id !== documentId)),
+        next: () => {
+          this.documents.update((current) => current.filter((doc) => doc.id !== documentId));
+          this.notificationService.showSuccess('Document deleted successfully.');
+        },
         error: (error: unknown) => this.documentsError.set(extractErrorMessage(error)),
       });
   }

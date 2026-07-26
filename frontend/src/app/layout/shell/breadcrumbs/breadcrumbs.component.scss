@@ -1,0 +1,37 @@
+// See header.component.scss for why this is Sass interpolation, not var(--color-*).
+@use '../../../../styles/tokens';
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.crumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.crumb a {
+  color: #{tokens.$color-neutral-50};
+  text-decoration: none;
+}
+
+.crumb a:hover {
+  color: #{tokens.$color-on-surface};
+  text-decoration: underline;
+}
+
+.crumb span[aria-current] {
+  color: #{tokens.$color-on-surface};
+  font-weight: 500;
+}
+
+.sep {
+  color: #{tokens.$color-neutral-70};
+}

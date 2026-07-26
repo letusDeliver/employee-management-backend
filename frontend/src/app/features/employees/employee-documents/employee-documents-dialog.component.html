@@ -1,6 +1,6 @@
 <h2 mat-dialog-title>Documents</h2>
 
-<mat-dialog-content class="flex max-h-[60vh] flex-col gap-3 overflow-y-auto">
+<mat-dialog-content>
   @if (sessionStore.hasAnyPermission('employee:update:any')) {
     <app-file-upload
       [accept]="documentAccept"
@@ -56,7 +56,13 @@
             @if (employeeStore.deletingDocumentIds().has(document.id)) {
               <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Deleting document" />
             } @else {
-              <button mat-icon-button type="button" (click)="confirmDelete(document)" aria-label="Delete document">
+              <button
+                mat-icon-button
+                type="button"
+                (click)="confirmDelete(document)"
+                aria-label="Delete document"
+                matTooltip="Delete document"
+              >
                 <mat-icon>{{ icons.delete }}</mat-icon>
               </button>
             }

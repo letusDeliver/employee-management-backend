@@ -14,7 +14,11 @@ html {
         primary: theme-colors.$primary-palette,
         tertiary: theme-colors.$tertiary-palette,
       ),
-      typography: Roboto,
+      // Inter, not Roboto — applied to every Material component (buttons, menus,
+      // form-fields), not just custom chrome markup, so the whole app reads as one
+      // consistent typeface rather than a Roboto/Inter mismatch. Loaded via
+      // index.html's Google Fonts link, same mechanism Roboto already used.
+      typography: Inter,
       // -2: the most compact value supported by every Material component in this
       // library without being clamped (verified against clamp-density() call sites
       // across the component set — chips is the tightest at -2, others allow more).

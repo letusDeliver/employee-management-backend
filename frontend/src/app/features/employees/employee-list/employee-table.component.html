@@ -22,13 +22,38 @@
   </ng-template>
 
   <ng-template appDataTableCell="actions" let-row>
-    <a mat-icon-button [routerLink]="['/employees', row.id]" [attr.aria-label]="'View ' + row.jobTitle">
+    <a
+      mat-icon-button
+      [routerLink]="['/employees', row.id]"
+      [attr.aria-label]="'View ' + row.jobTitle"
+      matTooltip="View details"
+    >
       <mat-icon>{{ icons.description }}</mat-icon>
     </a>
     @if (sessionStore.hasAnyPermission('employee:update:any')) {
-      <a mat-icon-button [routerLink]="['/employees', row.id, 'edit']" [attr.aria-label]="'Edit ' + row.jobTitle">
+      <a
+        mat-icon-button
+        [routerLink]="['/employees', row.id, 'edit']"
+        [attr.aria-label]="'Edit ' + row.jobTitle"
+        matTooltip="Edit"
+      >
         <mat-icon>{{ icons.edit }}</mat-icon>
       </a>
+    }
+    @if (sessionStore.hasAnyPermission('employee:delete:any')) {
+      @if (deletingIds().has(row.id)) {
+        <mat-progress-spinner diameter="20" mode="indeterminate" [attr.aria-label]="'Deleting ' + row.jobTitle" />
+      } @else {
+        <button
+          mat-icon-button
+          type="button"
+          [attr.aria-label]="'Delete ' + row.jobTitle"
+          matTooltip="Delete"
+          (click)="deleteRequested.emit(row)"
+        >
+          <mat-icon>{{ icons.delete }}</mat-icon>
+        </button>
+      }
     }
   </ng-template>
 </app-data-table>

@@ -1204,11 +1204,39 @@ template is immediately recognizable as project code.
   Material's own spacing tokens apply; **between** layout regions/
   components, Tailwind's spacing scale applies. Never both inside the
   same element.
-- **Color system**: semantic roles (primary/accent/warn) defined once
-  in `_tokens.scss`, consumed by both Material's theme (automatically)
-  and Tailwind's config (referencing the same custom properties) — one
-  palette, two consumers, never two independent color definitions that
-  can drift apart.
+- **Color system**: semantic roles (primary/accent/warn, plus
+  **success/warning** added during the 2026-07-26 UI/UX redesign pass)
+  defined once in `_tokens.scss`, consumed by both Material's theme
+  (automatically) and Tailwind's config (referencing the same custom
+  properties) — one palette, two consumers, never two independent color
+  definitions that can drift apart. **Success/warning cannot be
+  generated the way primary/tertiary were** — confirmed by reading the
+  installed `@angular/material` theming source
+  (`core/theming/_definition.scss`'s `define-theme()`): the color config
+  it accepts only ever builds a palette map with `primary`/`secondary`/
+  `tertiary`/`neutral`/`neutral-variant`/`error` keys, no arbitrary
+  custom role. These two are hand-authored constants in `_tokens.scss`
+  instead, contrast-checked against known-accessible references (GitHub
+  Primer's success/attention colors), not `mat.theme()`-generated.
+- **`mat-toolbar`'s `color` input is dead under this app's M3 theme** —
+  confirmed straight from the installed component's own type
+  declaration ("This API is supported in M2 themes only, it has no
+  effect in M3 themes"). `color="primary"` was present on both toolbars
+  since Feature 1 doing nothing at all; the toolbar was always rendering
+  Material's M3 default (`surface`/`on-surface`), not brand blue. Removed
+  during the redesign pass as dead markup; any future toolbar
+  restyling should use `mat.toolbar-overrides()` or the M3 surface
+  hierarchy below, never the `color` input.
+- **M3's surface hierarchy is the deliberate mechanism for chrome vs.
+  canvas vs. card layering**, not an invented gray scale — confirmed
+  `--mat-sys-surface` and `--mat-sys-background` are the *same* compiled
+  hex in this theme, so Shell/Header/Sidebar/content-canvas all rendered
+  one indistinguishable tone until the redesign pass. `mat-card`'s
+  default `raised` appearance maps to `surface-container-low` (checked
+  in `card/_m3-card.scss`), which fixed the exact ladder: chrome
+  (`surface`, brightest) frames a recessed canvas (`surface-container`),
+  and default cards (`surface-container-low`) sit visibly between the
+  two with zero per-card overrides.
 
 ---
 
@@ -1235,6 +1263,19 @@ template is immediately recognizable as project code.
   per-component rewrite.
 - **Component styles** — templates default to Tailwind utility classes;
   `.component.scss` is the exception, not the default.
+- **Component-scoped SCSS must read tokens via Sass interpolation
+  (`@use '.../styles/tokens'; ... #{tokens.$color-x}`), never a raw
+  `var(--color-*)`/`var(--radius-*)` reference** — a real, systemic bug
+  found during the 2026-07-26 redesign pass: Tailwind's `@theme` custom
+  properties are only retained in the compiled global stylesheet if some
+  utility class using them is scanned from that *same* stylesheet;
+  component-scoped styles live in a separately bundled JS chunk the
+  global-CSS minifier can't see into, so any theme token referenced only
+  from a component's own SCSS (`--color-neutral-90`, `--radius-sm`,
+  `--color-primary-container`, etc.) was silently dead-code-eliminated
+  from `:root` — confirmed by inspecting the actual compiled production
+  CSS, not assumed. `--mat-sys-*` tokens (Material's own, not Tailwind's)
+  are unaffected and safe to reference directly with `var()`.
 
 ---
 

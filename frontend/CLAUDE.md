@@ -809,3 +809,140 @@ salary cap) were additionally verified live via direct `curl` calls
 against the running server, not just inferred from reading the schema.
 See `backend/CLAUDE.md`'s matching entries for the two small backend
 validation corrections this pass also required.)_
+
+_(UI/UX redesign pass — design tokens, Shell chrome, forms, toasts,
+tooltips — 2026-07-26. Not a numbered feature; a full audit + design
+system proposal (mood board, color/type/spacing/elevation/radius
+system, component library, screen-by-screen plan) was presented and
+approved before any code changed, then implemented in slices through
+the full 8-phase workflow, with every fix live-verified in the browser
+against the user's own screenshots rather than assumed from code
+review. See `docs/frontend-architecture-blueprint.md`'s §13/§14
+amendments for the standing rules this pass established.
+
+**Design tokens** (`styles/_tokens.scss`, `styles.scss`, `styles/
+_material-theme.scss`, `index.html`): the M3 neutral palette (already
+generated from the #1E56A0 seed, hue-correct, just never exposed) is
+now surfaced as a real `$color-neutral-{10..99}` step scale; genuinely
+new `success`/`warning` roles were hand-authored (M3 has no such system
+role — confirmed by reading `@angular/material`'s actual `define-theme()`
+source, not assumed) and contrast-checked against known-accessible
+references; typography moved from Roboto to Inter, applied through
+`mat.theme()` itself so Material's own components and hand-authored
+markup share one face, not two.
+
+**Shell chrome** (Header/Sidebar/Footer/Breadcrumbs, both layouts):
+removed `mat-toolbar`'s `color="primary"` — dead markup, confirmed via
+the installed component's own type declaration that `color` has zero
+effect under an M3 theme; the toolbar was always rendering M3's default
+`surface`/`on-surface`. Real, previously-invisible bug fixed: `sidebar.
+component.html` had toggled a `.active-nav-item` class via
+`routerLinkActive` since Feature 2 with **no matching CSS rule ever
+existing** — there was no way to tell which page you were on. Fixed
+with a real rule plus `[attr.aria-current]="rla.isActive ? 'page' :
+null"` so the state isn't color-only (WCAG 1.4.1). A second real,
+compounding bug in the same area: `--mat-sys-surface` and `--mat-sys-
+background` are the *identical* compiled hex in this theme, so Shell's
+header/sidebar/content-canvas all rendered one indistinguishable tone;
+fixed using M3's real surface-container ladder (chrome at `surface`,
+canvas at `surface-container`, default `mat-card`'s `raised` appearance
+already at `surface-container-low` in between) rather than an invented
+gray — and `mat-sidenav`'s default rounded `corner-large` shape was
+flattened to 0, since it was clipping a rounded corner that let the
+canvas's different tone bleed through as a diagonal artifact where the
+two met, caught from a live screenshot and root-caused against
+`sidenav/_m3-sidenav.scss`, not guessed at visually.
+
+**The single most-repeated bug this pass**: component-scoped SCSS
+referencing a Tailwind `@theme` custom property via `var(--color-*)`/
+`var(--radius-*)` silently lost the property in production — confirmed
+by inspecting compiled output, not assumed. Tailwind only retains an
+`@theme` token in the compiled global stylesheet if some utility class
+using it is scanned from that *same* stylesheet; component styles live
+in a separately bundled JS chunk the minifier can't see into. This broke
+the sidebar's active-item highlight, the sidebar/header/breadcrumb
+borders, and the footer color — all silently, all at once — until every
+affected component-scoped stylesheet was switched to `@use '.../styles/
+tokens'` + `#{tokens.$color-x}` Sass-time interpolation instead of a
+runtime `var()` lookup. `--mat-sys-*` tokens (Material's own) are
+unaffected and remain safe to reference directly.
+
+**Breadcrumbs**: `EMPLOYEES_ROUTES`' 4 routes (`''`, `'new'`, `':id'`,
+`':id/edit'`) are flat siblings, never nested under each other, so
+`/employees/new` had no "Employees" ancestor in the route tree at all
+for `BreadcrumbsComponent`'s walk to find — not a rendering bug, a
+route-data placement bug. Fixed by moving the `breadcrumb: 'Employees'`
+data from the inner list route to the outer `path: 'employees'`
+loadChildren wrapper in `app.routes.ts`, the one real ancestor all four
+share.
+
+**Auth pages** (Login/Register): the card's vertical centering depended
+on a `min-h-full` (percentage-height) chain across three nested
+components (`PublicLayoutComponent` → its content wrapper → the page's
+own root) - replaced with pure flex-grow (`flex-1` at every level)
+end to end, which doesn't depend on any ancestor's height resolving as
+"definite." Added breathing room between the card title and the first
+field (`mat-card-header { margin-bottom: 12px }` — purely additive, not
+reverse-engineered against Material's own internal padding), and
+`font-weight: 500` on the "Register"/"Sign in" inline links.
+
+**Employee form**: fields regrouped into a responsive 2-column grid
+(`grid sm:grid-cols-2`, card widened to `max-w-2xl`), submit buttons
+moved to a right-aligned `justify-end` row with Cancel before the
+primary action — matching `ConfirmDialogComponent`'s own established
+`align="end"` button order, not a new convention. Account/Employee
+Detail/Employee Form cards all gained `mx-auto` for horizontal centering
+(Dashboard's profile card deliberately excluded — it sits above a
+full-width card grid as one composition, and centering just the top
+card would look disjointed against the grid below it).
+
+**Employees list**: a delete action was added to `EmployeeTableComponent`
+via a `deleteRequested` output — the table stays presentational,
+`EmployeeListPageComponent` (already the owner of all list state) opens
+`ConfirmDialogComponent` and calls `EmployeeStore.deleteEmployee`, then
+tracks in-flight ids the same `Set<string>` way `deletingDocumentIds`
+already does for document deletes. The list's own error banner (still
+the old unstyled `<p>` from before the edge-case pass) was standardized
+to the same `bg-warn` pattern while in the area.
+
+**Documents dialog**: the upload dropzone and the first document row
+had zero visible gap despite `gap-3` on their flex parent — root cause
+was `<mat-dialog-content>`'s plain Tailwind `.flex` utility class losing
+a cascade-order fight against Material's own structural display rule for
+the element. Fixed with a scoped element-type selector
+(`mat-dialog-content { display: flex; ... }` in the component's own
+SCSS), one specificity level above a bare class, so it wins
+unconditionally rather than depending on stylesheet concatenation order.
+
+**Toasts**: `NotificationService` gained `showSuccess`/`showWarning`
+alongside the pre-existing `showError` (which was the *only* method it
+had — there was no success/warning feedback channel anywhere in the
+app). Wired into `EmployeeStore` (create/update/delete/document
+upload/document delete), `AccountStore` (profile picture upload/
+remove, right next to the existing `LiveAnnouncer` call), and
+`RegisterPageComponent` (account creation). Login deliberately excluded
+(instant redirect, high-frequency action — a toast would be noise, not
+signal). `AccountService`'s two profile-picture calls had their
+`SKIP_GLOBAL_ERROR_NOTIFICATION` context removed so their errors now
+also toast, in addition to the existing inline message — Employees'
+mutations were already toasting errors automatically via
+`errorInterceptor` (it was never suppressed there), which is likely why
+only the *missing success* half of this was actually visible before now.
+Login/Register's own inline-only error convention (explicitly documented
+since Feature 2) was deliberately left untouched — a toast next to an
+already-visible inline banner on a frequent, multi-field auth form would
+be redundant, unlike the single-action mutations above.
+
+**Tooltips**: added to every icon-only control app-wide (header's menu
+toggle and account menu, the Employees table's view/edit/delete row
+actions, the documents dialog's delete button, Login/Register's
+password visibility toggle) — deliberately not added to controls that
+already show a visible text label next to their icon (Edit/Delete/
+Documents buttons on the detail page, etc.), where a tooltip would just
+repeat what's already on screen.
+
+`ng build`/`ng lint`/`ng test` clean throughout every slice; every fix
+was verified against the user's own live screenshots, not assumed
+correct from the diff alone. See
+`docs/frontend-architecture-blueprint.md`'s §13/§14 amendments for the
+standing rules recorded from this pass.)_

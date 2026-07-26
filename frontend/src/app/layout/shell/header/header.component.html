@@ -1,9 +1,12 @@
-<mat-toolbar color="primary">
-  <button mat-icon-button (click)="menuToggle.emit()" aria-label="Toggle navigation">
+<mat-toolbar class="app-toolbar">
+  <button mat-icon-button (click)="menuToggle.emit()" aria-label="Toggle navigation" matTooltip="Toggle navigation">
     <mat-icon>{{ icons.menu }}</mat-icon>
   </button>
 
-  <span class="ml-2">Employee Management System</span>
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <span class="brand-name">Employee Management System</span>
+  </div>
 
   <span class="flex-1"></span>
 
@@ -12,6 +15,7 @@
       mat-icon-button
       [matMenuTriggerFor]="userMenu"
       [attr.aria-label]="'Account menu for ' + currentUser.name"
+      matTooltip="Account menu"
     >
       <mat-icon>{{ icons.accountCircle }}</mat-icon>
     </button>

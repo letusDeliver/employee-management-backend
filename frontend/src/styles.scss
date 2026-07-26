@@ -47,6 +47,29 @@
   --color-on-surface: #{tokens.$color-on-surface};
   --color-outline: #{tokens.$color-outline};
 
+  --color-neutral-10: #{tokens.$color-neutral-10};
+  --color-neutral-20: #{tokens.$color-neutral-20};
+  --color-neutral-30: #{tokens.$color-neutral-30};
+  --color-neutral-40: #{tokens.$color-neutral-40};
+  --color-neutral-50: #{tokens.$color-neutral-50};
+  --color-neutral-60: #{tokens.$color-neutral-60};
+  --color-neutral-70: #{tokens.$color-neutral-70};
+  --color-neutral-80: #{tokens.$color-neutral-80};
+  --color-neutral-90: #{tokens.$color-neutral-90};
+  --color-neutral-95: #{tokens.$color-neutral-95};
+  --color-neutral-98: #{tokens.$color-neutral-98};
+  --color-neutral-99: #{tokens.$color-neutral-99};
+
+  --color-success: #{tokens.$color-success};
+  --color-on-success: #{tokens.$color-on-success};
+  --color-success-container: #{tokens.$color-success-container};
+  --color-on-success-container: #{tokens.$color-on-success-container};
+
+  --color-warning: #{tokens.$color-warning};
+  --color-on-warning: #{tokens.$color-on-warning};
+  --color-warning-container: #{tokens.$color-warning-container};
+  --color-on-warning-container: #{tokens.$color-on-warning-container};
+
   --spacing: #{tokens.$spacing-unit};
 
   --radius-sm: #{tokens.$radius-sm};

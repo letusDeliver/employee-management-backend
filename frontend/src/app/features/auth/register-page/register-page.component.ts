@@ -6,8 +6,10 @@ import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
+import { MatTooltipModule } from '@angular/material/tooltip';
 
 import { AuthService } from '../../../core/auth/auth.service';
+import { NotificationService } from '../../../core/notifications/notification.service';
 import { ICON_NAMES } from '../../../shared/icon-names';
 import { extractErrorMessage } from '../../../shared/utils/extract-error-message.util';
 
@@ -21,6 +23,7 @@ import { extractErrorMessage } from '../../../shared/utils/extract-error-message
     MatFormFieldModule,
     MatIconModule,
     MatInputModule,
+    MatTooltipModule,
   ],
   templateUrl: './register-page.component.html',
   styleUrl: './register-page.component.scss',
@@ -29,6 +32,7 @@ export class RegisterPageComponent {
   private readonly formBuilder = inject(FormBuilder);
   private readonly authService = inject(AuthService);
   private readonly router = inject(Router);
+  private readonly notificationService = inject(NotificationService);
 
   protected readonly icons = ICON_NAMES;
   protected readonly hidePassword = signal(true);
@@ -61,7 +65,10 @@ export class RegisterPageComponent {
       // replaceUrl: a successful registration should remove '/register'
       // from history, not leave it behind for the browser Back button to
       // return to.
-      next: () => this.router.navigateByUrl('/dashboard', { replaceUrl: true }),
+      next: () => {
+        this.notificationService.showSuccess('Account created successfully. Welcome!');
+        this.router.navigateByUrl('/dashboard', { replaceUrl: true });
+      },
       error: (error: unknown) => {
         this.submitting.set(false);
         this.serverError.set(extractErrorMessage(error, 'Unable to create your account. Please try again.'));

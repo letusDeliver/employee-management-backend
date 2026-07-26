@@ -1,9 +1,14 @@
 @if (breadcrumbs().length) {
   <nav aria-label="Breadcrumb">
-    <ol class="flex items-center gap-2 text-sm">
-      @for (crumb of breadcrumbs(); track crumb.url) {
-        <li>
-          <a [routerLink]="crumb.url">{{ crumb.label }}</a>
+    <ol class="crumbs">
+      @for (crumb of breadcrumbs(); track crumb.url; let isLast = $last) {
+        <li class="crumb">
+          @if (isLast) {
+            <span aria-current="page">{{ crumb.label }}</span>
+          } @else {
+            <a [routerLink]="crumb.url">{{ crumb.label }}</a>
+            <span class="sep" aria-hidden="true">&rsaquo;</span>
+          }
         </li>
       }
     </ol>

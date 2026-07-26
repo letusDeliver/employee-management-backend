@@ -118,3 +118,7 @@ Employees needed the same name-lookup capability). `shared/components/
 - [x] Feature 4 — Account: self-service profile view, profile picture upload/delete
 - [x] Feature 5 — Users: admin-only, read-only user list (search + client-side sort)
 - [x] Feature 6 — Employees: full CRUD, documents, first real `DataTableComponent`
+- [x] UI/UX redesign pass — design tokens (neutral ramp, success/warning
+      roles, Inter typography), Shell chrome, form/card layout
+      consistency, toast notifications, tooltips (enhancement-phase, not
+      a numbered feature — see `frontend/CLAUDE.md`'s matching entry)

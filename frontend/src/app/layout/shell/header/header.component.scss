@@ -1,0 +1,35 @@
+// Sass-time interpolation, not var(--color-neutral-90): a global-stylesheet minifier
+// dead-code-eliminates any Tailwind @theme custom property that's never referenced by
+// an actual utility class inside the global stylesheet itself — component-scoped
+// styles live in a separate bundled stylesheet it can't see into, so var(--color-*)
+// tokens only ever used here were silently stripped from :root. Confirmed by
+// inspecting the compiled production CSS, not assumed.
+@use '../../../../styles/tokens';
+
+// mat-toolbar's `color` input has no effect under this app's M3 theme (confirmed via
+// the installed component's own type declaration) — it already renders as neutral
+// surface/on-surface. The one real gap was separation from the content below it.
+.app-toolbar {
+  border-bottom: 1px solid #{tokens.$color-neutral-90};
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: 8px;
+}
+
+.brand-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: #{tokens.$radius-sm};
+  background: #{tokens.$color-primary};
+  flex: none;
+}
+
+.brand-name {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-size: 15px;
+}

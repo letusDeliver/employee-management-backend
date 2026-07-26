@@ -56,6 +56,13 @@ export const routes: Routes = [
       {
         path: 'employees',
         loadChildren: () => import('./features/employees/employees.routes').then((m) => m.EMPLOYEES_ROUTES),
+        // EMPLOYEES_ROUTES' 4 routes ('', 'new', ':id', ':id/edit') are flat
+        // siblings, not nested under each other - this wrapper is the only real
+        // ancestor they share, so it's the one place a parent "Employees" crumb
+        // can live for New/Detail/Edit. Without it, BreadcrumbsComponent's walk
+        // down the ActivatedRoute tree hits the matched leaf directly with no
+        // "Employees" node above it to find.
+        data: { breadcrumb: 'Employees' },
       },
     ],
   },

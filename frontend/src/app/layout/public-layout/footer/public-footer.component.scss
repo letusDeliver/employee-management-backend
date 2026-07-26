@@ -1,0 +1,7 @@
+// See header.component.scss for why this is Sass interpolation, not var(--color-*).
+@use '../../../../styles/tokens';
+
+footer {
+  color: #{tokens.$color-neutral-50};
+  font-size: 12px;
+}

@@ -7,6 +7,9 @@
 // exactly one place, `_theme-colors.scss`. They're plain Sass variables (not a second
 // set of CSS custom properties) so the `@theme` block below is the only runtime
 // definition point, avoiding a self-referencing custom property.
+@use 'sass:map';
+@use './theme-colors';
+
 $color-primary: var(--mat-sys-primary);
 $color-on-primary: var(--mat-sys-on-primary);
 $color-primary-container: var(--mat-sys-primary-container);
@@ -26,11 +29,60 @@ $color-surface: var(--mat-sys-surface);
 $color-on-surface: var(--mat-sys-on-surface);
 $color-outline: var(--mat-sys-outline);
 
+// Neutral ramp — the full M3 neutral scale already exists inside
+// `_theme-colors.scss`'s generated palette (hue derived from the #1E56A0 seed, so it's
+// already a cool blue-gray, not an invented value); it was just never exposed as
+// reusable steps. Surfaced here as real values (not `--mat-sys-*` aliases, since M3
+// only names a handful of neutral roles, not a full step scale) for borders,
+// secondary text, hover/disabled states, and anywhere a gray is needed that isn't one
+// of Material's own named roles.
+$_neutral: map.get(theme-colors.$primary-palette, neutral);
+$color-neutral-10: map.get($_neutral, 10);
+$color-neutral-20: map.get($_neutral, 20);
+$color-neutral-30: map.get($_neutral, 30);
+$color-neutral-40: map.get($_neutral, 40);
+$color-neutral-50: map.get($_neutral, 50);
+$color-neutral-60: map.get($_neutral, 60);
+$color-neutral-70: map.get($_neutral, 70);
+$color-neutral-80: map.get($_neutral, 80);
+$color-neutral-90: map.get($_neutral, 90);
+$color-neutral-95: map.get($_neutral, 95);
+$color-neutral-98: map.get($_neutral, 98);
+$color-neutral-99: map.get($_neutral, 99);
+
+// Success & warning — genuinely new roles. M3 has no "success"/"warning" system color
+// (only primary/secondary/tertiary/error/neutral — confirmed by reading the installed
+// `@angular/material` theming source, `core/theming/_definition.scss`'s
+// `define-theme()`, which only ever builds a palette map with those five keys), so
+// these can't be generated the way primary/tertiary were. Hand-authored, contrast-
+// checked against both their container and solid-fill usage (WCAG AA, ≥4.5:1 for
+// normal text): success tones ~ GitHub Primer's accessible green, warning tones ~
+// Primer's accessible amber — chosen for verified-safe contrast, not picked by eye.
+$color-success: #157f3d;
+$color-on-success: #ffffff;
+$color-success-container: #d6f5de;
+$color-on-success-container: #063d1d;
+
+$color-warning: #9a6700;
+$color-on-warning: #ffffff;
+$color-warning-container: #fff3d6;
+$color-on-warning-container: #5c3d00;
+
 // Spacing — Tailwind v4's numeric utilities (`p-4`, `gap-2`, ...) are all multiples of
 // one base unit; this is that base, defined explicitly rather than left as Tailwind's
 // unexamined default (which happens to be the same value). Used between layout
 // regions/components (§13) — never inside a Material component, which relies on
 // Material's own internal spacing.
+//
+// Named step intent (all real Tailwind utilities at this base, e.g. `p-4` = 16px):
+// 4  (p-1)  — icon/text micro-gap
+// 8  (p-2)  — inline group gap (button + label, toolbar items)
+// 12 (p-3)  — control-internal padding
+// 16 (p-4)  — card/section padding
+// 24 (p-6)  — gap between sibling cards
+// 32 (p-8)  — gap between page sections
+// 48 (p-12) — gap between major page regions
+// 64 (p-16) — hero/marketing breathing room (Landing only)
 $spacing-unit: 0.25rem;
 
 // Radii — for bespoke, non-Material elements only.

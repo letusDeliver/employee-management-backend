@@ -1,7 +1,7 @@
 <h1 class="mb-4 text-2xl font-medium">Account</h1>
 
 @if (sessionStore.user(); as user) {
-  <mat-card class="max-w-lg">
+  <mat-card class="mx-auto max-w-lg">
     <mat-card-header>
       <mat-card-title>Your profile</mat-card-title>
     </mat-card-header>
@@ -42,10 +42,16 @@
       </div>
 
       @if (rejectionError(); as message) {
-        <p class="text-sm" role="alert">{{ message }}</p>
+        <div class="flex items-center gap-2 rounded-md bg-warn p-3 text-on-warn" role="alert">
+          <mat-icon>{{ icons.error }}</mat-icon>
+          <span>{{ message }}</span>
+        </div>
       }
       @if (accountStore.error(); as message) {
-        <p class="text-sm" role="alert">{{ message }}</p>
+        <div class="flex items-center gap-2 rounded-md bg-warn p-3 text-on-warn" role="alert">
+          <mat-icon>{{ icons.error }}</mat-icon>
+          <span>{{ message }}</span>
+        </div>
       }
 
       <dl class="flex flex-col gap-2">
