@@ -1,0 +1,37 @@
+// Elevation & surface system (design-system Phase 1, see docs/design-system.md). One
+// rule governs every card in the app: a border means static, a shadow means
+// interactive — never both on the same element. Built from the `elevation-1/3` and
+// neutral-border tokens already defined in `_tokens.scss` (previously unused).
+//
+// Dialogs, menus, and the Shell's own hairline chrome are deliberately untouched here —
+// Material's own M3 defaults are already correct for the former, and the chrome
+// language is its own separate, already-shipped convention.
+@use './tokens';
+
+.surface-card {
+  background-color: var(--mat-sys-surface-container-low);
+  border: 1px solid #{tokens.$color-neutral-90};
+  border-radius: #{tokens.$radius-lg};
+}
+
+.surface-card-interactive {
+  background-color: var(--mat-sys-surface-container-low);
+  border-radius: #{tokens.$radius-lg};
+  box-shadow: #{tokens.$elevation-1};
+  cursor: pointer;
+  @include tokens.motion-safe(
+    box-shadow #{tokens.$motion-duration-standard} #{tokens.$motion-easing-standard},
+    transform #{tokens.$motion-duration-standard} #{tokens.$motion-easing-standard}
+  );
+
+  &:hover,
+  &:focus-visible {
+    box-shadow: #{tokens.$elevation-3};
+    transform: translateY(-2px);
+  }
+
+  &:focus-visible {
+    outline: 2px solid #{tokens.$color-primary};
+    outline-offset: 2px;
+  }
+}

@@ -96,3 +96,74 @@ $radius-full: 9999px;
 $elevation-1: 0 1px 2px 0 rgb(0 0 0 / 15%), 0 1px 3px 1px rgb(0 0 0 / 10%);
 $elevation-2: 0 1px 2px 0 rgb(0 0 0 / 15%), 0 2px 6px 2px rgb(0 0 0 / 10%);
 $elevation-3: 0 4px 8px 3px rgb(0 0 0 / 10%), 0 1px 3px 0 rgb(0 0 0 / 20%);
+
+// Typography scale (design-system Phase 1) — a small, named set of roles, each a real
+// flat Sass variable rather than a map, matching this file's existing style. Consumed
+// exclusively by `_typography.scss`'s authored `.ds-*` classes, never referenced via
+// `var()` from component-scoped SCSS — these are Sass-time values, not CSS custom
+// properties, so the Tailwind `@theme` tree-shaking hazard documented above (and in
+// blueprint §14) never applies to them. Weights are restricted to 400/600/700 —
+// exactly the Inter static weights loaded in `index.html` — so the browser never has
+// to fall back to nearest-match or synthetic bold for a weight that isn't loaded.
+$type-display-size: 34px;
+$type-display-weight: 700;
+$type-display-line-height: 1.2;
+$type-display-tracking: -0.02em;
+
+$type-h1-size: 24px; // page title — replaces the repeated `text-2xl font-medium`
+$type-h1-weight: 600;
+$type-h1-line-height: 1.3;
+$type-h1-tracking: -0.01em;
+
+$type-h2-size: 18px; // section title
+$type-h2-weight: 600;
+$type-h2-line-height: 1.35;
+$type-h2-tracking: -0.005em;
+
+$type-h3-size: 15px; // card/subsection title
+$type-h3-weight: 600;
+$type-h3-line-height: 1.4;
+
+$type-body-size: 14px; // default copy
+$type-body-weight: 400;
+$type-body-line-height: 1.55;
+
+$type-caption-size: 12.5px; // secondary/meta text
+$type-caption-weight: 400;
+$type-caption-line-height: 1.4;
+
+$type-label-size: 12px; // form/field labels
+$type-label-weight: 600;
+$type-label-line-height: 1.3;
+$type-label-tracking: 0.01em;
+
+$type-overline-size: 11px; // eyebrows, kickers
+$type-overline-weight: 700;
+$type-overline-line-height: 1.3;
+$type-overline-tracking: 0.08em;
+
+// Motion (design-system Phase 1) — a small, named set of durations/easings so timing is
+// never a per-component judgment call. Dialogs/menus deliberately excluded: Material's
+// own M3 defaults are already correct there and should never be overridden.
+$motion-duration-fast: 120ms; // hover/focus state-layer tints
+$motion-duration-standard: 150ms; // card lift, icon-button transitions
+$motion-duration-route: 200ms; // route transitions
+$motion-easing-standard: cubic-bezier(0.2, 0, 0, 1); // M3 "standard" easing
+
+// Wraps any transition in a `prefers-reduced-motion` guard so that rule is never
+// hand-copied per component — under `reduce`, the transition is removed entirely and
+// the state change (color, shadow, transform) still applies, just instantly.
+@mixin motion-safe($transitions...) {
+  transition: $transitions;
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+}
+
+// Icon sizing (design-system Phase 1) — codifies the scale so a `<mat-icon>`'s size is
+// never a per-instance guess. `$icon-size-md` matches `mat-icon`'s own Material default
+// (24px) — defined explicitly anyway so every size in the scale has one visible name.
+$icon-size-sm: 20px; // inline with text/buttons
+$icon-size-md: 24px; // card/list leading icon
+$icon-size-lg: 44px; // empty-state / illustrative icon

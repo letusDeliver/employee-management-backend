@@ -1,0 +1,70 @@
+@use '../../../../styles/tokens';
+
+:host {
+  display: block;
+}
+
+.skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skeleton-block {
+  border-radius: #{tokens.$radius-sm};
+  background: linear-gradient(
+    90deg,
+    #{tokens.$color-neutral-95} 25%,
+    #{tokens.$color-neutral-90} 37%,
+    #{tokens.$color-neutral-95} 63%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    background: #{tokens.$color-neutral-95};
+  }
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+.skeleton-text {
+  height: 14px;
+  width: 100%;
+}
+
+.skeleton-card {
+  height: 92px;
+  width: 100%;
+  border-radius: #{tokens.$radius-lg};
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.skeleton-row-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.skeleton-row-text {
+  height: 14px;
+  flex: 1;
+}
+
+.skeleton-row-text.short {
+  flex: 0 0 80px;
+}

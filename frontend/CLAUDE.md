@@ -946,3 +946,59 @@ was verified against the user's own live screenshots, not assumed
 correct from the diff alone. See
 `docs/frontend-architecture-blueprint.md`'s §13/§14 amendments for the
 standing rules recorded from this pass.)_
+
+_(Design System — Phase 1 (Foundation) — 2026-07-26. Not a numbered
+feature; follows directly from the UI/UX redesign pass above. A
+complete screen-by-screen UI/UX audit (Landing through Employees,
+shared components, feedback patterns) plus a 4-phase polish roadmap was
+presented and approved, then expanded at the user's explicit request
+into eight design-system foundations (typography, elevation/surface,
+component variants, motion, iconography, page layout, data display,
+accessibility) with component API guidelines, a dedicated design-system
+document, extensibility rules, and component acceptance criteria — all
+before any code changed. This entry is Phase 1 only: the system itself,
+built with **zero screens consuming it yet** (Phase 2, a separate future
+approval, wires it into Landing/Dashboard/Users/Employees/Account). See
+`docs/design-system.md` for the full system and
+`docs/frontend-architecture-blueprint.md`'s v10 revision note for how
+this is scoped against §9's premature-abstraction principle.
+
+**Tokens** (`styles/_tokens.scss`): added a typography scale (8 named
+roles — display/h1/h2/h3/body/caption/label/overline — restricted to
+font-weights 400/600/700, exactly the Inter static weights `index.html`
+now loads after adding 700 to the Google Fonts request), motion tokens
+(`$motion-duration-*`, `$motion-easing-standard`) plus a
+`motion-safe()` Sass mixin wrapping every transition in a
+`prefers-reduced-motion` guard, and an icon-size scale
+(`$icon-size-sm/md/lg`, 20/24/44px). All Sass variables, consumed only
+by real authored CSS classes (never `var()` from component-scoped
+SCSS) — the same tree-shaking-safe convention the redesign pass
+established for color tokens applies identically here.
+
+**New global partials**, all `@use`d into `styles.scss`'s composition
+root: `styles/_typography.scss` (`.ds-display` … `.ds-overline`),
+`styles/_surfaces.scss` (`.surface-card` / `.surface-card-interactive` —
+the border-means-static/shadow-means-interactive rule, built from the
+`elevation-1/3` tokens that already existed but were unused), and
+`styles/_icon-sizing.scss` (`.icon-sm/md/lg`). Verified by grepping the
+actual compiled `dist/` stylesheet for every new class, not assumed —
+all present.
+
+**Six new shared components** (`shared/components/`), each documented
+in `docs/design-system.md` §7 with its full Inputs/Outputs/Content-
+projection/Variant-strategy/Accessibility/Example contract:
+`PageHeaderComponent`, `SectionHeaderComponent`, `InlineBannerComponent`
+(`tone: 'error' | 'warning'`, optional Retry output — no `success` tone,
+since every success notification is a toast, never a banner),
+`EmptyStateComponent` (deferred three times across Features 3/5/6 per
+the blueprint's premature-abstraction principle, built now that Phase 2
+gives it real, imminent consumers), `LoadingSkeletonComponent`
+(`text`/`row`/`card` variants, shimmer respects `prefers-reduced-motion`
+by disabling the animation and falling back to a flat tint), and
+`AvatarComponent` (image → initials → icon fallback chain, `sm`/`md`
+sizes). All presentational — no `HttpClient`/Store/feature-model
+imports, matching `FileUploadComponent`/`DataTableComponent`'s existing
+precedent.
+
+`ng build`/`ng lint` both clean. Nothing wired into any feature screen
+yet — that is explicitly Phase 2's scope, not this one's.)_

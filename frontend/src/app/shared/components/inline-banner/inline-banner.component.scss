@@ -1,0 +1,32 @@
+@use '../../../../styles/tokens';
+
+:host {
+  display: block;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border-radius: #{tokens.$radius-md};
+}
+
+.banner-message {
+  flex: 1;
+}
+
+.banner button {
+  color: inherit;
+  --mdc-text-button-label-text-color: inherit;
+}
+
+.banner-error {
+  background-color: var(--mat-sys-error);
+  color: var(--mat-sys-on-error);
+}
+
+.banner-warning {
+  background-color: #{tokens.$color-warning};
+  color: #{tokens.$color-on-warning};
+}

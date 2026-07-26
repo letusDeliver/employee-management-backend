@@ -1,0 +1,47 @@
+@use '../../../../styles/tokens';
+
+:host {
+  display: inline-block;
+}
+
+.avatar {
+  border-radius: 50%;
+  background-color: #{tokens.$color-primary-container};
+  color: #{tokens.$color-on-primary-container};
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-weight: 600;
+  flex: none;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-sm {
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+}
+
+.avatar-sm mat-icon {
+  font-size: 18px;
+  width: 18px;
+  height: 18px;
+}
+
+.avatar-md {
+  width: 64px;
+  height: 64px;
+  font-size: 20px;
+}
+
+.avatar-md mat-icon {
+  font-size: 36px;
+  width: 36px;
+  height: 36px;
+}

@@ -1,0 +1,66 @@
+// Typography system (design-system Phase 1, see docs/design-system.md). Eight named
+// roles, authored as real CSS classes — not Tailwind `@theme` tokens — because they're
+// applied via literal class names in templates (`class="ds-h1"`), which are always
+// present in the compiled stylesheet regardless of which component happens to use them.
+// Referencing them via `var()` instead would hit the same dead-code-elimination hazard
+// documented in `_tokens.scss`/blueprint §14, so don't convert these into custom
+// properties later without re-checking that.
+//
+// Feature pages adopt these in place of one-off Tailwind text-size classes
+// (`text-2xl font-medium` etc.) as each screen is touched — see the design-system
+// roadmap's Phase 2, not a single bulk find-and-replace across the app.
+@use './tokens';
+
+.ds-display {
+  font-size: #{tokens.$type-display-size};
+  font-weight: #{tokens.$type-display-weight};
+  line-height: #{tokens.$type-display-line-height};
+  letter-spacing: #{tokens.$type-display-tracking};
+}
+
+.ds-h1 {
+  font-size: #{tokens.$type-h1-size};
+  font-weight: #{tokens.$type-h1-weight};
+  line-height: #{tokens.$type-h1-line-height};
+  letter-spacing: #{tokens.$type-h1-tracking};
+}
+
+.ds-h2 {
+  font-size: #{tokens.$type-h2-size};
+  font-weight: #{tokens.$type-h2-weight};
+  line-height: #{tokens.$type-h2-line-height};
+  letter-spacing: #{tokens.$type-h2-tracking};
+}
+
+.ds-h3 {
+  font-size: #{tokens.$type-h3-size};
+  font-weight: #{tokens.$type-h3-weight};
+  line-height: #{tokens.$type-h3-line-height};
+}
+
+.ds-body {
+  font-size: #{tokens.$type-body-size};
+  font-weight: #{tokens.$type-body-weight};
+  line-height: #{tokens.$type-body-line-height};
+}
+
+.ds-caption {
+  font-size: #{tokens.$type-caption-size};
+  font-weight: #{tokens.$type-caption-weight};
+  line-height: #{tokens.$type-caption-line-height};
+}
+
+.ds-label {
+  font-size: #{tokens.$type-label-size};
+  font-weight: #{tokens.$type-label-weight};
+  line-height: #{tokens.$type-label-line-height};
+  letter-spacing: #{tokens.$type-label-tracking};
+}
+
+.ds-overline {
+  font-size: #{tokens.$type-overline-size};
+  font-weight: #{tokens.$type-overline-weight};
+  line-height: #{tokens.$type-overline-line-height};
+  letter-spacing: #{tokens.$type-overline-tracking};
+  text-transform: uppercase;
+}

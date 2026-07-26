@@ -1,0 +1,23 @@
+// Icon sizing (design-system Phase 1, see docs/design-system.md). Apply directly to a
+// `<mat-icon>` element, e.g. `<mat-icon class="icon-lg">`. `mat-icon` sizes itself via
+// font-size + explicit width/height together, so all three are set here rather than
+// font-size alone.
+@use './tokens';
+
+.icon-sm {
+  font-size: #{tokens.$icon-size-sm};
+  width: #{tokens.$icon-size-sm};
+  height: #{tokens.$icon-size-sm};
+}
+
+.icon-md {
+  font-size: #{tokens.$icon-size-md};
+  width: #{tokens.$icon-size-md};
+  height: #{tokens.$icon-size-md};
+}
+
+.icon-lg {
+  font-size: #{tokens.$icon-size-lg};
+  width: #{tokens.$icon-size-lg};
+  height: #{tokens.$icon-size-lg};
+}

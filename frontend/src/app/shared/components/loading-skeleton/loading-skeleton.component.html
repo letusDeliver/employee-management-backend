@@ -1,0 +1,20 @@
+<div aria-hidden="true" class="skeleton-list">
+  @for (item of instances(count()); track $index) {
+    @switch (variant()) {
+      @case ('row') {
+        <div class="skeleton-row">
+          <span class="skeleton-block skeleton-row-icon"></span>
+          <span class="skeleton-block skeleton-row-text"></span>
+          <span class="skeleton-block skeleton-row-text short"></span>
+        </div>
+      }
+      @case ('card') {
+        <div class="skeleton-block skeleton-card"></div>
+      }
+      @default {
+        <div class="skeleton-block skeleton-text"></div>
+      }
+    }
+  }
+</div>
+<span class="sr-only">Loading…</span>

@@ -4,6 +4,9 @@
 // one palette, two consumers, never two independent definitions.
 @use './styles/material-theme';
 @use './styles/tokens';
+@use './styles/typography';
+@use './styles/surfaces';
+@use './styles/icon-sizing';
 
 @import 'tailwindcss';
 

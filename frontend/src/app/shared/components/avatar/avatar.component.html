@@ -1,0 +1,13 @@
+@if (imageUrl(); as url) {
+  <div class="avatar avatar-{{ size() }}">
+    <img [src]="url" [alt]="name() ? 'Profile picture for ' + name() : 'Profile picture'" />
+  </div>
+} @else {
+  <div class="avatar avatar-{{ size() }}" role="img" [attr.aria-label]="fallbackLabel()">
+    @if (initials(); as text) {
+      <span aria-hidden="true">{{ text }}</span>
+    } @else {
+      <mat-icon aria-hidden="true">{{ icons.accountCircle }}</mat-icon>
+    }
+  </div>
+}

@@ -1,0 +1,12 @@
+<div class="empty-state">
+  <div class="empty-state-icon">
+    <mat-icon class="icon-lg" aria-hidden="true">{{ icon() }}</mat-icon>
+  </div>
+  <h3 class="ds-h3">{{ title() }}</h3>
+  @if (description(); as text) {
+    <p class="ds-body empty-state-desc">{{ text }}</p>
+  }
+  <div class="empty-state-action">
+    <ng-content select="[emptyStateAction]" />
+  </div>
+</div>

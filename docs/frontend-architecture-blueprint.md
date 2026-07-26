@@ -188,6 +188,36 @@ handbook kept in sync, one commit per feature).
   `curl` round-trip against the live server, not the browser — fixed
   with a new `uuidValidator` (§11), mirroring the backend's own
   `z.string().uuid()` rule.
+- v10 (this revision) — enhancement-phase Design System, Phase 1 (Foundation).
+  Following the UI/UX redesign pass (§13/§14 amendments), a full design-system audit
+  and roadmap were produced and approved, then expanded at the user's request into
+  eight documented foundations (typography, elevation/surface, component variants,
+  motion, iconography, page layout, data display, accessibility) — now the frontend's
+  own `docs/design-system.md`, sibling to this blueprint. Phase 1 ships:
+  typography/motion/icon-sizing tokens in `_tokens.scss` plus their real CSS classes
+  (`_typography.scss`, `_surfaces.scss`, `_icon-sizing.scss`); and six new shared
+  components — `PageHeaderComponent`, `SectionHeaderComponent`,
+  `InlineBannerComponent`, `EmptyStateComponent`, `LoadingSkeletonComponent`,
+  `AvatarComponent` — see §2's folder tree and §10's naming table, both updated below.
+
+  **Recorded exception to §9's premature-abstraction principle:** every prior shared
+  component in this app (`FileUploadComponent`, `DataTableComponent`, and especially
+  `EmptyStateComponent`, deferred three times across Features 3/5/6) was built only
+  once a real, validated consumer existed. Phase 1 deliberately inverts that — all six
+  components above ship with **zero consumers**; Phase 2 wires them into Landing,
+  Dashboard, Users, Employees, and Account. This is an explicit, user-approved,
+  one-time exception scoped to this design-system rollout (see
+  `docs/design-system.md` §8's Extensibility Rules) — it does not relax §9's rule for
+  any future feature.
+
+  **Correction to §9's original "Reusable patterns" description:** `PageHeaderComponent`
+  was originally scoped there as "title + breadcrumb + a permission-gated primary
+  action slot." The breadcrumb clause predates `BreadcrumbsComponent`'s actual Feature-2
+  implementation (route-`data.breadcrumb`-driven, rendered globally by `ShellComponent`)
+  and was never reconciled with it. `PageHeaderComponent` as actually built in Phase 1
+  is title + description + action slot only — breadcrumbs stay exclusively
+  `BreadcrumbsComponent`'s responsibility. See `docs/design-system.md`'s
+  `PageHeaderComponent` catalog entry.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:
@@ -343,9 +373,12 @@ frontend/
 │   │   │   ├── components/
 │   │   │   │   ├── data-table/               # DataTableComponent — generic MatTable wrapper
 │   │   │   │   ├── page-header/              # PageHeaderComponent
+│   │   │   │   ├── section-header/           # SectionHeaderComponent (design system Phase 1)
+│   │   │   │   ├── inline-banner/            # InlineBannerComponent (design system Phase 1)
 │   │   │   │   ├── confirm-dialog/           # ConfirmDialogComponent
 │   │   │   │   ├── empty-state/              # EmptyStateComponent
 │   │   │   │   ├── loading-skeleton/         # LoadingSkeletonComponent
+│   │   │   │   ├── avatar/                   # AvatarComponent (design system Phase 1)
 │   │   │   │   └── file-upload/              # FileUploadComponent
 │   │   │   ├── directives/
 │   │   │   │   └── has-permission.directive.ts  # *appHasPermission / *appHasAnyPermission
@@ -999,8 +1032,10 @@ never actually returns.
   individual controls; that would be guessing at a format the backend
   doesn't actually guarantee.
 - **Reusable patterns** — a single `PageHeaderComponent` (title +
-  breadcrumb + a permission-gated primary action slot) used by every
-  feature-list page; a single `ConfirmDialogComponent` reused by every
+  optional description + a permission-gated primary action slot; see
+  the v10 revision note and `docs/design-system.md` for why breadcrumbs
+  are deliberately not part of it — that's `BreadcrumbsComponent`'s job)
+  used by every feature page; a single `ConfirmDialogComponent` reused by every
   destructive action across every feature.
 
 ---
@@ -1018,7 +1053,7 @@ kebab-case of the same name.
 | Presentational, domain-scoped | `<Domain><Purpose>Component` | `EmployeeFormComponent`, `EmployeeTableComponent`, `EmployeeToolbarComponent` |
 | Dialog content | `<Domain><Purpose>DialogComponent` | `EmployeeDocumentsDialogComponent` |
 | Drawer content | `<Domain><Purpose>DrawerComponent` | (reserved pattern; none exist yet) |
-| Domain-agnostic shared component | `<Purpose>Component` (no domain prefix) | `PageHeaderComponent`, `EmptyStateComponent`, `LoadingSkeletonComponent`, `ConfirmDialogComponent`, `DataTableComponent`, `FileUploadComponent` |
+| Domain-agnostic shared component | `<Purpose>Component` (no domain prefix) | `PageHeaderComponent`, `SectionHeaderComponent`, `InlineBannerComponent`, `EmptyStateComponent`, `LoadingSkeletonComponent`, `AvatarComponent`, `ConfirmDialogComponent`, `DataTableComponent`, `FileUploadComponent` |
 | Layout/shell chrome | `<Region>Component` | `HeaderComponent`, `SidebarComponent`, `FooterComponent`, `BreadcrumbsComponent`, `ShellComponent`, `PublicLayoutComponent` |
 | Store (§6) | `<Domain>Store` (service, not a component) | `EmployeeStore`, `SessionStore` |
 | Data-access service | `<Domain>Service` | `EmployeeService`, `AuthService` |

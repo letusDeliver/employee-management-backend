@@ -106,6 +106,11 @@ Employees needed the same name-lookup capability). `shared/components/
   authentication, API layer, UI architecture, naming conventions,
   styling, accessibility, performance, and the Feature Lifecycle/
   Definition of Done every feature follows.
+- **[`../docs/design-system.md`](../docs/design-system.md)** — the
+  visual-language design system: typography, color usage, elevation/
+  surface rules, the shared component catalog (Inputs/Outputs/Content
+  projection/Variants/Accessibility/Example per component), motion,
+  iconography, extensibility rules, and component acceptance criteria.
 - **[`../handbook/`](../handbook)** — one deep-dive chapter per
   completed feature (shared with the backend).
 
@@ -122,3 +127,12 @@ Employees needed the same name-lookup capability). `shared/components/
       roles, Inter typography), Shell chrome, form/card layout
       consistency, toast notifications, tooltips (enhancement-phase, not
       a numbered feature — see `frontend/CLAUDE.md`'s matching entry)
+- [x] Design System — Phase 1 (Foundation): typography/motion/icon-size
+      tokens, `.surface-card`/`.surface-card-interactive`, and six new
+      shared components (`PageHeaderComponent`, `SectionHeaderComponent`,
+      `InlineBannerComponent`, `EmptyStateComponent`,
+      `LoadingSkeletonComponent`, `AvatarComponent`) — see
+      [`../docs/design-system.md`](../docs/design-system.md)
+- [ ] Design System — Phase 2 (Application): wire Phase 1's system into
+      Landing, Dashboard, Users, Employees, and Account, ending with a
+      full design-consistency review

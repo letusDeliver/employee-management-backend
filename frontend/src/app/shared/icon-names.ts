@@ -13,6 +13,7 @@ export const ICON_NAMES = {
   visibility: 'visibility',
   visibilityOff: 'visibility_off',
   error: 'error',
+  warning: 'warning',
   people: 'people',
   security: 'security',
   description: 'description',

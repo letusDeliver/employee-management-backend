@@ -1,0 +1,11 @@
+<div class="page-header">
+  <div class="page-header-text">
+    <h1 class="ds-h1">{{ title() }}</h1>
+    @if (description(); as text) {
+      <p class="ds-body page-header-desc">{{ text }}</p>
+    }
+  </div>
+  <div class="page-header-actions">
+    <ng-content select="[pageHeaderActions]" />
+  </div>
+</div>
