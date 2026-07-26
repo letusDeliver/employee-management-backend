@@ -21,6 +21,13 @@ const authMiddleware = async (req, res, next) => {
     // precision, hence the *1000.
     const tokensValidAfter = await userRepository.getTokensValidAfter(payload.sub);
 
+    // `undefined` means the account behind this token no longer exists - a
+    // well-signed, unexpired token for a deleted user must not be trusted
+    // just because it predates a tokensValidAfter stamp that was never set.
+    if (tokensValidAfter === undefined) {
+      return next(new UnauthorizedError('Invalid or expired token'));
+    }
+
     if (tokensValidAfter && payload.iat * 1000 < tokensValidAfter.getTime()) {
       return next(new UnauthorizedError('Invalid or expired token'));
     }

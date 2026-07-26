@@ -808,3 +808,52 @@ identified and killed via `Get-CimInstance`/`Get-NetTCPConnection` before
 re-testing against a genuinely fresh process. `handbook/API_ENDPOINTS.md`'s
 `POST /auth/logout` entry updated (Purpose, Database Impact, Request
 Lifecycle, Testing Checklist sections).)_
+
+_(Token-validity edge-case pass — deleted-user access tokens — 2026-07-26.
+Not a numbered feature; a follow-up token-hardening request made
+alongside a matching frontend pass (see `frontend/CLAUDE.md`'s entry of
+the same date) to work through every "is this token actually still
+valid?" edge case, not just the multi-tab-logout one above.
+
+One real gap found by re-reading `authMiddleware` and
+`userRepository.getTokensValidAfter` line by line rather than assuming
+the previous fix was complete: `getTokensValidAfter` returned `null`
+both when a user has no `tokensValidAfter` stamped *and* when the user
+row doesn't exist at all — the two cases were indistinguishable, so a
+still-unexpired access token for a since-deleted user sailed straight
+through `authMiddleware` (no existence check anywhere in that path) and
+reached the controller/service layer, which only happens to reject it
+today because every current route ends up doing its own
+`req.user.id`-keyed DB lookup somewhere downstream. That's incidental,
+not a guarantee — any future route that trusts `req.user` without its
+own re-lookup (e.g. a list endpoint scoped by role/permission only,
+exactly like `GET /employees`) would have silently served a deleted
+user real data.
+
+**Fix**: `getTokensValidAfter` now returns `undefined` (not `null`) when
+the user no longer exists, and `authMiddleware` rejects with the same
+generic `"Invalid or expired token"` on `undefined` — no new message, no
+information disclosure about *why*.
+
+Verified live against a fresh dev server (the same orphaned-process
+quirk from the entry above recurred — five more stale `nodemon`
+processes plus the bare `node src/server.js` bound to port 3000 had
+accumulated from earlier sessions; all killed via `Get-CimInstance`
+before retesting): registered a throwaway user, promoted it to `ADMIN`
+directly via Prisma (no promote endpoint exists), logged in for a fresh
+token, confirmed `GET /employees` returned `200`, deleted the user row
+directly, then replayed the *same still-unexpired* token against
+`GET /employees` again — now a genuine `401` from `authMiddleware`
+itself (confirmed via the stack trace), not a downstream 403/404 from
+unrelated logic. `npm run lint` clean throughout.
+
+Deliberately left out of scope, surfaced to the user rather than
+silently fixed or silently skipped: refresh-token **reuse detection**.
+Today, replaying an already-rotated (used) refresh token just gets the
+same generic `401` `findValidByHash` already produces for any invalid
+token — there's no reuse-specific alarm that revokes the rest of that
+user's sessions, which is the standard mitigation against a stolen
+refresh token being replayed after the legitimate rotation already
+happened. No evidence this has ever fired in practice; flagged as a
+real, known gap for a future pass, not treated as in-scope of "the
+token stuff" the way the deleted-user gap was.)_

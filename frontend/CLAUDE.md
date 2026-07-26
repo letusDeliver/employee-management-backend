@@ -1002,3 +1002,69 @@ precedent.
 
 `ng build`/`ng lint` both clean. Nothing wired into any feature screen
 yet — that is explicitly Phase 2's scope, not this one's.)_
+
+_(Session-expiry messaging — token edge-case pass — 2026-07-26. Not a
+numbered feature; explicitly prioritized ahead of Design System Phase 2
+at the user's request, to work through every "the refresh token turned
+out to be invalid" edge case with a clear message instead of a raw
+backend string. Paired with a matching backend fix (see
+`backend/CLAUDE.md`'s entry of the same date) that closes a real,
+previously-unfixed gap: a deleted user's still-unexpired access token
+had no existence check anywhere in `authMiddleware`.
+
+**The core gap**: `refreshInterceptor`'s silent-refresh failure path
+cleared the session and redirected to `/login`, but then rethrew the
+raw `refreshError` — which `errorInterceptor` (downstream in the
+response chain) surfaced as a generic toast showing the backend's literal
+message (`"Invalid refresh token"`, `"Refresh token missing"`), not
+something a user could act on. Separately, `authGuard`/
+`redirectIfAuthenticatedGuard`'s own silent-restore failure (the hard-
+reload/deep-link case, which no interceptor ever sees) showed **no**
+message at all — a user whose refresh cookie died while the browser was
+closed just silently landed back on `/login` with no explanation.
+
+**Fix, centralized in `SessionStore`** rather than duplicated per call
+site: a persisted, non-sensitive `hadPriorSession()` flag (a bare
+localStorage boolean, never the token itself — blueprint §7's "never
+persist the token" rule is untouched) set on every successful
+`setSession()`, letting both guards distinguish "a returning visitor
+whose session genuinely expired" (show the message) from "a brand-new
+anonymous visitor on a deep link" (say nothing — showing an "expired"
+message here would be false, and this is by far the more common case).
+`forgetPriorSession()` clears it — called after that message is shown
+once (so it isn't repeated on every subsequent guarded navigation
+attempt in the same dead browser tab) and, separately, from
+`AuthService.logout()`'s `finalize` (an explicit logout is never
+"expired," and must not be mislabeled as one on the next guarded
+navigation).
+
+A second, independent signal, `sessionExpired` +
+`markSessionExpired()`, solves a real concurrency problem: several
+requests can 401 together (e.g. a page that fires 3 parallel calls right
+as the access token dies), all sharing `refreshInterceptor`'s single
+in-flight refresh (`shareReplay(1)`, pre-existing) — without dedup,
+each of the N failing requests would independently reach
+`errorInterceptor` and flash its own duplicate raw-message toast
+alongside the one friendly message. `markSessionExpired()` is a
+first-caller-wins guard (only the request that actually triggers the
+shared refresh shows the toast/navigates); `errorInterceptor` checks the
+same flag to skip its generic toast for every other request failing
+as a side effect of the identical expiry event. The flag resets on the
+next successful `setSession()`, so a later, genuinely new expiry can
+still trigger the flow again.
+
+`refreshInterceptor`'s redirect now also carries `returnUrl: router.url`
+(matching `authGuard`'s existing convention) so a mid-session expiry
+returns the user to what they were doing after they log back in, not
+just the dashboard.
+
+Verified via `ng build`/`ng lint` (both clean) and a live backend-side
+replay of the exact failure this messaging exists for (deleted user's
+still-unexpired token, deposited in `backend/CLAUDE.md`'s matching
+entry) — confirming the 401 this pass's frontend code reacts to is
+real, not hypothetical. The toast/redirect behavior itself was **not**
+independently verified in a running browser this pass (no browser-
+automation tool available in this environment) — worth a quick manual
+check (multi-tab logout → attempt an action in the stale tab → confirm
+one clear "session expired" toast, no duplicate raw-message toast) next
+time the app is run interactively.)_

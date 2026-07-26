@@ -70,7 +70,13 @@ export class AuthService {
   logout(): Observable<void> {
     return this.http.post<LogoutResponse>(`${this.baseUrl}/auth/logout`, {}).pipe(
       map(() => undefined),
-      finalize(() => this.sessionStore.clearSession()),
+      finalize(() => {
+        this.sessionStore.clearSession();
+        // An explicit logout is never "your session expired" - forget the
+        // persisted flag so a later visit to a protected/public route
+        // doesn't misreport a deliberate logout as an involuntary expiry.
+        this.sessionStore.forgetPriorSession();
+      }),
     );
   }
 
