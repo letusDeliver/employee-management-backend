@@ -1154,3 +1154,100 @@ for this rollout was scoped to a token-discipline check only - confirming
 every color/spacing value traces to a Sass token or `--mat-sys-*` role,
 never a hardcoded hex/px - rather than an actual visual dark-theme
 toggle, which doesn't exist to check against yet.)_
+
+_(Users — Server-Side Pagination, Sorting, Search, Role Filtering -
+2026-07-26, on the `frontend` branch (backend half on its own
+`feature/14-users-pagination-sorting-filtering`, merged to `main` first
+per the user's explicit branching choice, then fast-forwarded into
+`frontend`). Full Theory -> Architecture -> Action Plan discussion held
+before any code, including four explicit fork decisions the user made:
+(1) `GET /users` always paginates, with `UserDirectoryService` capped at
+`limit=100` rather than the endpoint growing a second unpaginated mode;
+(2) a `role` filter shipped alongside `search`; (3) the repeated page/
+sort/filter Store pattern gets extracted into a shared helper now, since
+Users is a real second consumer (not duplicated a second time); (4)
+default sort stays `createdAt desc`, consistent with Employees.
+
+Replaces `UsersStore`'s previous client-side `filteredUsers` computed()
+(a convenience filter over an array `GET /users` returned in full,
+explicitly documented at the time as "must never be read as the app
+supporting server-side search") now that the backend genuinely does
+search/filter/sort/pagination - `UsersStore` is Users' first real
+consumer of that capability, mirroring `EmployeeStore` (Feature 6)
+exactly.
+
+**New reusable abstraction**: `shared/utils/list-query-state.util.ts`
+(`createListQueryState<TQuery>`) - extracted from `EmployeeStore`'s
+hand-written `query`/`setPage`/`setSort`/`setFilters` signals now that a
+second real, validated consumer (`UsersStore`) exists, the exact
+threshold this project's own premature-abstraction principle names for
+when extraction stops being premature (blueprint §9). Deliberately
+framework-agnostic - no `HttpClient`/Router inside it; it owns only the
+query shape, the "any filter/sort change resets to page 1" rule, and a
+`setInitialQuery()` escape hatch for seeding from an external source
+(the URL). `EmployeeStore` itself was **not** touched this pass -
+migrating it to the shared helper is an easy, explicitly out-of-scope
+follow-up, not bundled in here.
+
+New `features/users/data-access/{user.model.ts, user.service.ts}` mirror
+`EmployeeService`'s shape exactly; `UsersStore` rewritten on top of the
+new helper. `UserTableComponent` (`features/users/user-list-page/`) was
+rebuilt from scratch on the shared `DataTableComponent` - Feature 6
+deliberately kept Users on its own client-side `MatTableDataSource`/
+`MatSort` implementation specifically *because* the backend had no
+server-side contract yet (blueprint's premature-abstraction principle,
+documented at the time); now that it does, Users becomes
+`DataTableComponent`'s second real consumer, exactly the event that
+doc predicted would trigger this migration. New `UserToolbarComponent`
+(debounced search + role filter) mirrors `EmployeeToolbarComponent`'s
+shape.
+
+**URL state synchronization is new capability, not something Employees
+already had** - confirmed by checking `EmployeeListPageComponent` first,
+which has no `ActivatedRoute`/`Router` involvement at all. Built at the
+page-component level, deliberately kept out of the Store/helper: on init,
+`UserListPageComponent` reads `page`/`limit`/`search`/`role`/`sortBy`/
+`order` from `ActivatedRoute`'s query params (validating `sortBy`/`order`
+against the same allowlist client-side, so a garbage/bookmarked URL
+falls back to defaults instead of breaking) and seeds the Store via
+`setInitialQuery()` before the first `loadList()`; every subsequent
+page/sort/filter change writes the current query back to the URL via
+`router.navigate([], { queryParams, replaceUrl: true })` -
+`replaceUrl: true` specifically so paging/sorting/typing doesn't spam the
+back-button history with one entry per interaction. `EmployeeStore`
+staying Router-free was a deliberate constraint that shaped this design,
+not an oversight - Stores in this app don't depend on Router, so URL sync
+lives in the component that already owns navigation concerns.
+
+**`core/users/user-directory.service.ts`'s one required change**: its
+`ensureLoaded()` call to `GET /users` now explicitly sends `limit=100`
+(the server's own max) instead of calling the endpoint bare - a bare call
+would now only return the first 10 users by default, silently starving
+Employees' name-resolution cache. Documented in the service's own doc
+comment as a named, honest cap (enrichment still degrades gracefully if
+ever exceeded, never breaks), not a silent assumption.
+
+**Two real bugs were found via the user's own live browser testing, not
+code review**: (1) the search field's `mat-form-field` had no explicit
+width, so Material's default width clipped the longer "Search by name or
+email" label (`EmployeeToolbarComponent`'s shorter "Search" label never
+exposed this) - first fixed with `w-full max-w-sm`, which over-corrected
+into a `block`-level element that pushed the Role field onto its own
+line inside the `flex` toolbar row; the actual fix was a fixed `w-72`,
+sized to fit the label without claiming the whole row. (2) The `role`
+filter used Prisma's case-sensitive `equals` server-side - `role=admin`
+matched nothing even though the field's underlying value (`ADMIN`) did;
+fixed on the backend (see `backend/CLAUDE.md`'s matching entry) and
+re-verified live directly in this app's own Role filter field afterward.
+
+Verified live in the browser end-to-end, turn-by-turn with the user
+(no browser-automation tool available in this environment, so every
+check was the user's own): pagination changing rows, sort headers
+flipping order, search and role filter narrowing results (debounced, not
+per-keystroke), a hard refresh on a non-default URL
+(`?page=2&sortBy=name&order=asc`-style) restoring that exact view instead
+of resetting, and - the one real regression risk this pass introduced -
+an Employees record's linked-user name still resolving correctly after
+`UserDirectoryService`'s `limit=100` change. `ng build`/`ng lint` clean
+throughout. See `backend/CLAUDE.md`'s matching entry for the server-side
+half of this pass, including the case-insensitive role-filter fix.)_

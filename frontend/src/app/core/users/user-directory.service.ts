@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
 import { Observable, finalize, map, of, shareReplay, tap } from 'rxjs';
 
@@ -57,7 +57,17 @@ export class UserDirectoryService {
     }
 
     if (!this.inFlight$) {
-      this.inFlight$ = this.http.get<UsersResponse>(`${this.baseUrl}/users`).pipe(
+      // limit=100 (the server's max) - GET /users now always paginates
+      // (Users Server-Side Pagination pass). This cache is meant to
+      // represent the whole directory for name-resolution, so it
+      // deliberately requests the largest page the API allows rather
+      // than the endpoint's own default of 10. A known, named cap: if
+      // this organization's registered-user count ever exceeds 100,
+      // resolution silently stops covering everyone - degrades honestly
+      // (a name just won't resolve), never breaks (blueprint's
+      // enrichment-must-never-be-a-dependency rule).
+      const params = new HttpParams().set('limit', 100);
+      this.inFlight$ = this.http.get<UsersResponse>(`${this.baseUrl}/users`, { params }).pipe(
         map(({ users }) => users),
         tap((users) => this.usersById.set(new Map(users.map((user) => [user.id, user])))),
         shareReplay(1),

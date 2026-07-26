@@ -121,7 +121,7 @@ Employees needed the same name-lookup capability). `shared/components/
 - [x] Feature 2 — Authentication: `SessionStore`, guards, interceptors, Login/Register, Shell, real Dashboard (welcome + profile card)
 - [x] Feature 3 — real Landing Page content, Dashboard quick-nav cards/widgets region
 - [x] Feature 4 — Account: self-service profile view, profile picture upload/delete
-- [x] Feature 5 — Users: admin-only, read-only user list (search + client-side sort)
+- [x] Feature 5 — Users: admin-only, read-only user list (search + client-side sort, later superseded — see below)
 - [x] Feature 6 — Employees: full CRUD, documents, first real `DataTableComponent`
 - [x] UI/UX redesign pass — design tokens (neutral ramp, success/warning
       roles, Inter typography), Shell chrome, form/card layout
@@ -133,6 +133,13 @@ Employees needed the same name-lookup capability). `shared/components/
       `InlineBannerComponent`, `EmptyStateComponent`,
       `LoadingSkeletonComponent`, `AvatarComponent`) — see
       [`../docs/design-system.md`](../docs/design-system.md)
-- [ ] Design System — Phase 2 (Application): wire Phase 1's system into
+- [x] Design System — Phase 2 (Application): wire Phase 1's system into
       Landing, Dashboard, Users, Employees, and Account, ending with a
       full design-consistency review
+- [x] Users — Server-Side Pagination, Sorting, Search, Role Filtering:
+      brings Users up to the same server-side list pattern Employees
+      established (Feature 6), replacing its original client-side
+      search/sort; also extracted the reusable `list-query-state.util.ts`
+      Store helper, this project's first shared abstraction validated by
+      a real second consumer (enhancement-phase, not a numbered feature —
+      see `frontend/CLAUDE.md`'s matching entry)

@@ -1,25 +1,23 @@
 <app-page-header title="Users" />
 
-<mat-form-field class="w-full max-w-sm" subscriptSizing="dynamic">
-  <mat-label>Search by name or email</mat-label>
-  <mat-icon matPrefix>{{ icons.search }}</mat-icon>
-  <input matInput [value]="usersStore.searchTerm()" (input)="onSearchChange($event)" />
-</mat-form-field>
+<app-user-toolbar [initialFilters]="initialFilters()" (filtersChange)="onFiltersChange($event)" />
 
-<div class="mt-4">
-  @if (usersStore.loading()) {
-    <mat-progress-spinner diameter="32" mode="indeterminate" aria-label="Loading users" />
-  } @else if (usersStore.error(); as message) {
-    <app-inline-banner tone="error" [message]="message" />
-  } @else if (usersStore.filteredUsers().length === 0) {
-    <app-empty-state
-      [icon]="icons.people"
-      [title]="usersStore.searchTerm() ? 'No users match your search' : 'No users yet'"
-      [description]="
-        usersStore.searchTerm() ? 'Try a different name or email.' : 'Registered users will appear here.'
-      "
-    />
-  } @else {
-    <app-user-table [rows]="usersStore.filteredUsers()" />
-  }
-</div>
+@if (usersStore.error(); as message) {
+  <app-inline-banner tone="error" [message]="message" />
+} @else if (!usersStore.loading() && usersStore.users().length === 0) {
+  <app-empty-state
+    [icon]="icons.people"
+    [title]="hasActiveFilters() ? 'No users match your filters' : 'No users yet'"
+    [description]="
+      hasActiveFilters() ? 'Try a different search or role.' : 'Registered users will appear here.'
+    "
+  />
+} @else {
+  <app-user-table
+    [rows]="usersStore.users()"
+    [loading]="usersStore.loading()"
+    [pagination]="usersStore.pagination()"
+    (pageChange)="onPageChange($event)"
+    (sortChange)="onSortChange($event)"
+  />
+}
