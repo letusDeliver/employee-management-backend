@@ -1,13 +1,15 @@
 import { DatePipe } from '@angular/common';
 import { Component, inject, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
-import { MatCardModule } from '@angular/material/card';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 
 import { SessionStore } from '../../core/auth/session.store';
+import { AvatarComponent } from '../../shared/components/avatar/avatar.component';
 import { FileUploadComponent } from '../../shared/components/file-upload/file-upload.component';
+import { InlineBannerComponent } from '../../shared/components/inline-banner/inline-banner.component';
+import { PageHeaderComponent } from '../../shared/components/page-header/page-header.component';
 import { ICON_NAMES } from '../../shared/icon-names';
 import { AccountStore } from './data-access/account.store';
 
@@ -25,12 +27,14 @@ const PROFILE_PICTURE_MAX_SIZE_BYTES = 5 * 1024 * 1024;
   selector: 'app-account-page',
   imports: [
     DatePipe,
-    MatCardModule,
     MatChipsModule,
     MatButtonModule,
     MatIconModule,
     MatProgressSpinnerModule,
     FileUploadComponent,
+    AvatarComponent,
+    InlineBannerComponent,
+    PageHeaderComponent,
   ],
   templateUrl: './account-page.component.html',
   styleUrl: './account-page.component.scss',
