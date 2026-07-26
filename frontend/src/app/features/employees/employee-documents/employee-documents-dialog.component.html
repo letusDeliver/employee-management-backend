@@ -20,16 +20,10 @@
   }
 
   @if (rejectionError(); as message) {
-    <div class="flex items-center gap-2 rounded-md bg-warn p-3 text-on-warn" role="alert">
-      <mat-icon>{{ icons.error }}</mat-icon>
-      <span>{{ message }}</span>
-    </div>
+    <app-inline-banner tone="error" [message]="message" />
   }
   @if (employeeStore.documentsError(); as message) {
-    <div class="flex items-center gap-2 rounded-md bg-warn p-3 text-on-warn" role="alert">
-      <mat-icon>{{ icons.error }}</mat-icon>
-      <span>{{ message }}</span>
-    </div>
+    <app-inline-banner tone="error" [message]="message" />
   }
 
   @if (employeeStore.documentsLoading()) {
@@ -38,7 +32,11 @@
       <span>Loading...</span>
     </div>
   } @else if (employeeStore.documents().length === 0 && !employeeStore.documentsError()) {
-    <p class="text-sm">No documents uploaded yet.</p>
+    <app-empty-state
+      [icon]="icons.description"
+      title="No documents yet"
+      description="Documents uploaded for this employee will appear here."
+    />
   } @else if (employeeStore.documents().length > 0) {
     <ul class="flex flex-col gap-2">
       @for (document of employeeStore.documents(); track document.id) {

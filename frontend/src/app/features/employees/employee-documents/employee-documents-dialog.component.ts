@@ -8,7 +8,9 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 
 import { SessionStore } from '../../../core/auth/session.store';
 import { ConfirmDialogComponent } from '../../../shared/components/confirm-dialog/confirm-dialog.component';
+import { EmptyStateComponent } from '../../../shared/components/empty-state/empty-state.component';
 import { FileUploadComponent } from '../../../shared/components/file-upload/file-upload.component';
+import { InlineBannerComponent } from '../../../shared/components/inline-banner/inline-banner.component';
 import { ICON_NAMES } from '../../../shared/icon-names';
 import { EmployeeDocument } from '../data-access/employee-document.model';
 import { EmployeeStore } from '../data-access/employee.store';
@@ -38,6 +40,8 @@ const DOCUMENT_MAX_SIZE_BYTES = 10 * 1024 * 1024;
     MatTooltipModule,
     DatePipe,
     FileUploadComponent,
+    InlineBannerComponent,
+    EmptyStateComponent,
   ],
   templateUrl: './employee-documents-dialog.component.html',
   styleUrl: './employee-documents-dialog.component.scss',
