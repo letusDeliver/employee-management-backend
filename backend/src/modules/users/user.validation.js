@@ -13,7 +13,7 @@ export const listUsersQuerySchema = z
       .meta({ example: 'jane', description: 'Matches name and email' }),
     // Free-string equality, not validated against the real Role table - an
     // unmatched value returns zero rows, same as Employees' department/
-    // jobTitle filters (employee.validation.js).
+    // designation filters (employee.validation.js).
     role: z.string().optional().meta({ example: 'ADMIN' }),
     sortBy: z.enum(SORTABLE_FIELDS).default('createdAt'),
     order: z.enum(['asc', 'desc']).default('desc'),

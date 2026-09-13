@@ -14,6 +14,7 @@ const actor = { id: null, ipAddress: '127.0.0.1' };
 const createdEmployeeIds = [];
 const createdBranchIds = [];
 let testDepartmentId;
+let testDesignationId;
 
 before(async () => {
   const user = await prisma.user.create({
@@ -25,13 +26,19 @@ before(async () => {
   });
   actor.id = user.id;
 
-  // Employee.departmentId is mandatory (docs/domain-department.md ADR-D07) -
-  // every fixture Employee created below needs a real Department to
-  // reference, even though this suite's actual subject is Branch.
+  // Employee.departmentId and Employee.designationId are both mandatory
+  // (docs/domain-department.md ADR-D07, docs/domain-designation.md ADR-DS07) -
+  // every fixture Employee created below needs a real Department and
+  // Designation to reference, even though this suite's actual subject is Branch.
   const department = await prisma.department.create({
     data: { name: `Branch Test Department ${RUN_ID}` },
   });
   testDepartmentId = department.id;
+
+  const designation = await prisma.designation.create({
+    data: { name: `Branch Test Designation ${RUN_ID}` },
+  });
+  testDesignationId = designation.id;
 });
 
 after(async () => {
@@ -43,6 +50,7 @@ after(async () => {
     await prisma.branch.deleteMany({ where: { id: { in: createdBranchIds } } });
   }
   await prisma.department.delete({ where: { id: testDepartmentId } });
+  await prisma.designation.delete({ where: { id: testDesignationId } });
   await prisma.user.delete({ where: { id: actor.id } });
   await prisma.$disconnect();
 });
@@ -51,7 +59,7 @@ const makeEmployee = async (branchId) => {
   const employee = await prisma.employee.create({
     data: {
       departmentId: testDepartmentId,
-      jobTitle: 'Test Engineer',
+      designationId: testDesignationId,
       salary: 1000,
       dateOfJoining: new Date(),
       branchId,
@@ -123,7 +131,7 @@ test('employee creation honors the branch assignability check', async () => {
   const employee = await employeeService.createEmployee(
     {
       departmentId: testDepartmentId,
-      jobTitle: 'Test Rep',
+      designationId: testDesignationId,
       salary: 2000,
       dateOfJoining: new Date(),
       branchId: activeBranch.id,
@@ -139,7 +147,7 @@ test('employee creation honors the branch assignability check', async () => {
       employeeService.createEmployee(
         {
           departmentId: testDepartmentId,
-          jobTitle: 'Test Rep 2',
+          designationId: testDesignationId,
           salary: 2000,
           dateOfJoining: new Date(),
           branchId: '00000000-0000-0000-0000-000000000000',

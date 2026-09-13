@@ -48,7 +48,7 @@ export const EmployeeSchema = z
     id: z.uuid().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
     userId: z.uuid().nullable().meta({ example: null }),
     departmentId: z.uuid().meta({ example: 'b1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5e' }),
-    jobTitle: z.string().meta({ example: 'Backend Engineer' }),
+    designationId: z.uuid().meta({ example: 'e1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5f' }),
     salary: z.string().meta({
       description: 'Prisma Decimal - serializes as a string, not a number',
       example: '85000.00',
@@ -83,6 +83,17 @@ export const DepartmentSchema = z
     updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
   })
   .meta({ id: 'Department' });
+
+export const DesignationSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'e1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    name: z.string().meta({ example: 'Backend Engineer' }),
+    code: z.string().nullable().meta({ example: 'SWE' }),
+    status: z.enum(['ACTIVE', 'INACTIVE']).meta({ example: 'ACTIVE' }),
+    createdAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+  })
+  .meta({ id: 'Designation' });
 
 export const EmployeeDocumentSchema = z
   .object({

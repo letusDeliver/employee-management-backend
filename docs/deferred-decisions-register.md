@@ -1,0 +1,149 @@
+---
+Document: Deferred Decisions Register
+Status: FINAL
+Date: 2026-07-28
+Covers: All 15 signed-off domains
+---
+
+# Deferred Decisions Register
+
+Every decision explicitly deferred across every domain in this review, in one place, for future implementation planning. "Deferred" here always means: considered, deliberately not built, with a stated reason and (where applicable) a named additive migration path — never an oversight.
+
+## Identity & Employee Lifecycle
+| Deferred Item | Reason |
+|---|---|
+| User account status / `isActive` field (ADR-007) | No verified requirement at the time; `login()` has no status check today. Still deferred as of ADR-006's implementation (2026-09-13) — session/token revocation did not require it. |
+
+## Branch
+| Deferred Item | Reason |
+|---|---|
+| Historical branch-assignment tracking | No verified requirement; additive later. |
+| Regional/hierarchical branch grouping | No verified requirement. |
+| Timezone/statutory/holiday-calendar fields | **Partially resolved** — Holiday Calendar (ADR-HC03) picked up the holiday-calendar half; timezone remains deferred, now a named gap for Shift (§5 of [[domain-shift]]). |
+| Branch-Department valid-combination mapping | No verified requirement; would contradict orthogonality's whole point. |
+| Scheduled/future-dated deactivation | No verified requirement. |
+
+## Department
+| Deferred Item | Reason |
+|---|---|
+| Departmental hierarchy (`parentDepartmentId`) | No verified requirement; additive nullable self-FK later. |
+| Department-transfer history/effective-dating | No verified requirement; Payroll's snapshot pattern (PR02) compensates for its absence. |
+| Cost center/budget fields | Belongs to Payroll's future scope, not Department's identity. |
+| Department-based permission scoping | No verified requirement; current RBAC is role-based, not department-scoped. |
+| Head-of-department designation | Premature; overlaps unresolved Designation concepts. |
+
+## Designation
+| Deferred Item | Reason |
+|---|---|
+| Department-scoped Designations / valid-combination mapping | No verified requirement; would contradict orthogonality (ADR-DS02). |
+| Grade/Band linkage | Grade/Band itself flagged in Phase 1 as possibly unnecessary; not designed in this review. |
+| Seniority/ranking on Designation | No verified requirement. |
+| Designation-driven approval routing | Belongs to a future workflow/approvals capability not built anywhere in this system. |
+
+## Employment Type
+| Deferred Item | Reason |
+|---|---|
+| Open, admin-manageable Employment Type catalog | Only justified by customer-specific categories with genuinely novel behavior — not true today. |
+| Employment-type change history | No verified requirement. |
+| Additional starting values (Consultant, Temporary, Seasonal) | No verified requirement; cheap to add later via code change. |
+
+## Holiday Calendar
+| Deferred Item | Reason |
+|---|---|
+| Per-employee optional/restricted holiday election | Belongs to Leave's design, not Holiday Calendar's (HC05). |
+| Sub-branch (department/designation-level) calendar overrides | No verified requirement. |
+| Historical snapshot of "which calendar applied on a past date" | Only matters once Attendance/Leave need retroactive consistency. |
+| Weekly off-days | Explicitly out of scope here — belongs to Shift. |
+| Permission scoping | Open, same pattern. |
+
+## Shift
+| Deferred Item | Reason |
+|---|---|
+| Shift rotation/rostering | No verified requirement; materially larger feature (SH04). |
+| Timezone-aware shift interpretation | Depends on Branch's still-deferred `timezone` field. |
+| Break-time deduction/lateness grace period | Belongs to Attendance's calculation rules. |
+| Shift-change history | Consistent with every other axis; additive later. |
+| Permission scoping | Open. |
+
+## Attendance
+| Deferred Item | Reason |
+|---|---|
+| Multi-punch (break-tracking) event log | No verified requirement; single check-in/check-out serves the common case (AT05). |
+| Biometric/geofenced device ingestion | No verified requirement, no existing hardware infrastructure. |
+| Regularization approval workflow | No approval-workflow infrastructure exists anywhere in this system yet. |
+| Effective-status caching/read-model | Only justified once a real, demonstrated performance problem exists. |
+
+## Leave
+| Deferred Item | Reason |
+|---|---|
+| Carry-forward / encashment (LV06) | No verified requirement; **blocks Payroll and Exit Management's final-settlement completeness.** |
+| Monthly/periodic accrual instead of annual lump sum | No verified requirement. |
+| Negative-balance / advance-leave policy | No verified requirement; strict no-negative-balance is the safer default. |
+| Multi-level approval workflow | No approval-workflow infrastructure exists project-wide yet. |
+| Leave-type-specific sub-rules (medical certificates, etc.) | No verified requirement. |
+| Permission scoping | Open. |
+
+## Payroll
+| Deferred Item | Reason |
+|---|---|
+| Tax/statutory deduction calculation (PR04) | Jurisdiction-specific legal complexity; distinct future sub-domain effort. |
+| Multi-currency support | No verified requirement. |
+| Contractor/invoice-based payment flow | Materially different process; not verified as needed. |
+| Automated/scheduled PayrollRun triggering | No verified requirement; manual admin initiation is today's scope. |
+| Payslip correction workflow beyond "adjustment in next run" | No verified requirement. |
+| Salary period unit confirmation (PR05) | **Open — requires stakeholder confirmation before implementation.** |
+
+## Performance
+| Deferred Item | Reason |
+|---|---|
+| Goal/OKR tracking | No verified requirement; materially larger feature. |
+| 360-degree/peer feedback | No verified requirement. |
+| Competency frameworks per Designation | No verified requirement; would over-couple Performance to Designation. |
+| Performance-to-compensation linkage | No verified requirement; would be a future domain's dependency on Performance. |
+
+## Recruitment
+| Deferred Item | Reason |
+|---|---|
+| Candidate self-service portal | No verified requirement; would need its own Identity-relationship design. |
+| Resume parsing/AI-assisted screening | No verified requirement. |
+| Referral tracking | No verified requirement. |
+| E-signature offer letters, background-check integration | No verified requirement; third-party integration out of scope. |
+| Unsolicited/pipeline-building applications without a requisition | No verified requirement; workaround exists (generic open requisition). |
+| Candidate PII retention/deletion policy (RC04) | **Open — legal/compliance question, not an architecture question.** |
+
+## Training
+| Deferred Item | Reason |
+|---|---|
+| Auto-targeting of training by Designation/Department | No verified requirement; additive on top of explicit enrollment. |
+| Compliance-enforcement coupling to Payroll/Performance | No verified requirement; would introduce unjustified new cross-domain dependencies. |
+| Renewal reminder notifications | No notification infrastructure exists anywhere in this project yet. |
+| External LMS/provider integration, cost/budget tracking | No verified requirement. |
+
+## Asset Management
+| Deferred Item | Reason |
+|---|---|
+| Depreciation/financial valuation (AM04) | Finance-domain concern; no verified requirement. |
+| Procurement/purchase-order linkage | No verified requirement. |
+| Employee-initiated asset requests (approval workflow) | No verified requirement; additive, similar in shape to Leave's request pattern. |
+| Barcode/QR scanning integration | No verified requirement; no hardware-integration infrastructure. |
+| Detailed maintenance/repair history | `UNDER_REPAIR` status sufficient for today's scope. |
+
+## Exit Management
+| Deferred Item | Reason |
+|---|---|
+| Notice-period policy engine | No verified, uniform policy confirmed; manual per-case entry is the safe starting point. |
+| Structured exit-interview data collection | No verified requirement beyond free-text notes. |
+| Final-settlement calculation detail (unused-leave encashment, EM05) | **Blocked on Leave's LV06 — not resolved here.** |
+
+## Project-Wide Recurring Gaps
+
+These are not domain-specific deferrals but the same missing capability surfacing repeatedly across many domains — worth tracking as a unit rather than thirteen separate line items:
+
+| Recurring Gap | Domains Affected |
+|---|---|
+| Permission scoping beyond `ADMIN`-only | Holiday Calendar, Shift, Leave, Payroll, Recruitment, Training, Asset Management, Exit Management. Branch (ADR-B07), Department (ADR-D08), and Designation (ADR-DS06) have all now resolved this as `ADMIN`-only mutations / read-for-all (2026-09-13) — the same resolution is the likely default for the rest unless a real requirement diverges. |
+| No approval-workflow infrastructure project-wide | Attendance (regularization), Leave (multi-level approval), Asset Management (asset requests) all independently deferred the same underlying capability. |
+| No notification infrastructure project-wide | Training (renewal reminders) is the only domain to name this explicitly, but it would also affect Leave (approval notifications) and Exit Management (clearance reminders) once built. |
+| AuditLog extension to new entity types | Attendance/Leave/Payroll assume it's used but don't re-litigate whether it should be. Branch (ADR-B08), Department (ADR-D09), and Designation (ADR-DS06's companion audit logging) have all resolved this (2026-09-13) — confirms the generic `AuditLog` model extends cleanly with no schema change, as predicted, across three independent domains now. |
+
+See [[future-roadmap]] for how these recurring gaps should be sequenced relative to the domain-specific open items above.

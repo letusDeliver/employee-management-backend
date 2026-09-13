@@ -14,11 +14,12 @@ export const createEmployeeSchema = z
     // loosening it. Validated for existence+ACTIVE status in the service
     // (departmentService.assertDepartmentAssignable), not just FK-exists.
     departmentId: z.string().uuid().meta({ example: '5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7c' }),
-    jobTitle: z
-      .string()
-      .trim()
-      .min(1, 'Job title is required')
-      .meta({ example: 'Backend Engineer' }),
+    // Mandatory, same reasoning as departmentId above - docs/domain-designation.md
+    // ADR-DS07: the schema's original jobTitle column was itself always
+    // required, so the FK that replaced it preserves that mandatoriness.
+    // Validated for existence+ACTIVE status in the service
+    // (designationService.assertDesignationAssignable), not just FK-exists.
+    designationId: z.string().uuid().meta({ example: '5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d' }),
     salary: z
       .number()
       .positive('Salary must be a positive number')
@@ -49,7 +50,7 @@ export const updateEmployeeSchema = createEmployeeSchema
   })
   .meta({ id: 'UpdateEmployeeRequest' });
 
-const SORTABLE_FIELDS = ['department', 'jobTitle', 'salary', 'dateOfJoining', 'createdAt'];
+const SORTABLE_FIELDS = ['department', 'designation', 'salary', 'dateOfJoining', 'createdAt'];
 
 export const listEmployeesQuerySchema = z
   .object({
@@ -62,10 +63,10 @@ export const listEmployeesQuerySchema = z
       .meta({
         example: 'jane',
         description:
-          "Matches the linked Department's name, jobTitle, and the linked User's name/email",
+          "Matches the linked Department's name, the linked Designation's name, and the linked User's name/email",
       }),
     departmentId: z.string().uuid().optional().meta({ example: null }),
-    jobTitle: z.string().optional().meta({ example: 'Backend Engineer' }),
+    designationId: z.string().uuid().optional().meta({ example: null }),
     managerId: z.string().uuid().optional().meta({ example: null }),
     sortBy: z.enum(SORTABLE_FIELDS).default('createdAt'),
     order: z.enum(['asc', 'desc']).default('desc'),

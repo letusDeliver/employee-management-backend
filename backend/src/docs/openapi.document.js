@@ -11,6 +11,7 @@ import '../modules/employees/employee.docs.js';
 import '../modules/employees/employeeDocument.docs.js';
 import '../modules/branches/branch.docs.js';
 import '../modules/departments/department.docs.js';
+import '../modules/designations/designation.docs.js';
 
 // Import order matters: every *.docs.js file must finish calling
 // registry.registerPath() (a side effect of import) before

@@ -12,6 +12,7 @@ const RUN_ID = Date.now();
 const actor = { id: null, ipAddress: '127.0.0.1' };
 const createdEmployeeIds = [];
 const createdDepartmentIds = [];
+let testDesignationId;
 
 before(async () => {
   const user = await prisma.user.create({
@@ -22,6 +23,14 @@ before(async () => {
     },
   });
   actor.id = user.id;
+
+  // Employee.designationId is mandatory (docs/domain-designation.md ADR-DS07) -
+  // every fixture Employee created below needs a real Designation to
+  // reference, even though this suite's actual subject is Department.
+  const designation = await prisma.designation.create({
+    data: { name: `Department Test Designation ${RUN_ID}` },
+  });
+  testDesignationId = designation.id;
 });
 
 after(async () => {
@@ -32,6 +41,7 @@ after(async () => {
   if (createdDepartmentIds.length) {
     await prisma.department.deleteMany({ where: { id: { in: createdDepartmentIds } } });
   }
+  await prisma.designation.delete({ where: { id: testDesignationId } });
   await prisma.user.delete({ where: { id: actor.id } });
   await prisma.$disconnect();
 });
@@ -40,7 +50,7 @@ const makeEmployee = async (departmentId) => {
   const employee = await prisma.employee.create({
     data: {
       departmentId,
-      jobTitle: 'Test Engineer',
+      designationId: testDesignationId,
       salary: 1000,
       dateOfJoining: new Date(),
     },
@@ -118,7 +128,7 @@ test('employee creation requires a valid, active departmentId', async () => {
   const employee = await employeeService.createEmployee(
     {
       departmentId: activeDepartment.id,
-      jobTitle: 'Test Marketer',
+      designationId: testDesignationId,
       salary: 2000,
       dateOfJoining: new Date(),
     },
@@ -133,7 +143,7 @@ test('employee creation requires a valid, active departmentId', async () => {
       employeeService.createEmployee(
         {
           departmentId: '00000000-0000-0000-0000-000000000000',
-          jobTitle: 'Test Marketer 2',
+          designationId: testDesignationId,
           salary: 2000,
           dateOfJoining: new Date(),
         },

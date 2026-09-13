@@ -120,7 +120,7 @@ All routes are mounted under `/api/v1`.
 | `GET`    | `/auth/me`                             | Access token (Bearer)                                  | Return the current authenticated user                                                                                                                                                                                 |
 | `GET`    | `/users`                               | Access token, `user:list` permission                   | List registered users — paginated (`page`/`limit`), searchable (`search`, across `name`/`email`), filterable (`role`), sortable (`sortBy`/`order`)                                                                    |
 | `POST`   | `/employees`                           | Access token, `employee:create` permission             | Create an Employee (HR) record                                                                                                                                                                                        |
-| `GET`    | `/employees`                           | Access token, `employee:read:any` permission           | List non-deleted Employee records — paginated (`page`/`limit`), searchable (`search`, across the linked Department's name + jobTitle + linked User name/email), filterable (`departmentId`/`jobTitle`/`managerId`), sortable (`sortBy`/`order`) |
+| `GET`    | `/employees`                           | Access token, `employee:read:any` permission           | List non-deleted Employee records — paginated (`page`/`limit`), searchable (`search`, across the linked Department's name + linked Designation's name + linked User name/email), filterable (`departmentId`/`designationId`/`managerId`), sortable (`sortBy`/`order`) |
 | `GET`    | `/employees/:id`                       | Access token, `employee:read:any` or `:own` permission | Get one Employee record (own record allowed for `EMPLOYEE`)                                                                                                                                                           |
 | `PATCH`  | `/employees/:id`                       | Access token, `employee:update:any` permission         | Partially update an Employee record                                                                                                                                                                                   |
 | `DELETE` | `/employees/:id`                       | Access token, `employee:delete:any` permission         | Soft-delete an Employee record                                                                                                                                                                                        |
@@ -139,6 +139,11 @@ All routes are mounted under `/api/v1`.
 | `GET`    | `/departments/:id`                     | Access token, `department:read` permission (every role) | Get one Department record                                                                                                                                                                                             |
 | `PATCH`  | `/departments/:id`                     | Access token, `department:update` permission (ADMIN only) | Update a Department, including activating/deactivating it                                                                                                                                                             |
 | `DELETE` | `/departments/:id`                     | Access token, `department:delete` permission (ADMIN only) | Hard-delete a Department — only when zero Employee records reference it                                                                                                                                               |
+| `POST`   | `/designations`                        | Access token, `designation:create` permission (ADMIN only) | Create a Designation (job title classification)                                                                                                                                                                       |
+| `GET`    | `/designations`                        | Access token, `designation:read` permission (every role) | List Designation records — paginated, searchable (`name`/`code`, case-insensitive), filterable (`status`), sortable                                                                                                   |
+| `GET`    | `/designations/:id`                    | Access token, `designation:read` permission (every role) | Get one Designation record                                                                                                                                                                                            |
+| `PATCH`  | `/designations/:id`                    | Access token, `designation:update` permission (ADMIN only) | Update a Designation, including activating/deactivating it                                                                                                                                                            |
+| `DELETE` | `/designations/:id`                    | Access token, `designation:delete` permission (ADMIN only) | Hard-delete a Designation — only when zero Employee records reference it                                                                                                                                              |
 
 `POST`/`PATCH /employees` also accept an optional `branchId`, validated
 against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
@@ -148,6 +153,12 @@ against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
 `departmentId`, validated the same way as `branchId` but required, not
 optional (existing data was backfilled via
 `backend/prisma/backfill-department.js` before the column was dropped).
+
+**Breaking change (2026-09-13):** Employee's free-text `jobTitle`
+(`String`) field was removed and replaced by a **mandatory**
+`designationId`, same treatment as `departmentId` above (existing data was
+backfilled via `backend/prisma/backfill-designation.js` before the column
+was dropped).
 
 Authorization is permission-based (see `../handbook/API_ENDPOINTS.md`), not
 role-based — `ADMIN`/`MANAGER`/`EMPLOYEE` are role names seeded with a
@@ -181,7 +192,7 @@ src/
 ├── docs/                     # OpenAPI registry/generator/security + Swagger UI mounting
 ├── errors/                  # Typed AppError hierarchy
 ├── middlewares/              # auth, permission (RBAC), validate, upload (Multer), error, notFound
-├── modules/                  # Feature-first domain modules (auth, users, rbac, employees, branches, departments, audit)
+├── modules/                  # Feature-first domain modules (auth, users, rbac, employees, branches, departments, designations, audit)
 ├── routes/                   # Router aggregation
 └── utils/                    # asyncHandler, jwt
 

@@ -1085,3 +1085,71 @@ branch. Recorded here so it isn't repeated silently.
 Deliberately **backend-only**, same as Branch — a Department admin
 screen and picker in the Employee form are frontend follow-up work, not
 started here.)_
+
+_(Designation Domain — 2026-09-13, on branch `feature/17-designation-domain`
+(based on `feature/16-department-domain`). Third domain implemented from
+the HRMS/ERP Business Architecture Review (`docs/domain-designation.md`).
+Structurally identical to Department in every respect — the domain
+sign-off itself designs it that way deliberately, rather than by
+accident — including the same materially bigger decision Department
+carried: `Employee.designationId` is **mandatory** (ADR-DS07), because
+the schema's original `jobTitle` column had always been a required
+`String`. One open item the domain doc left unresolved, ADR-DS06
+(permission scoping), was resolved without asking — per the user's
+standing delegation of roadmap-direction authority — as `ADMIN`-only
+mutations / `designation:read` for all roles, identical to Branch's
+ADR-B07 and Department's ADR-D08, since the doc itself names that as the
+expected default and nothing about Designation justifies diverging.
+
+Executed the same expand → backfill → contract migration sequence as
+Department, against the same live dev database: **expand**
+(`add_designation_expand`) added the `Designation` table and a *nullable*
+`designationId` alongside the still-live `jobTitle` string column;
+**backfill** (`prisma/backfill-designation.js`, new permanent script)
+found 30 Employee rows, **17** distinct free-text `jobTitle` values
+(more fragmentation than Department's 12, including junk like
+`"sderwf"` and a bare `"B"`), created one `Designation` row per distinct
+value, backfilled every row (soft-deleted included), and asserted zero
+remaining nulls; **contract** (`add_designation_contract`, generated via
+`prisma migrate diff` + applied via `prisma migrate deploy`, same
+non-interactive-destructive-migration workaround as Department) dropped
+`jobTitle` and made `designationId` `NOT NULL`. Zero data loss.
+
+New module `src/modules/designations/` mirrors Department's file shape
+exactly, including the case-insensitive `findByNameOrCode` (this domain's
+own doc makes the same explicit case-insensitive-uniqueness business
+rule Department's did). `employee.service.js`'s `buildEmployeeWhere`/
+`buildEmployeeOrderBy` extended for `designationId`/`designation` the
+same way they already handle `departmentId`/`department` — the
+`RELATION_SORT_FIELDS` set now covers both relation-backed sort keys
+instead of a single `if` check. `designationId` follows `departmentId`'s
+precedent exactly on the nullability question: present and required in
+`createEmployeeSchema`, `.partial()`'d but deliberately **not** added to
+`updateEmployeeSchema`'s nullable-widening `.extend()` block, since there
+is no valid "clear the designation" state.
+
+Extended the `node:test` suite: `designation.service.test.js` (6 tests,
+mirroring Department's) plus fixes to both `branch.service.test.js` and
+`department.service.test.js` (their fixtures created raw `Employee` rows
+with a `jobTitle` string that no longer exists — both updated to create a
+real test `Designation` first, same fix class as Branch's break after the
+Department migration). All 18 tests across all three domains pass
+together. Verified live end-to-end against the real running server:
+create → case-insensitive-duplicate-409 → list/search → get → deactivate
+→ assignability 400s (nonexistent, inactive, and missing entirely) →
+delete-blocked-409, plus `sortBy=designation`/`search` against real
+pre-existing Employee data and explicit `EMPLOYEE`-role permission checks
+(read allowed, create forbidden). All live-verification fixtures cleaned
+up afterward, including the now-familiar `RefreshToken`-before-`User`
+deletion order for a scratch login-tested user.
+
+`docs/domain-designation.md` (ADR-DS06 resolved, ADR-DS07 implementation
+confirmed, confidence 86%→91%), `docs/adr-index.md`,
+`docs/deferred-decisions-register.md` updated. `handbook/API_ENDPOINTS.md`
+gained 5 new endpoint entries (29-33) plus updates throughout endpoints
+9/10/12 reflecting the breaking `jobTitle` → `designationId` change.
+`backend/README.md` updated to match.
+
+Deliberately **backend-only**, same as Branch/Department — a Designation
+admin screen and picker in the Employee form are frontend follow-up work,
+not started here.)_

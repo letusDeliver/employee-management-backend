@@ -4,6 +4,7 @@ import auditLogRepository from '../audit/auditLog.repository.js';
 import { AUDIT_ACTIONS, AUDIT_ENTITY_TYPES } from '../audit/auditLog.constants.js';
 import branchService from '../branches/branch.service.js';
 import departmentService from '../departments/department.service.js';
+import designationService from '../designations/designation.service.js';
 import ConflictError from '../../errors/ConflictError.js';
 import NotFoundError from '../../errors/NotFoundError.js';
 import ForbiddenError from '../../errors/ForbiddenError.js';
@@ -41,7 +42,9 @@ const rethrowForeignKeyViolationAsBadRequest = (error) => {
       ? 'branchId'
       : constraintName.includes('departmentId')
         ? 'departmentId'
-        : 'userId';
+        : constraintName.includes('designationId')
+          ? 'designationId'
+          : 'userId';
 
   throw new BadRequestError(`${field}: references a record that does not exist`);
 };
@@ -63,6 +66,10 @@ const createEmployee = async (data, actor) => {
   // (docs/domain-department.md ADR-D07), so validation guarantees it is
   // always present at this point.
   await departmentService.assertDepartmentAssignable(data.departmentId);
+
+  // Same reasoning as departmentId above - designationId is mandatory
+  // (docs/domain-designation.md ADR-DS07).
+  await designationService.assertDesignationAssignable(data.designationId);
 
   try {
     return await prisma.$transaction(async (tx) => {
@@ -112,13 +119,13 @@ const getEmployeeById = async (id, requester) => {
   return employee;
 };
 
-const buildEmployeeWhere = ({ search, departmentId, jobTitle, managerId }) => {
+const buildEmployeeWhere = ({ search, departmentId, designationId, managerId }) => {
   const where = {};
 
   if (search) {
     where.OR = [
       { department: { name: { contains: search, mode: 'insensitive' } } },
-      { jobTitle: { contains: search, mode: 'insensitive' } },
+      { designation: { name: { contains: search, mode: 'insensitive' } } },
       { user: { name: { contains: search, mode: 'insensitive' } } },
       { user: { email: { contains: search, mode: 'insensitive' } } },
     ];
@@ -128,8 +135,8 @@ const buildEmployeeWhere = ({ search, departmentId, jobTitle, managerId }) => {
     where.departmentId = departmentId;
   }
 
-  if (jobTitle) {
-    where.jobTitle = { equals: jobTitle, mode: 'insensitive' };
+  if (designationId) {
+    where.designationId = designationId;
   }
 
   if (managerId) {
@@ -139,11 +146,14 @@ const buildEmployeeWhere = ({ search, departmentId, jobTitle, managerId }) => {
   return where;
 };
 
-// 'department' is a relation now, not a scalar column (docs/domain-department.md) -
-// sorting by it means sorting by the linked Department's name (a one-hop
-// nested orderBy), not a direct column comparison like every other sortBy value.
+// 'department'/'designation' are relations now, not scalar columns
+// (docs/domain-department.md, docs/domain-designation.md) - sorting by
+// either means sorting by the linked record's name (a one-hop nested
+// orderBy), not a direct column comparison like every other sortBy value.
+const RELATION_SORT_FIELDS = new Set(['department', 'designation']);
+
 const buildEmployeeOrderBy = (sortBy, order) =>
-  sortBy === 'department' ? { department: { name: order } } : { [sortBy]: order };
+  RELATION_SORT_FIELDS.has(sortBy) ? { [sortBy]: { name: order } } : { [sortBy]: order };
 
 const listEmployees = async (query) => {
   const { page, limit, sortBy, order, ...filters } = query;
@@ -189,6 +199,11 @@ const updateEmployee = async (id, data, actor) => {
   // as-is" are real cases here.
   if (data.departmentId) {
     await departmentService.assertDepartmentAssignable(data.departmentId);
+  }
+
+  // Same reasoning as departmentId above - designationId is never nullable.
+  if (data.designationId) {
+    await designationService.assertDesignationAssignable(data.designationId);
   }
 
   try {

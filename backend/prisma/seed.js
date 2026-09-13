@@ -106,6 +106,34 @@ const PERMISSIONS = [
     scope: null,
     description: 'Hard-delete a department with zero Employee references',
   },
+  {
+    key: 'designation:create',
+    resource: 'designation',
+    action: 'create',
+    scope: null,
+    description: 'Create a designation',
+  },
+  {
+    key: 'designation:read',
+    resource: 'designation',
+    action: 'read',
+    scope: null,
+    description: 'Read designation records',
+  },
+  {
+    key: 'designation:update',
+    resource: 'designation',
+    action: 'update',
+    scope: null,
+    description: 'Update a designation, including activating/deactivating it',
+  },
+  {
+    key: 'designation:delete',
+    resource: 'designation',
+    action: 'delete',
+    scope: null,
+    description: 'Hard-delete a designation with zero Employee references',
+  },
 ];
 
 const ROLE_PERMISSIONS = {
@@ -123,6 +151,10 @@ const ROLE_PERMISSIONS = {
     'department:read',
     'department:update',
     'department:delete',
+    'designation:create',
+    'designation:read',
+    'designation:update',
+    'designation:delete',
   ],
   MANAGER: [
     'employee:create',
@@ -131,8 +163,9 @@ const ROLE_PERMISSIONS = {
     'employee:delete:any',
     'branch:read',
     'department:read',
+    'designation:read',
   ],
-  EMPLOYEE: ['employee:read:own', 'branch:read', 'department:read'],
+  EMPLOYEE: ['employee:read:own', 'branch:read', 'department:read', 'designation:read'],
 };
 
 const seedPermissions = async () => {
@@ -170,7 +203,7 @@ const seedRolesAndGrants = async () => {
 const main = async () => {
   await seedPermissions();
   await seedRolesAndGrants();
-  console.log('Seed complete: 3 system roles, 14 permissions, role-permission grants.');
+  console.log('Seed complete: 3 system roles, 18 permissions, role-permission grants.');
 };
 
 main()
