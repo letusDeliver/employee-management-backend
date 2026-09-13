@@ -55,28 +55,36 @@ export const EmployeeSchema = z
     }),
     dateOfJoining: z.iso.datetime().meta({ example: '2024-01-15T00:00:00.000Z' }),
     managerId: z.uuid().nullable().meta({ example: null }),
+    branchId: z.uuid().nullable().meta({ example: null }),
     deletedAt: z.iso.datetime().nullable().meta({ example: null }),
     createdAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
     updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
   })
   .meta({ id: 'Employee' });
 
+export const BranchSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'b1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    name: z.string().meta({ example: 'Bengaluru HQ' }),
+    code: z.string().nullable().meta({ example: 'BLR-01' }),
+    status: z.enum(['ACTIVE', 'INACTIVE']).meta({ example: 'ACTIVE' }),
+    createdAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+  })
+  .meta({ id: 'Branch' });
+
 export const EmployeeDocumentSchema = z
   .object({
     id: z.uuid().meta({ example: 'f1e2d3c4-b5a6-4978-8f6e-5d4c3b2a1908' }),
     employeeId: z.uuid().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
-    url: z
-      .url()
-      .meta({
-        example: 'https://res.cloudinary.com/dhfxv7gdp/raw/upload/v1/emp-mgmt/documents/f1e2.pdf',
-      }),
+    url: z.url().meta({
+      example: 'https://res.cloudinary.com/dhfxv7gdp/raw/upload/v1/emp-mgmt/documents/f1e2.pdf',
+    }),
     publicId: z.string().meta({ example: 'emp-mgmt/production/employees/a1b2/documents/f1e2' }),
-    resourceType: z
-      .string()
-      .meta({
-        description: "Cloudinary's own classification (e.g. 'image', 'raw')",
-        example: 'raw',
-      }),
+    resourceType: z.string().meta({
+      description: "Cloudinary's own classification (e.g. 'image', 'raw')",
+      example: 'raw',
+    }),
     fileName: z.string().meta({ example: 'resume.pdf' }),
     mimeType: z.string().meta({ example: 'application/pdf' }),
     size: z.int().meta({ example: 245678 }),

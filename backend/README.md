@@ -129,6 +129,14 @@ All routes are mounted under `/api/v1`.
 | `POST`   | `/employees/:id/documents`             | Access token, `employee:update:any` permission         | Upload a document (resume, ID proof, etc.) to an Employee record                                                                                                                                                      |
 | `GET`    | `/employees/:id/documents`             | Access token, `employee:read:any` or `:own` permission | List an Employee's documents                                                                                                                                                                                          |
 | `DELETE` | `/employees/:id/documents/:documentId` | Access token, `employee:update:any` permission         | Permanently remove a document                                                                                                                                                                                         |
+| `POST`   | `/branches`                            | Access token, `branch:create` permission (ADMIN only)   | Create a Branch (work location)                                                                                                                                                                                       |
+| `GET`    | `/branches`                            | Access token, `branch:read` permission (every role)     | List Branch records — paginated, searchable (`name`/`code`), filterable (`status`), sortable                                                                                                                          |
+| `GET`    | `/branches/:id`                        | Access token, `branch:read` permission (every role)     | Get one Branch record                                                                                                                                                                                                 |
+| `PATCH`  | `/branches/:id`                        | Access token, `branch:update` permission (ADMIN only)   | Update a Branch, including activating/deactivating it                                                                                                                                                                 |
+| `DELETE` | `/branches/:id`                        | Access token, `branch:delete` permission (ADMIN only)   | Hard-delete a Branch — only when zero Employee records reference it                                                                                                                                                   |
+
+`POST`/`PATCH /employees` also accept an optional `branchId`, validated
+against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
 
 Authorization is permission-based (see `../handbook/API_ENDPOINTS.md`), not
 role-based — `ADMIN`/`MANAGER`/`EMPLOYEE` are role names seeded with a
@@ -162,7 +170,7 @@ src/
 ├── docs/                     # OpenAPI registry/generator/security + Swagger UI mounting
 ├── errors/                  # Typed AppError hierarchy
 ├── middlewares/              # auth, permission (RBAC), validate, upload (Multer), error, notFound
-├── modules/                  # Feature-first domain modules (auth, users, rbac, employees, audit)
+├── modules/                  # Feature-first domain modules (auth, users, rbac, employees, branches, audit)
 ├── routes/                   # Router aggregation
 └── utils/                    # asyncHandler, jwt
 

@@ -50,6 +50,34 @@ const PERMISSIONS = [
     scope: 'any',
     description: 'Soft-delete any employee record',
   },
+  {
+    key: 'branch:create',
+    resource: 'branch',
+    action: 'create',
+    scope: null,
+    description: 'Create a branch',
+  },
+  {
+    key: 'branch:read',
+    resource: 'branch',
+    action: 'read',
+    scope: null,
+    description: 'Read branch records',
+  },
+  {
+    key: 'branch:update',
+    resource: 'branch',
+    action: 'update',
+    scope: null,
+    description: 'Update a branch, including activating/deactivating it',
+  },
+  {
+    key: 'branch:delete',
+    resource: 'branch',
+    action: 'delete',
+    scope: null,
+    description: 'Hard-delete a branch with zero Employee references',
+  },
 ];
 
 const ROLE_PERMISSIONS = {
@@ -59,9 +87,19 @@ const ROLE_PERMISSIONS = {
     'employee:read:any',
     'employee:update:any',
     'employee:delete:any',
+    'branch:create',
+    'branch:read',
+    'branch:update',
+    'branch:delete',
   ],
-  MANAGER: ['employee:create', 'employee:read:any', 'employee:update:any', 'employee:delete:any'],
-  EMPLOYEE: ['employee:read:own'],
+  MANAGER: [
+    'employee:create',
+    'employee:read:any',
+    'employee:update:any',
+    'employee:delete:any',
+    'branch:read',
+  ],
+  EMPLOYEE: ['employee:read:own', 'branch:read'],
 };
 
 const seedPermissions = async () => {
@@ -99,7 +137,7 @@ const seedRolesAndGrants = async () => {
 const main = async () => {
   await seedPermissions();
   await seedRolesAndGrants();
-  console.log('Seed complete: 3 system roles, 6 permissions, role-permission grants.');
+  console.log('Seed complete: 3 system roles, 10 permissions, role-permission grants.');
 };
 
 main()

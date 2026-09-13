@@ -93,6 +93,13 @@ model Employee {
   managerId     String?
   manager       Employee?          @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: SetNull)
   reports       Employee[]         @relation("EmployeeManager")
+  branchId      String?
+  // Restrict, not SetNull (unlike userId/managerId above): domain-branch.md's
+  // Decision 1 makes "never hard-deleted while referenced" a hard invariant,
+  // not a preference - branch.service.js also enforces this at the app layer
+  // before attempting a delete, so this is a defense-in-depth backstop, not
+  // the only guard.
+  branch        Branch?            @relation(fields: [branchId], references: [id], onDelete: Restrict)
   deletedAt     DateTime?
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
@@ -107,6 +114,26 @@ model Employee {
   // soft-deleted, which contradicts the soft-delete design.
   @@index([userId])
   @@index([managerId])
+  @@index([branchId])
+}
+
+// See docs/domain-branch.md for the full business-architecture sign-off.
+// Uses a status field, not deletedAt (ADR-B04) - Branch closure is a
+// distinct kind of business event from Employee offboarding, deliberately
+// not modeled with the same soft-delete idiom.
+enum BranchStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Branch {
+  id        String       @id @default(uuid())
+  name      String       @unique
+  code      String?      @unique
+  status    BranchStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  employees Employee[]
 }
 
 model EmployeeDocument {

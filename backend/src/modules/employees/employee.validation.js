@@ -11,7 +11,11 @@ export const createEmployeeSchema = z
     // .trim() first: a whitespace-only value ("   ") would otherwise pass
     // .min(1) - it has length, it's just not meaningful content.
     department: z.string().trim().min(1, 'Department is required').meta({ example: 'Engineering' }),
-    jobTitle: z.string().trim().min(1, 'Job title is required').meta({ example: 'Backend Engineer' }),
+    jobTitle: z
+      .string()
+      .trim()
+      .min(1, 'Job title is required')
+      .meta({ example: 'Backend Engineer' }),
     salary: z
       .number()
       .positive('Salary must be a positive number')
@@ -24,19 +28,21 @@ export const createEmployeeSchema = z
       })
       .meta({ example: '2024-01-15' }),
     managerId: z.string().uuid().optional().meta({ example: null }),
+    branchId: z.string().uuid().optional().meta({ example: null }),
   })
   .meta({ id: 'CreateEmployeeRequest' });
 
 export const updateEmployeeSchema = createEmployeeSchema
   .partial()
   .extend({
-    // Deliberately widened beyond createEmployeeSchema's own userId/managerId
-    // (.optional() only, no .nullable()): a PATCH needs a way to express
-    // "clear this link", which omitting the key can never do - the key
-    // just wouldn't be present in the JSON body, which means "leave it
+    // Deliberately widened beyond createEmployeeSchema's own userId/managerId/
+    // branchId (.optional() only, no .nullable()): a PATCH needs a way to
+    // express "clear this link", which omitting the key can never do - the
+    // key just wouldn't be present in the JSON body, which means "leave it
     // as-is", not "unset it". Explicit null is that signal.
     userId: z.string().uuid().nullable().optional().meta({ example: null }),
     managerId: z.string().uuid().nullable().optional().meta({ example: null }),
+    branchId: z.string().uuid().nullable().optional().meta({ example: null }),
   })
   .meta({ id: 'UpdateEmployeeRequest' });
 

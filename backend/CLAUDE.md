@@ -921,3 +921,71 @@ identical calls, and `400`s on out-of-bounds `limit`/invalid `sortBy`.
 in `frontend/CLAUDE.md` for the client-side half of this pass, including
 the new shared `list-query-state` pattern this established as reusable
 for future list screens.)_
+
+_(Branch Domain — 2026-09-13, on branch `feature/15-branch-domain`. Not a
+numbered feature from the original roadmap; the first domain implemented
+from the separately-maintained Enterprise HRMS/ERP Business Architecture
+Review (`docs/architecture-index.md`), which had already produced a full
+business-architecture sign-off (`docs/domain-branch.md`) before any code
+existed. Closes a named gap that sign-off itself identified: `Employee.
+department`/`jobTitle` were plain free-text strings with no location
+concept anywhere in the schema.
+
+New `Branch` model (`id`, `name` unique, `code` unique-when-present,
+`status: BranchStatus` default `ACTIVE`) plus `Employee.branchId`
+(nullable, `onDelete: Restrict` — deliberately not `SetNull` like
+`userId`/`managerId`, since the domain's own invariant is "never
+hard-deleted while referenced," and this is the DB-level backstop for
+that rule, not just an app-level check). New module
+`src/modules/branches/` mirrors the Employee module's file shape exactly
+(repository/service/controller/routes/validation/docs). Full CRUD:
+`POST`/`GET`/`GET :id`/`PATCH`/`DELETE /branches`, all under
+`authMiddleware` + `requirePermission`.
+
+Two scoping questions the architecture review had explicitly left open
+(ADR-B07, ADR-B08) were resolved at the start of implementation, per that
+document's own instruction not to leave them for later — done
+unilaterally per the user's standing direction-authority delegation for
+this initiative, not asked as a blocking question: **ADR-B07**, Branch
+mutations (`create`/`update`/`delete`) are `ADMIN`-only, deliberately
+tighter than `employee:*` (where `MANAGER` has full parity with `ADMIN`)
+since Branch is foundational org-structure data; `branch:read` is granted
+to all three seeded roles, since it's non-sensitive reference data with
+no ownership dimension. **ADR-B08**, yes — Branch mutations extend the
+existing generic `AuditLog` model via a new `AUDIT_ENTITY_TYPES.BRANCH`,
+identical in shape to Employee's pattern, no schema change required.
+
+`employee.service.js`'s `createEmployee`/`updateEmployee` gained a
+branch-assignability check (`branchService.assertBranchAssignable`) — a
+synchronous cross-module read, the same shape ADR-006 (offboarding
+revocation, separate branch) used for Employee→User. Enforces the
+domain's positive-allowlist rule: a branch must exist **and** be
+`ACTIVE` to be assignable, never the inverse (`!== INACTIVE`), so a
+future third status value defaults to not-assignable. Deactivating a
+branch never touches existing `Employee.branchId` references — only
+blocks *future* assignment.
+
+Extended the `node:test` foundation seeded by the ADR-006 branch:
+`branch.service.test.js` (6 integration tests against the real dev
+database — create/duplicate-rejection, list/search, deactivate-blocks-
+future-assignment-but-keeps-existing-links, assignability-check against a
+nonexistent branch, Employee creation honoring the check end-to-end, and
+delete-blocked-when-referenced vs. delete-allowed-when-unreferenced).
+
+Verified live end-to-end against the real running server (a throwaway
+test account registered, promoted to `ADMIN` via the established direct-
+Prisma-script pattern): full create → duplicate 409 → list/search → get →
+deactivate → assignability 400s (both nonexistent and inactive branch) →
+delete-blocked-409 → delete-allowed-200 sequence, plus explicit
+permission checks confirming `EMPLOYEE` gets `403` on mutations but `200`
+on reads. All test/live fixtures cleaned up afterward. `npm run lint` and
+`npx prettier --check` clean throughout. `docs/domain-branch.md` (ADR-B07/
+B08 resolution, confidence 88%→92%), `docs/adr-index.md`, and
+`docs/deferred-decisions-register.md` updated to reflect implementation.
+`handbook/API_ENDPOINTS.md` gained 5 new endpoint entries (19-23) plus
+updates to endpoints 9 and 12's `branchId` field documentation.
+
+Deliberately **backend-only** — no frontend changes on this branch, kept
+separate to avoid mixing an unrelated feature area; a Branch admin
+screen and a branch picker in the Employee form are the natural frontend
+follow-up, tracked as a separate future initiative, not started here.)_

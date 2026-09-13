@@ -2,6 +2,7 @@ import prisma from '../../config/database.js';
 import employeeRepository from './employee.repository.js';
 import auditLogRepository from '../audit/auditLog.repository.js';
 import { AUDIT_ACTIONS, AUDIT_ENTITY_TYPES } from '../audit/auditLog.constants.js';
+import branchService from '../branches/branch.service.js';
 import ConflictError from '../../errors/ConflictError.js';
 import NotFoundError from '../../errors/NotFoundError.js';
 import ForbiddenError from '../../errors/ForbiddenError.js';
@@ -33,7 +34,11 @@ const rethrowForeignKeyViolationAsBadRequest = (error) => {
   }
 
   const constraintName = error.meta?.driverAdapterError?.cause?.constraint?.index ?? '';
-  const field = constraintName.includes('managerId') ? 'managerId' : 'userId';
+  const field = constraintName.includes('managerId')
+    ? 'managerId'
+    : constraintName.includes('branchId')
+      ? 'branchId'
+      : 'userId';
 
   throw new BadRequestError(`${field}: references a record that does not exist`);
 };
@@ -45,6 +50,10 @@ const createEmployee = async (data, actor) => {
     if (existing) {
       throw new ConflictError(DUPLICATE_USER_MESSAGE);
     }
+  }
+
+  if (data.branchId) {
+    await branchService.assertBranchAssignable(data.branchId);
   }
 
   try {
@@ -153,6 +162,13 @@ const updateEmployee = async (id, data, actor) => {
   }
 
   assertNotSelfManaged(id, data.managerId);
+
+  // Only validated when a new branchId is actually being set - `null` means
+  // "clear the branch" (no check needed) and `undefined` means "leave it
+  // as-is" (already validated when it was originally assigned).
+  if (data.branchId) {
+    await branchService.assertBranchAssignable(data.branchId);
+  }
 
   try {
     return await prisma.$transaction(async (tx) => {

@@ -253,6 +253,15 @@ in Postman's cookie jar once register/login/refresh sets it.
 | 16  | Employees | `POST`   | `/employees/:id/documents`             | Access token              | `employee:update:any`                          | Protected          |
 | 17  | Employees | `GET`    | `/employees/:id/documents`             | Access token              | `employee:read:any` OR `employee:read:own`     | Protected          |
 | 18  | Employees | `DELETE` | `/employees/:id/documents/:documentId` | Access token              | `employee:update:any`                          | Protected          |
+| 19  | Branches  | `POST`   | `/branches`                            | Access token              | `branch:create`                                | Protected          |
+| 20  | Branches  | `GET`    | `/branches`                            | Access token              | `branch:read`                                  | Protected          |
+| 21  | Branches  | `GET`    | `/branches/:id`                        | Access token              | `branch:read`                                  | Protected          |
+| 22  | Branches  | `PATCH`  | `/branches/:id`                        | Access token              | `branch:update`                                | Protected          |
+| 23  | Branches  | `DELETE` | `/branches/:id`                        | Access token              | `branch:delete`                                | Protected          |
+
+**As of the Branch domain (2026-09-13)**, `Employee` create/update also
+accept an optional `branchId` — see endpoints 9 and 12 above, whose
+Validation Rules sections should be read alongside endpoints 19-23 below.
 
 **As of Feature 9**, authorization is permission-based, not role-based —
 `ADMIN`/`MANAGER`/`EMPLOYEE` are just role _names_ that happen to be
@@ -2236,7 +2245,8 @@ None.
   "jobTitle": "Backend Developer",
   "salary": 75000,
   "dateOfJoining": "2024-01-15",
-  "managerId": null
+  "managerId": null,
+  "branchId": null
 }
 ```
 
@@ -2248,6 +2258,7 @@ None.
 | `salary`        | number            | Yes      | Must be a positive number, capped at 100,000,000 (a sanity ceiling, not a real business limit).                                                                |
 | `dateOfJoining` | string (ISO date) | Yes      | Coerced to a `Date`. Cannot be in the future.                                                                                                                   |
 | `managerId`     | string (UUID)     | No       | Must reference an existing `Employee.id`. Cannot equal the created record's own id (checked in the service, since the id doesn't exist yet at validation time). |
+| `branchId`      | string (UUID)     | No       | **Added by the Branch domain (2026-09-13).** Must reference an existing Branch whose `status` is `ACTIVE` — checked via `branchService.assertBranchAssignable`, a synchronous cross-module read, not just a raw FK-exists check (see endpoint 19's domain). Rejects with `400 branchId: references a record that does not exist` or `400 branchId: this branch is not active and cannot be assigned`. Verified live. |
 
 ## 7. Validation Rules
 
@@ -3070,10 +3081,11 @@ the fields you want to change.
 }
 ```
 
-**`userId`/`managerId` additionally accept explicit `null`** (widened
-beyond `createEmployeeSchema`'s own `.optional()`-only rule for these two
-fields) — this is the only way to *clear* an existing link. Omitting the
-key entirely means "leave it as-is"; sending `null` means "unset it":
+**`userId`/`managerId`/`branchId` additionally accept explicit `null`**
+(widened beyond `createEmployeeSchema`'s own `.optional()`-only rule for
+these three fields) — this is the only way to *clear* an existing link.
+Omitting the key entirely means "leave it as-is"; sending `null` means
+"unset it":
 
 ```json
 { "userId": null }
@@ -3082,10 +3094,17 @@ key entirely means "leave it as-is"; sending `null` means "unset it":
 ## 7. Validation Rules
 
 Same per-field rules as `POST /employees` (Section 7 there), applied only
-to whichever fields are present. Additional business rule, checked in the
-service: **`managerId` cannot equal the record's own `id`** — an employee
-cannot be their own manager. Verified live: `400`,
-`"An employee cannot be their own manager"`.
+to whichever fields are present. Additional business rules, checked in
+the service:
+
+- **`managerId` cannot equal the record's own `id`** — an employee cannot
+  be their own manager. Verified live: `400`,
+  `"An employee cannot be their own manager"`.
+- **`branchId`, when being set to a non-null value, is re-validated
+  against the same assignability check as creation** (must exist and be
+  `ACTIVE`) — added by the Branch domain (2026-09-13), verified live.
+  Setting `branchId: null` (clearing it) skips this check entirely, since
+  there's nothing to validate.
 
 ## 8. Successful Response
 
@@ -4437,3 +4456,913 @@ Run this **after** `POST /employees/:id/documents` in any test sequence
   Admin API, not just a non-error response) — required both the
   `resourceType` fix and the `invalidate: true` fix, both caught live
 - ✅ No sensitive data leaked
+
+---
+
+---
+
+# 19. `POST /branches`
+
+## 1. Endpoint Information
+
+```
+Feature:            Branch Domain (2026-09-13, feature/15-branch-domain)
+Endpoint:           Create Branch
+Description:        Creates a new physical/legal work location
+Method:             POST
+URL:                /api/v1/branches
+API Version:        v1
+Module:             modules/branches
+Authentication:     Yes (Bearer access token)
+Authorization:      `branch:create` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: closes a named gap in `docs/domain-branch.md` —
+  `Employee.department`/`jobTitle` were plain free-text strings with no
+  location concept anywhere in the schema.
+- **Business problem solved**: lets an organization model more than one
+  work location as real, referenceable data instead of a free-text field.
+- **Expected callers**: `ADMIN` only — deliberately tighter than
+  `employee:*`, where `MANAGER` has parity with `ADMIN` (see ADR-B07).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                       |
+| -------------------------------------- | -------- | -------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `branch:create` permission |
+| `Content-Type: application/json`      | **Yes**  |                                              |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "name": "Bengaluru HQ",
+  "code": "BLR-01"
+}
+```
+
+| Field  | Type   | Required | Description                                             |
+| ------ | ------ | -------- | -------------------------------------------------------- |
+| `name` | string | **Yes**  | Trimmed, non-empty, unique across all branches            |
+| `code` | string | No       | Trimmed, non-empty when provided, unique when provided    |
+
+## 7. Validation Rules
+
+- `name`: required, `.trim().min(1)` — a whitespace-only value fails.
+- `code`: optional; when present, `.trim().min(1)` — same whitespace rule.
+- `status` is **not** accepted at creation — every new branch starts
+  `ACTIVE` (`BranchStatus` default in `schema.prisma`); status can only be
+  changed afterward via `PATCH /branches/:id`.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "branch": {
+    "id": "c42c7743-72d5-4839-8f88-e3f87e9954f2",
+    "name": "Bengaluru HQ",
+    "code": "BLR-01",
+    "status": "ACTIVE",
+    "createdAt": "2026-09-13T09:54:38.817Z",
+    "updatedAt": "2026-09-13T09:54:38.817Z"
+  }
+}
+```
+
+Verified live against the real dev server.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                                                                 |
+| ------ | ------------------------------------ | ------------------------------------------------------ | ---------------------------------------------------------------------- |
+| `400`  | Validation failed                   | e.g. `"name: Branch name is required"`                | Empty/whitespace-only `name`                                          |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                | `authMiddleware` failure                                              |
+| `403`  | Caller lacks `branch:create`         | `"You do not have permission to perform this action"` | `EMPLOYEE` or `MANAGER` token — verified live                          |
+| `409`  | Duplicate `name` or `code`           | `"A branch with this name or code already exists"`     | Verified live: creating the same `name` twice returns `409` on the 2nd |
+
+## 10. Postman Test Cases
+
+| #   | Case                              | Expected |
+| --- | ---------------------------------- | -------- |
+| 1   | Valid create, `name` only          | `201`    |
+| 2   | Valid create, `name` + `code`      | `201`    |
+| 3   | Duplicate `name`                  | `409`    |
+| 4   | Duplicate `code`, different `name` | `409`    |
+| 5   | Empty/whitespace `name`            | `400`    |
+| 6   | As `MANAGER`/`EMPLOYEE` token       | `403`    |
+| 7   | No token                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Malformed JSON body                | `400` from Express's own JSON body-parser, before this route's handler runs |
+| Tampered/expired JWT               | `401`                                                                       |
+| `name`/`code` as a number/array   | `400` — Zod's `.string()` rejects non-string types                          |
+| Extremely long `name` (thousands of chars) | Not separately bounded by an explicit max-length rule today — a known, undemonstrated gap, not verified live in this pass |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Concurrent creates with the same `name`                          | One succeeds, the other gets `409` — the pre-check can be beaten by a race, but the database's own unique constraint on `name`/`code` is the real guarantee (same pattern as Employee's `userId` uniqueness), translated from Prisma's `P2002` |
+| `code` omitted entirely                                          | Stored as `null` — no uniqueness conflict with other branches that also have no `code`                                                                |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot create a branch — verified
+  live. This is a deliberate departure from Employee's scoping, where
+  `MANAGER` has full parity with `ADMIN`.
+- **Mass assignment**: only `name`/`code` are read from the body — Zod's
+  schema strips anything else (e.g. an attempted `status: "ACTIVE"` or
+  `id` in the body is silently ignored, not applied).
+
+## 14. Database Impact
+
+- **Tables affected**: `Branch` (insert), `AuditLog` (insert).
+- **Transactions**: the `Branch` insert and the `AuditLog` insert happen
+  inside one `prisma.$transaction` — same pattern as Employee's mutations.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/branches
+    ↓
+authMiddleware
+    ↓
+requirePermission('branch:create')
+    ↓ (403 if not granted)
+validateMiddleware(createBranchSchema)
+    ↓ (400 if invalid)
+branch.controller.create → branch.service.createBranch(data, actor)
+    ├─ branchRepository.findByNameOrCode(name, code) → existing → 409
+    └─ prisma.$transaction:
+         ├─ branchRepository.create(data, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', afterData, ... }, tx)
+    ↓
+201 { branch }
+```
+
+## 16. Performance Notes
+
+Two indexed lookups (name/code uniqueness pre-check) plus one insert plus
+one audit-log insert in the same transaction — no notable performance
+concerns at current scale.
+
+## 17. Interview Notes
+
+- **Q: Why is `code` optional but `name` required?** `name` is the
+  human-facing identifier that must always exist; `code` is a
+  recommended-but-not-mandatory addition anticipating Payroll/reporting's
+  likely future need for a stable identifier distinct from the
+  human-editable display name (`docs/domain-branch.md §3`).
+- **Q: Why `ADMIN`-only here when Employee mutations allow `MANAGER`
+  too?** Branch is foundational org-structure master data shared
+  system-wide — a mistake here has a wider blast radius than a single
+  Employee record (ADR-B07).
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/branches \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Bengaluru HQ","code":"BLR-01"}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `branch.id` as `{{branchId}}` — used by every other
+Branch endpoint and by `POST /employees`'s `branchId` field.
+
+## 20. Testing Checklist
+
+- ✅ Valid create (with and without `code`) → `201`
+- ✅ Duplicate `name` → `409`
+- ✅ Empty/whitespace `name` → `400`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created with correct `beforeData: null`/`afterData`
+
+---
+
+---
+
+# 20. `GET /branches`
+
+## 1. Endpoint Information
+
+```
+Feature:            Branch Domain (2026-09-13, feature/15-branch-domain)
+Endpoint:           List Branch records
+Description:        Paginated, searchable, filterable, sortable list of branches
+Method:             GET
+URL:                /api/v1/branches
+API Version:        v1
+Module:             modules/branches
+Authentication:     Yes (Bearer access token)
+Authorization:      `branch:read` permission (granted to ADMIN, MANAGER, EMPLOYEE)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: lets any authenticated user browse/search branches —
+  needed for admin management screens and for populating a branch picker
+  when creating/updating an Employee.
+- **Business problem solved**: discoverability of existing branches
+  without a dedicated admin UI reading the database directly.
+- **Expected callers**: every role — `branch:read` is deliberately broad,
+  since Branch is non-sensitive reference data (same reasoning as
+  `department`/`jobTitle` being plain visible fields on Employee today).
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                      |
+| -------------------------------------- | -------- | -------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `branch:read` permission |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name      | Type    | Required | Default     | Description                              |
+| ----------- | ------- | -------- | ------------- | ------------------------------------------- |
+| `page`    | integer | No       | `1`         | 1-indexed page number                     |
+| `limit`   | integer | No       | `10` (max 100) | Page size                                |
+| `search`  | string  | No       | —           | Matches `name` and `code` (case-insensitive) |
+| `status`  | enum    | No       | —           | `ACTIVE` or `INACTIVE`                    |
+| `sortBy`  | enum    | No       | `createdAt` | `name`, `code`, `status`, `createdAt`     |
+| `order`   | enum    | No       | `desc`      | `asc` or `desc`                           |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same shape as `GET /employees`'s `listEmployeesQuerySchema` (`limit`
+capped at 100, `sortBy` restricted to an allowlist, `page`/`limit`
+coerced from query strings to integers).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "branches": [
+    {
+      "id": "c42c7743-72d5-4839-8f88-e3f87e9954f2",
+      "name": "Bengaluru HQ",
+      "code": "BLR-01",
+      "status": "ACTIVE",
+      "createdAt": "2026-09-13T09:54:38.817Z",
+      "updatedAt": "2026-09-13T09:54:38.817Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+Verified live, including `search` matching a branch by partial name.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                  | When                                       |
+| ------ | ------------------------------------ | -------------------------------------------------------- | --------------------------------------------- |
+| `400`  | A query parameter failed validation | e.g. `"limit: Too big: expected number to be <=100"`      | Out-of-bounds `limit`, invalid `sortBy`/`status` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                   |
+| `403`  | Caller lacks `branch:read`          | `"You do not have permission to perform this action"`   | Not expected in practice — every seeded role has this grant |
+
+## 10. Postman Test Cases
+
+| #   | Case                          | Expected |
+| --- | -------------------------------- | -------- |
+| 1   | Default pagination              | `200`, up to 10 results |
+| 2   | `search` matches an existing branch | `200`, filtered results |
+| 3   | `status=INACTIVE` filter         | `200`, only inactive branches |
+| 4   | `sortBy=name&order=asc`          | `200`, alphabetical      |
+| 5   | `limit=101`                     | `400`    |
+| 6   | As any authenticated role (ADMIN/MANAGER/EMPLOYEE) | `200` — verified live for both ADMIN and EMPLOYEE |
+| 7   | No token                        | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                   |
+| ----------------------------------- | -------------------------------------------------------------- |
+| `sortBy` value outside the allowlist | `400`                                                          |
+| `status` value outside the enum    | `400`                                                          |
+| Tampered/expired JWT               | `401`                                                          |
+
+## 12. Edge Cases
+
+| Scenario                             | Expected Behavior                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `page` beyond the last page             | `200` with an empty `branches` array, not an error — same convention as `GET /employees`                    |
+| Two branches with identical `createdAt` (unlikely but possible) | Deterministic ordering via the unconditional secondary `id ASC` tiebreaker, same pattern as Employees/Users |
+
+## 13. Security Testing
+
+- **Authorization**: `branch:read` is intentionally broad — there is no
+  `:own` scope for Branch (unlike Employee), since a branch has no
+  concept of ownership by a specific user. Confirmed no BOLA concern
+  arises from this, since there's nothing to leak beyond the branch's own
+  (non-sensitive) fields.
+
+## 14. Database Impact
+
+Read-only — `Branch.findMany` + `Branch.count`, run in parallel via
+`Promise.all` (same pattern as Employees/Users list endpoints), not a
+`$transaction`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/branches
+    ↓
+authMiddleware
+    ↓
+requirePermission('branch:read')
+    ↓ (403 if not granted)
+validateMiddleware(listBranchesQuerySchema, 'query')
+    ↓ (400 if invalid)
+branch.controller.list → branch.service.listBranches(query)
+    └─ Promise.all([branchRepository.findAll(...), branchRepository.count(...)])
+    ↓
+200 { branches, pagination }
+```
+
+## 16. Performance Notes
+
+Two parallel indexed queries; branch counts are expected to be modest
+(`docs/domain-branch.md §8` — tens, not tens of thousands), so pagination
+exists for consistency with the rest of the API rather than a demonstrated
+scale problem today.
+
+## 17. Interview Notes
+
+- **Q: Why does `EMPLOYEE` get `branch:read` when it doesn't get
+  `employee:read:any`?** Branch is non-sensitive reference data with no
+  ownership dimension — there's no equivalent of "read your own branch
+  only" the way Employee has `:own`, so the simplest correct grant is
+  read access for everyone.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/branches?search=Bengaluru&status=ACTIVE" \
+  -H "Authorization: Bearer $ANY_ROLE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run after `POST /branches` to confirm the created branch is discoverable
+via `search`.
+
+## 20. Testing Checklist
+
+- ✅ Default pagination, explicit `page`/`limit`
+- ✅ `search` across `name`/`code`
+- ✅ `status` filter
+- ✅ Sort both directions with deterministic tiebreaker
+- ✅ `200` for ADMIN and EMPLOYEE tokens alike (verified live)
+- ✅ `400` on out-of-bounds `limit`
+
+---
+
+---
+
+# 21. `GET /branches/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Branch Domain (2026-09-13, feature/15-branch-domain)
+Endpoint:           Get one Branch record
+Method:             GET
+URL:                /api/v1/branches/:id
+API Version:        v1
+Module:             modules/branches
+Authentication:     Yes (Bearer access token)
+Authorization:      `branch:read` permission (granted to every role)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Fetch a single branch's current details, e.g. to populate an edit form.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                      |
+| -------------------------------------- | -------- | -------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `branch:read` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description       |
+| ---- | ------------- | -------- | -------------------- |
+| `id` | string (UUID) | **Yes**  | The Branch record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check and the record's existence.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "branch": {
+    "id": "c42c7743-72d5-4839-8f88-e3f87e9954f2",
+    "name": "Bengaluru HQ",
+    "code": "BLR-01",
+    "status": "ACTIVE",
+    "createdAt": "2026-09-13T09:54:38.817Z",
+    "updatedAt": "2026-09-13T09:54:53.078Z"
+  }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                              |
+| ------ | ------------------------------------ | -------------------------------------------------------- | ------------------------------------ |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure           |
+| `403`  | Caller lacks `branch:read`           | `"You do not have permission to perform this action"`   | Not expected in practice           |
+| `404`  | No such branch                      | `"Branch not found"`                                    | Invalid/nonexistent `id`, verified live |
+
+## 10. Postman Test Cases
+
+| #   | Case             | Expected |
+| --- | ------------------ | -------- |
+| 1   | Existing `id`      | `200`    |
+| 2   | Nonexistent `id`   | `404`    |
+| 3   | No token           | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                   | Expected |
+| ----------------------------- | -------- |
+| Malformed (non-UUID) `id`     | `404` — same as every other endpoint taking `id` in the path |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+None beyond the standard existence check — Branch has no soft-delete
+concept, so there is no "exists but deleted" state to distinguish (unlike
+Employee's `deletedAt`).
+
+## 13. Security Testing
+
+No BOLA concern — Branch has no ownership dimension; every grant of
+`branch:read` sees identical data regardless of who's asking.
+
+## 14. Database Impact
+
+Read-only — single indexed `Branch.findUnique`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/branches/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('branch:read')
+    ↓ (403 if not granted)
+branch.controller.getById → branch.service.getBranchById(id)
+    └─ branchRepository.findById(id) → not found → 404
+    ↓
+200 { branch }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup by primary key — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why no `:own` scope here, unlike `GET /employees/:id`?** Branch
+  records aren't owned by a specific user the way an Employee record is
+  — there's nothing for a `:own` grant to compare against.
+
+## 18. cURL Examples
+
+```bash
+curl -s http://localhost:3000/api/v1/branches/$BRANCH_ID \
+  -H "Authorization: Bearer $ANY_ROLE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Uses `{{branchId}}` saved from `POST /branches`.
+
+## 20. Testing Checklist
+
+- ✅ Valid `id` → `200`
+- ✅ Nonexistent `id` → `404`
+- ✅ `401` with no token
+
+---
+
+---
+
+# 22. `PATCH /branches/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Branch Domain (2026-09-13, feature/15-branch-domain)
+Endpoint:           Update a Branch, including activating/deactivating it
+Method:             PATCH
+URL:                /api/v1/branches/:id
+API Version:        v1
+Module:             modules/branches
+Authentication:     Yes (Bearer access token)
+Authorization:      `branch:update` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: covers both ordinary field edits (`name`/`code`) and
+  the lifecycle transition (`status`) — there is no separate
+  activate/deactivate endpoint, mirroring Employee's single-PATCH
+  pattern.
+- **Business problem solved**: lets an admin correct branch details or
+  retire a branch from future assignment without losing history.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                           |
+| -------------------------------------- | -------- | -------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `branch:update` permission     |
+| `Content-Type: application/json`      | **Yes**  |                                                     |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description       |
+| ---- | ------------- | -------- | -------------------- |
+| `id` | string (UUID) | **Yes**  | The Branch record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{ "status": "INACTIVE" }
+```
+
+| Field    | Type   | Required | Description                                    |
+| ---------- | ------ | -------- | -------------------------------------------------- |
+| `name`   | string | No       | Trimmed, non-empty when provided                    |
+| `code`   | string | No       | Nullable — `null` clears it; trimmed, non-empty otherwise |
+| `status` | enum   | No       | `ACTIVE` or `INACTIVE`                              |
+
+All fields are independently optional (partial update) — send only the
+field(s) being changed.
+
+## 7. Validation Rules
+
+Same trimming/non-empty rules as creation for `name`/`code`; `status`
+restricted to the `BranchStatus` enum.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "branch": {
+    "id": "c42c7743-72d5-4839-8f88-e3f87e9954f2",
+    "name": "Bengaluru HQ",
+    "code": "BLR-01",
+    "status": "INACTIVE",
+    "createdAt": "2026-09-13T09:54:38.817Z",
+    "updatedAt": "2026-09-13T09:54:53.078Z"
+  }
+}
+```
+
+Verified live, including the `status` transition shown above.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                                       |
+| ------ | ------------------------------------ | -------------------------------------------------------- | ---------------------------------------------- |
+| `400`  | Validation failed                   | e.g. `"name: Branch name is required"`                  | Empty/whitespace-only `name`, invalid `status` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                    |
+| `403`  | Caller lacks `branch:update`        | `"You do not have permission to perform this action"`   | Verified live for `EMPLOYEE`                |
+| `404`  | No such branch                      | `"Branch not found"`                                    | Invalid/nonexistent `id`                    |
+| `409`  | Duplicate `name`/`code`             | `"A branch with this name or code already exists"`       | Renaming to a name/code already used by a different branch |
+
+## 10. Postman Test Cases
+
+| #   | Case                              | Expected |
+| --- | ------------------------------------ | -------- |
+| 1   | Update `name` only                   | `200`    |
+| 2   | Deactivate (`status: "INACTIVE"`)    | `200` — verified live |
+| 3   | Reactivate (`status: "ACTIVE"`)      | `200`    |
+| 4   | Rename to another branch's existing `name` | `409` |
+| 5   | Nonexistent `id`                     | `404`    |
+| 6   | As `EMPLOYEE`/`MANAGER` token         | `403`    |
+| 7   | No token                             | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                     | Expected |
+| -------------------------------- | -------- |
+| `status` outside the enum        | `400`    |
+| Empty body `{}`                  | `200`, no-op update (no fields to change) — not separately verified live in this pass |
+| Tampered/expired JWT             | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                       |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Deactivating a branch with active Employee assignments             | Succeeds; existing `Employee.branchId` references are **untouched** — verified live. Only *future* assignment attempts are blocked (see `POST /employees`'s branch-assignability check). |
+| Reactivating a branch                                              | Immediately assignable again — the positive-allowlist check only looks at current `status`, not history                    |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot update a branch — same
+  `ADMIN`-only scoping as create/delete (ADR-B07).
+- **Mass assignment**: only `name`/`code`/`status` are read from the body
+  — Zod strips anything else (e.g. an attempted `id` or `createdAt` in
+  the body is ignored).
+
+## 14. Database Impact
+
+- **Tables affected**: `Branch` (update), `AuditLog` (insert).
+- **Transactions**: the `Branch` update and the `AuditLog` insert happen
+  inside one `prisma.$transaction`.
+- **Cascade behavior**: none — deactivating never touches `Employee` rows.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/branches/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('branch:update')
+    ↓ (403 if not granted)
+validateMiddleware(updateBranchSchema)
+    ↓ (400 if invalid)
+branch.controller.update → branch.service.updateBranch(id, data, actor)
+    ├─ branchRepository.findById(id) → not found → 404
+    ├─ (if name/code changing) branchRepository.findByNameOrCode(...) → conflict → 409
+    └─ prisma.$transaction:
+         ├─ branchRepository.update(id, data, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', beforeData, afterData, ... }, tx)
+    ↓
+200 { branch }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup, optional uniqueness pre-check, one update, one
+audit-log insert — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why no separate activate/deactivate endpoint?** Consistent with
+  Employee's single-PATCH pattern already established in this API —
+  status is just another field, not a distinct resource action.
+- **Q: What actually happens to already-assigned employees when a
+  branch is deactivated?** Nothing — `docs/domain-branch.md`'s Decision
+  is explicit that deactivation never modifies or nulls existing
+  `Employee.branchId` references, only blocks *future* assignment.
+  Verified live.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/branches/$BRANCH_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"INACTIVE"}'
+```
+
+## 19. Postman Collection Notes
+
+Run a deactivate/reactivate pair back-to-back to confirm both transitions
+work, then re-run `POST /employees` with `{{branchId}}` while inactive to
+confirm the `400` from the assignability check.
+
+## 20. Testing Checklist
+
+- ✅ Field-only update, status-only update, both together
+- ✅ Deactivate → existing Employee links untouched (verified live)
+- ✅ Deactivate → future assignment rejected with `400` (verified live)
+- ✅ `409` on rename collision
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created with correct before/after snapshots
+
+---
+
+---
+
+# 23. `DELETE /branches/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Branch Domain (2026-09-13, feature/15-branch-domain)
+Endpoint:           Hard-delete a Branch
+Description:        Permanently removes a Branch row - only when zero Employee records reference it
+Method:             DELETE
+URL:                /api/v1/branches/:id
+API Version:        v1
+Module:             modules/branches
+Authentication:     Yes (Bearer access token)
+Authorization:      `branch:delete` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: covers the genuine data-entry-mistake case (a branch
+  created in error, with zero employees ever assigned to it) — per
+  `docs/domain-branch.md §11`, this is deliberately the *only* hard-delete
+  path; a referenced branch must be deactivated instead.
+- **Business problem solved**: cleanup without leaving orphaned rows for
+  branches that were never actually used.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                       |
+| -------------------------------------- | -------- | -------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `branch:delete` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description       |
+| ---- | ------------- | -------- | -------------------- |
+| `id` | string (UUID) | **Yes**  | The Branch record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check, the record's existence, and the
+zero-reference check described below.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Branch deleted successfully"
+}
+```
+
+Verified live for a branch with zero Employee references.
+
+## 9. Error Responses
+
+| Status | Reason                                      | Response (`message`)                                                                | When                                                                 |
+| ------ | ---------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token           | Same as every other protected endpoint                                                  | `authMiddleware` failure                                                 |
+| `403`  | Caller lacks `branch:delete`                    | `"You do not have permission to perform this action"`                                    | Verified live for `EMPLOYEE`                                             |
+| `404`  | No such branch                                 | `"Branch not found"`                                                                     | Invalid/nonexistent `id`                                                  |
+| `409`  | Branch is referenced by one or more Employees   | `"This branch has Employee records referencing it and cannot be deleted - deactivate it instead"` | Verified live — including when the only reference is a **soft-deleted** Employee (see Edge Cases) |
+
+## 10. Postman Test Cases
+
+| #   | Case                                          | Expected |
+| --- | ------------------------------------------------ | -------- |
+| 1   | Delete a branch with zero Employee references     | `200` — verified live |
+| 2   | Delete a branch with an active Employee reference | `409` — verified live |
+| 3   | Nonexistent `id`                                  | `404`    |
+| 4   | As `EMPLOYEE`/`MANAGER` token                      | `403`    |
+| 5   | No token                                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario              | Expected |
+| ------------------------ | -------- |
+| Malformed (non-UUID) `id` | `404`    |
+| Tampered/expired JWT      | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                                 | Expected Behavior                                                                                                                                                                       |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Branch referenced **only** by a soft-deleted Employee (`deletedAt` set)      | Still `409` — the reference count deliberately includes soft-deleted Employee rows, not just active ones, since the schema's `onDelete: Restrict` on `Employee.branchId` would refuse the actual delete at the database level regardless of `deletedAt`. Documented explicitly in `branch.repository.js`, not separately re-verified with a live soft-deleted fixture in this pass. |
+| Concurrent delete requests for the same `id`                                 | One succeeds, the other sees `404` — not independently verified under true concurrency (same caveat as Employee's equivalent case)                                                       |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot delete a branch — verified
+  live, same `ADMIN`-only scoping as create/update.
+- **Idempotency under retry**: a retried `DELETE` after a timeout gets a
+  safe `404` on the second attempt, not a destructive side effect.
+
+## 14. Database Impact
+
+- **Tables affected**: `Branch` (delete — this is the one Branch
+  operation that is a real row deletion, not a status update),
+  `AuditLog` (insert).
+- **Rows deleted**: exactly 1 `Branch` row, only when zero Employee
+  references exist.
+- **Transactions**: the `Branch` delete and the `AuditLog` insert happen
+  inside one `prisma.$transaction`.
+- **DB-level backstop**: `Employee.branchId`'s `onDelete: Restrict` means
+  even if this service-layer check were somehow bypassed, Postgres itself
+  would refuse the delete with a foreign-key-violation error rather than
+  silently orphaning Employee rows.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/branches/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('branch:delete')
+    ↓ (403 if not granted)
+branch.controller.remove → branch.service.deleteBranch(id, actor)
+    ├─ branchRepository.findById(id) → not found → 404
+    ├─ branchRepository.countEmployeesForBranch(id) → count > 0 → 409
+    └─ prisma.$transaction:
+         ├─ branchRepository.remove(id, tx)
+         └─ auditLogRepository.create({ action: 'DELETE', beforeData, afterData: null, ... }, tx)
+    ↓
+200 { message: "Branch deleted successfully" }
+```
+
+## 16. Performance Notes
+
+One indexed existence lookup, one `Employee` count query, one delete, one
+audit-log insert — no notable performance concerns at current scale.
+
+## 17. Interview Notes
+
+- **Q: Why hard-delete for Branch when Employee only ever soft-deletes?**
+  Branch's lifecycle model uses a `status` field for the normal
+  "retire this branch" case (ADR-B04) — hard delete exists only as a
+  narrow escape hatch for a branch that was never actually used, which is
+  a fundamentally different scenario from offboarding an employee who
+  has real history to preserve.
+- **Q: Why count soft-deleted Employees too, not just active ones?**
+  Because the DB-level `onDelete: Restrict` constraint would block the
+  delete anyway regardless of `deletedAt` — checking only active
+  references would let this service-layer check pass while the actual
+  delete still throws a raw, untranslated foreign-key error.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/branches/$BRANCH_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this **last** for any `{{branchId}}` with zero Employee references;
+for a referenced branch, expect and assert on the `409`, not a `200`.
+
+## 20. Testing Checklist
+
+- ✅ Delete with zero references → `200` (verified live)
+- ✅ Delete with an active reference → `409` (verified live)
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `404` for nonexistent `id`
+- ✅ `AuditLog` row created for the deletion
