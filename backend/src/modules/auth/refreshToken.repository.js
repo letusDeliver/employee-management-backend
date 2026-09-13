@@ -21,4 +21,11 @@ const revoke = (id, client = prisma) => {
   });
 };
 
-export default { create, findValidByHash, revoke };
+const revokeAllForUser = (userId, client = prisma) => {
+  return client.refreshToken.updateMany({
+    where: { userId, revoked: false },
+    data: { revoked: true },
+  });
+};
+
+export default { create, findValidByHash, revoke, revokeAllForUser };

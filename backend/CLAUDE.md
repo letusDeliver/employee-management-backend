@@ -2085,3 +2085,56 @@ Verified live end-to-end against the running server: asset registration and dupl
 Deliberately **backend-only**, same as every prior domain.)_
 
 _(Follow-up fix — 2026-09-22, same branch. The pre-existing `req.query` vs `req.validatedQuery` defect noted at the end of the Asset Management entry above is fixed: `application`, `candidate`, `jobRequisition`, `trainingProgram` and `enrollment` controllers (list endpoints, plus `GET /training-compliance`'s read of its validated params) now read `req.validatedQuery`, matching every earlier domain. `grep req.query` over all controllers is now empty. Verified live against the running server — every affected list endpoint returns 200 with the correct `pagination` shape (defaults and explicit `limit`/`sortBy`/`order`), and `/training-compliance` returns 200; scratch user cleaned up. 124 tests pass across repeated runs, lint silent. No service-test coverage existed for this class of bug because tests call services directly and bypass controllers — live verification of list endpoints remains the only guard.)_
+
+_(Offboarding Revokes Access by Default (ADR-006) — 2026-09-13, on branch
+`security/offboarding-access-revocation`. Not a numbered feature; closes a
+real, named security gap surfaced by the separately-maintained
+`docs/domain-identity-employee-lifecycle.md` business-architecture review:
+`softDeleteEmployee` soft-deleted the `Employee` row and wrote its audit
+log, but made zero calls into `User`-related logic, so an offboarded
+employee's existing access token and refresh token both remained fully
+valid. Full reconnaissance → plan → approval cycle held with the user
+first, including one flagged-and-resolved fork: the plan's one open
+question (immediate session-kill vs. refresh-token-only revocation)
+turned out not to need the user's input at all — investigating the
+existing token code first revealed `User.tokensValidAfter` and
+`authMiddleware`'s `iat` check (added for `logout()`'s multi-tab gap)
+already give exactly the "kill everything outstanding, right now"
+guarantee; the only real gap was that `RefreshToken` had no bulk revoke,
+only revoke-by-id.
+
+Implementation: `refreshToken.repository.js` gained
+`revokeAllForUser(userId)` (an `updateMany` scoped to that user's
+non-revoked tokens). `employee.service.js`'s `softDeleteEmployee`, inside
+its existing transaction, now calls
+`userRepository.invalidateTokensIssuedBefore` and the new
+`revokeAllForUser` whenever the employee has a linked `userId` — a no-op,
+by design, for employees with none. No schema migration was needed; both
+underlying columns already existed. Deliberately scoped to revoking
+*existing* access only, not preventing a *fresh* re-login — that half
+requires resurrecting the still-deferred ADR-007 (`User` account status),
+which this pass intentionally left alone since nothing here created a new
+verified requirement for it.
+
+This also seeded the project's first automated test: `package.json`'s
+`test` script had been the default `npm init` stub since day one (verified
+— no test framework was installed at all). Rather than pick a framework
+mid-feature, this was raised to the user explicitly; the user chose
+Node's built-in `node:test` runner (zero new dependencies) over adding
+Jest. `employee.service.test.js` is a real integration test — it runs
+against the actual dev database (no test-DB isolation infra exists yet,
+so fixtures are created with unique emails and fully cleaned up in an
+`after()` hook, the same discipline `handbook/TESTING_GUIDE.md` already
+uses for manual runs) and proves, end-to-end: a pre-offboarding access
+token is rejected by the real `authMiddleware` on its next request; a
+pre-offboarding refresh token is rejected by the real `authService.refresh`;
+and offboarding an employee with no linked user does not throw. Verified
+live: all three tests pass against the real dev database, confirmed zero
+leftover rows afterward, `npm run lint` and `prettier --check` clean.
+
+`docs/domain-identity-employee-lifecycle.md`'s ADR-006 (and its Challenge
+This Design / Final Sign-off sections), `docs/adr-index.md`, and
+`docs/deferred-decisions-register.md` updated to mark ADR-006 implemented
+— ADR-007 explicitly left as still deferred in all three, not silently
+resolved. No endpoint shape changed, so `handbook/API_ENDPOINTS.md` did
+not need an update.)_

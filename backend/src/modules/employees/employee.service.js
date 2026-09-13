@@ -6,6 +6,8 @@ import branchService from '../branches/branch.service.js';
 import departmentService from '../departments/department.service.js';
 import designationService from '../designations/designation.service.js';
 import shiftService from '../shifts/shift.service.js';
+import userRepository from '../users/user.repository.js';
+import refreshTokenRepository from '../auth/refreshToken.repository.js';
 import ConflictError from '../../errors/ConflictError.js';
 import NotFoundError from '../../errors/NotFoundError.js';
 import ForbiddenError from '../../errors/ForbiddenError.js';
@@ -283,6 +285,18 @@ const softDeleteEmployee = async (id, actor) => {
 
   await prisma.$transaction(async (tx) => {
     await employeeRepository.softDelete(id, tx);
+
+    // ADR-006: offboarding revokes access by default. Mirrors logout()'s own
+    // two-part revocation (see auth.service.js) so an offboarded employee's
+    // linked account loses access the same way a manual logout would - every
+    // outstanding access token stops being trusted on its very next request
+    // (tokensValidAfter), and no outstanding refresh token can mint a new one
+    // (revokeAllForUser, unlike logout which only revokes the one token it
+    // was handed). No-ops for employees with no linked userId.
+    if (employee.userId) {
+      await userRepository.invalidateTokensIssuedBefore(employee.userId, new Date(), tx);
+      await refreshTokenRepository.revokeAllForUser(employee.userId, tx);
+    }
 
     await auditLogRepository.create(
       {
