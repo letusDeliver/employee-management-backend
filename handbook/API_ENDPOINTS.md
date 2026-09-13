@@ -258,10 +258,23 @@ in Postman's cookie jar once register/login/refresh sets it.
 | 21  | Branches  | `GET`    | `/branches/:id`                        | Access token              | `branch:read`                                  | Protected          |
 | 22  | Branches  | `PATCH`  | `/branches/:id`                        | Access token              | `branch:update`                                | Protected          |
 | 23  | Branches  | `DELETE` | `/branches/:id`                        | Access token              | `branch:delete`                                | Protected          |
+| 24  | Departments | `POST`   | `/departments`                        | Access token              | `department:create`                            | Protected          |
+| 25  | Departments | `GET`    | `/departments`                        | Access token              | `department:read`                              | Protected          |
+| 26  | Departments | `GET`    | `/departments/:id`                    | Access token              | `department:read`                              | Protected          |
+| 27  | Departments | `PATCH`  | `/departments/:id`                    | Access token              | `department:update`                            | Protected          |
+| 28  | Departments | `DELETE` | `/departments/:id`                    | Access token              | `department:delete`                            | Protected          |
 
 **As of the Branch domain (2026-09-13)**, `Employee` create/update also
 accept an optional `branchId` — see endpoints 9 and 12 above, whose
 Validation Rules sections should be read alongside endpoints 19-23 below.
+
+**As of the Department domain (2026-09-13) — BREAKING CHANGE**: `Employee`'s
+free-text `department` (`String`) field was **removed entirely** and
+replaced by a mandatory `departmentId` (UUID, references `Department.id`).
+Every existing Employee row was backfilled (`prisma/backfill-department.js`)
+before the column was dropped — see endpoints 9, 10, and 12 above (their
+Request Body/Validation Rules sections are updated in place, not
+duplicated here) and endpoints 24-28 below.
 
 **As of Feature 9**, authorization is permission-based, not role-based —
 `ADMIN`/`MANAGER`/`EMPLOYEE` are just role _names_ that happen to be
@@ -1911,7 +1924,7 @@ None.
 | `page`    | number | `1`         | No       | Integer `>= 1`            | `0` or negative → `400`.                                                                        |
 | `limit`   | number | `10`        | No       | Integer `1`-`100`         | `0`, negative, or `> 100` → `400` (rejected, not silently clamped).                             |
 | `search`  | string | _(none)_    | No       | Any string                 | Case-insensitive partial match across `name` and `email`. An empty `search=` is treated identically to omitting it entirely. |
-| `role`    | string | _(none)_    | No       | Any string                 | Case-insensitive **exact** match against a role **name** (e.g. `ADMIN`, `admin`, and `Admin` all match) via the `userRoles`/`Role` relation. Not validated against the real `Role` table — an unmatched value simply returns zero rows, same behavior as Employees' `department`/`jobTitle` filters. |
+| `role`    | string | _(none)_    | No       | Any string                 | Case-insensitive **exact** match against a role **name** (e.g. `ADMIN`, `admin`, and `Admin` all match) via the `userRoles`/`Role` relation. Not validated against the real `Role` table — an unmatched value simply returns zero rows, same behavior as Employees' `jobTitle` filter. |
 | `sortBy`  | string | `createdAt` | No       | `name`, `email`, `createdAt` | Whitelisted — any other value → `400`, never passed through to Prisma's `orderBy` directly. Roles are multi-valued and deliberately not sortable. |
 | `order`   | string | `desc`      | No       | `asc`, `desc`               | Any other value → `400`.                                                                        |
 
@@ -2100,9 +2113,10 @@ user.controller.list → user.service.listUsers(req.validatedQuery)
   on `User`.
 - `email` already carries a real unique-constraint B-tree index; `name`
   does not — a deliberate, explicitly-considered choice, left unindexed
-  for now, matching Employees' own unindexed `department`/`jobTitle`
-  precedent. Revisit only if sorting/searching by name is measurably slow
-  at real scale.
+  for now, matching Employees' own unindexed `jobTitle` precedent
+  (`departmentId` itself is indexed, as of the Department domain, but a
+  search still joins into `Department.name` to match it). Revisit only if
+  sorting/searching by name is measurably slow at real scale.
 - **A real cross-cutting constraint worth knowing**: the frontend's
   `UserDirectoryService` (used by Employees for name-resolution
   enrichment) calls this same endpoint with `limit=100` and no other
@@ -2241,7 +2255,7 @@ None.
 ```json
 {
   "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
-  "department": "Engineering",
+  "departmentId": "c74add11-d421-429d-b46c-a118fc5f817d",
   "jobTitle": "Backend Developer",
   "salary": 75000,
   "dateOfJoining": "2024-01-15",
@@ -2253,7 +2267,7 @@ None.
 | Field           | Type              | Required | Notes                                                                                                                                                           |
 | --------------- | ----------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `userId`        | string (UUID)     | No       | Links this Employee to a login account. Omit for an HR-only record with no system access.                                                                       |
-| `department`    | string            | Yes      | Free-text, trimmed then min 1 character after trimming (whitespace-only is rejected) — not a normalized `Department` table (see Known Gaps).                    |
+| `departmentId`  | string (UUID)     | **Yes**  | **Changed by the Department domain (2026-09-13) — was free-text `department: string`, now a mandatory FK.** Must reference an existing Department whose `status` is `ACTIVE` — checked via `departmentService.assertDepartmentAssignable`, the same synchronous-read shape as `branchId`'s check (see endpoint 24's domain). Rejects with `400 departmentId: Invalid input: expected string, received undefined` (missing entirely), `400 departmentId: references a record that does not exist`, or `400 departmentId: this department is not active and cannot be assigned`. Verified live, including the missing-field case. |
 | `jobTitle`      | string            | Yes      | Free-text, trimmed then min 1 character after trimming.                                                                                                        |
 | `salary`        | number            | Yes      | Must be a positive number, capped at 100,000,000 (a sanity ceiling, not a real business limit).                                                                |
 | `dateOfJoining` | string (ISO date) | Yes      | Coerced to a `Date`. Cannot be in the future.                                                                                                                   |
@@ -2265,13 +2279,19 @@ None.
 Enforced by `src/modules/employees/employee.validation.js`'s
 `createEmployeeSchema` (Zod), via `validateMiddleware`.
 
-- `userId`/`managerId`: if present, must be syntactically valid UUIDs
-  (Zod's `.uuid()`).
-- `department`/`jobTitle`: `.trim()`ed first, then must be non-empty —
-  a whitespace-only value ("   ") is rejected with the same
-  `"Department is required"`/`"Job title is required"` message an
-  entirely empty one gets, and the **stored** value is the trimmed one
-  (confirmed live: `"  Engineering  "` is saved as `"Engineering"`).
+- `userId`/`managerId`/`departmentId`/`branchId`: if present, must be
+  syntactically valid UUIDs (Zod's `.uuid()`). `departmentId` is the only
+  one of these four that is **required**, not optional — an entirely
+  missing `departmentId` produces
+  `"departmentId: Invalid input: expected string, received undefined"`,
+  verified live.
+- `jobTitle`: `.trim()`ed first, then must be non-empty — a
+  whitespace-only value ("   ") is rejected with the same
+  `"Job title is required"` message an entirely empty one gets, and the
+  **stored** value is the trimmed one (confirmed live). Department's own
+  equivalent trimming/uniqueness rule now lives on `Department.name`
+  instead (see endpoint 24), since `department` is no longer a free-text
+  field on Employee at all.
 - `salary`: must be a positive number, capped at 100,000,000. Custom
   messages: `"Salary must be a positive number"` /
   `"Salary seems unreasonably high"`. The cap is a sanity ceiling meant
@@ -2305,11 +2325,12 @@ Enforced by `src/modules/employees/employee.validation.js`'s
   "employee": {
     "id": "954690da-d433-4b7e-9e04-1c7be03c36bd",
     "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
-    "department": "Engineering",
+    "departmentId": "c74add11-d421-429d-b46c-a118fc5f817d",
     "jobTitle": "Backend Developer",
     "salary": "75000",
     "dateOfJoining": "2024-01-15T00:00:00.000Z",
     "managerId": null,
+    "branchId": null,
     "deletedAt": null,
     "createdAt": "2026-07-05T04:52:52.814Z",
     "updatedAt": "2026-07-05T04:52:52.814Z"
@@ -2328,15 +2349,16 @@ Enforced by `src/modules/employees/employee.validation.js`'s
 
 | Status | Reason                                               | Response (`message`)                                                                       | When                                                                                                                                        |
 | ------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `400`  | Missing required field(s)                            | e.g. `"department: Invalid input: expected string, received undefined"` (joined per field) | Any of `department`/`jobTitle`/`salary`/`dateOfJoining` absent                                                                              |
+| `400`  | Missing required field(s)                            | e.g. `"departmentId: Invalid input: expected string, received undefined"` (joined per field) | Any of `departmentId`/`jobTitle`/`salary`/`dateOfJoining` absent — verified live for `departmentId`                                        |
 | `400`  | Negative/zero salary                                 | `"salary: Salary must be a positive number"`                                               | `salary <= 0`                                                                                                                               |
 | `400`  | Salary over the sanity ceiling                       | `"salary: Salary seems unreasonably high"`                                                 | `salary > 100,000,000`                                                                                                                       |
-| `400`  | Whitespace-only `department`/`jobTitle`               | `"department: Department is required"` (or `jobTitle:`)                                    | `"   "` — trimmed to empty before the length check                                                                                          |
+| `400`  | Whitespace-only `jobTitle`                            | `"jobTitle: Job title is required"`                                                        | `"   "` — trimmed to empty before the length check                                                                                          |
+| `400`  | `departmentId` doesn't exist or is inactive          | `"departmentId: references a record that does not exist"` / `"departmentId: this department is not active and cannot be assigned"` | Verified live for both                                                                                                                       |
 | `400`  | Future `dateOfJoining`                               | `"dateOfJoining: Date of joining cannot be in the future"`                                 | Date is after "now"                                                                                                                         |
-| `400`  | Invalid UUID for `userId`/`managerId`                | Zod's default UUID-format message                                                          | Malformed UUID string supplied                                                                                                              |
+| `400`  | Invalid UUID for `userId`/`managerId`/`departmentId`/`branchId` | Zod's default UUID-format message                                              | Malformed UUID string supplied                                                                                                              |
 | `400`  | Malformed JSON body                                  | `"Invalid JSON in request body"`                                                           | Same as every other JSON-body endpoint                                                                                                      |
 | `401`  | No/invalid/expired access token                      | Same as every other protected endpoint                                                     | `authMiddleware` failure                                                                                                                    |
-| `400`  | `userId`/`managerId` references a nonexistent record | `"userId: references a record that does not exist"` (or `managerId:`)                      | The referenced `User`/`Employee` doesn't exist — a Prisma FK-violation (`P2003`), translated in the service rather than left as a raw `500` |
+| `400`  | `userId`/`managerId`/`branchId`/`departmentId` references a nonexistent record | `"userId: references a record that does not exist"` (or `managerId:`/`branchId:`/`departmentId:`) | The referenced record doesn't exist — a Prisma FK-violation (`P2003`), translated in the service rather than left as a raw `500`, or (for `branchId`/`departmentId`) rejected earlier by the assignability check before the DB is even touched |
 | `403`  | Roles don't grant `employee:create`                  | `"You do not have permission to perform this action"`                                      | Authenticated as plain `EMPLOYEE`                                                                                                           |
 | `409`  | `userId` already has an Employee record              | `"This user already has an employee record"`                                               | Duplicate `userId` (only counts non-deleted records), via pre-check or the DB's own partial-unique-index constraint                         |
 
@@ -2344,24 +2366,26 @@ Enforced by `src/modules/employees/employee.validation.js`'s
 
 | #   | Case                 | Body                                                                                                                        | Expected                            |
 | --- | -------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| 1   | Valid, with `userId` | `{"userId":"<uuid>","department":"Engineering","jobTitle":"Backend Developer","salary":75000,"dateOfJoining":"2024-01-15"}` | `201`                               |
+| 1   | Valid, with `userId` | `{"userId":"<uuid>","departmentId":"<uuid>","jobTitle":"Backend Developer","salary":75000,"dateOfJoining":"2024-01-15"}` | `201`                               |
 | 2   | Valid, no `userId`   | Same, minus `userId`                                                                                                        | `201`, `employee.userId: null`      |
 | 3   | Duplicate `userId`   | Same `userId` as test 1, run again                                                                                          | `409`                               |
-| 4   | Empty body           | `{}`                                                                                                                        | `400`, all 4 required fields listed |
+| 4   | Empty body           | `{}`                                                                                                                        | `400`, `departmentId`/`jobTitle`/`salary`/`dateOfJoining` all listed |
 | 5   | Negative salary      | `{..., "salary": -500}`                                                                                                     | `400`                               |
 | 6   | Future date          | `{..., "dateOfJoining": "2099-01-01"}`                                                                                      | `400`                               |
 | 7   | As `EMPLOYEE` token  | Any valid body                                                                                                              | `403`                               |
 | 8   | No token             | Any valid body                                                                                                              | `401`                               |
 | 9   | Nonexistent `userId` | `{..., "userId": "00000000-0000-0000-0000-000000000000"}`                                                                   | `400`, not `500`                    |
+| 10  | Nonexistent `departmentId` | `{..., "departmentId": "00000000-0000-0000-0000-000000000000"}`                                                       | `400`, not `500` — verified live    |
+| 11  | Inactive `departmentId` | `{..., "departmentId": "<id of an INACTIVE department>"}`                                                                 | `400` — verified live               |
 
 ## 11. Negative Testing
 
 | Payload/Scenario                                        | Expected                                                                                                       |
 | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | Wrong data types (`"salary": "not-a-number"`)           | `400` — Zod type-check fails                                                                                   |
-| SQL injection attempt in `department`/`jobTitle`        | Stored as literal text — Prisma's parameterized queries neutralize it; no query-structure risk                 |
+| SQL injection attempt in `jobTitle`                      | Stored as literal text — Prisma's parameterized queries neutralize it; no query-structure risk                 |
 | XSS attempt (`"jobTitle": "<script>alert(1)</script>"`) | Accepted and stored as-is — same frontend-escaping-is-the-real-boundary reasoning as `register`'s `name` field |
-| Very long `department`/`jobTitle` (10,000+ characters)  | Currently accepted — no max-length rule, a real (if minor) gap, same class as `register`'s `name` field        |
+| Very long `jobTitle` (10,000+ characters)               | Currently accepted — no max-length rule, a real (if minor) gap, same class as `register`'s `name` field. `Department.name` has the same gap (see endpoint 24). |
 | Malformed JSON                                          | `400`, `"Invalid JSON in request body"`                                                                        |
 | Tampered/expired JWT                                    | `401`                                                                                                          |
 | Wrong role (`EMPLOYEE`)                                 | `403`                                                                                                          |
@@ -2484,7 +2508,7 @@ employee.service.createEmployee(data, { id: req.user.id, ipAddress: req.ip })
 curl -i -X POST http://localhost:3000/api/v1/employees \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -d '{"department":"Engineering","jobTitle":"Backend Developer","salary":75000,"dateOfJoining":"2024-01-15"}'
+  -d '{"departmentId":"'"$DEPARTMENT_ID"'","jobTitle":"Backend Developer","salary":75000,"dateOfJoining":"2024-01-15"}'
 ```
 
 ## 19. Postman Collection Notes
@@ -2498,8 +2522,8 @@ Requires `{{accessToken}}` to resolve to `employee:create` (`ADMIN`/
 - ✅ Success with and without `userId`
 - ✅ `409` on duplicate (still-active) `userId`
 - ✅ `201` re-creating for a `userId` whose prior Employee record was soft-deleted
-- ✅ `400` (not `500`) on nonexistent `userId`/`managerId`
-- ✅ `400` on missing fields, negative salary, future date
+- ✅ `400` (not `500`) on nonexistent `userId`/`managerId`/`branchId`/`departmentId`
+- ✅ `400` on inactive `departmentId`/`branchId`, missing fields, negative salary, future date
 - ✅ `403` as `EMPLOYEE`, `401` with no token
 - ✅ `salary` returned as a string, not a number
 - ✅ No sensitive data leaked beyond the intended `salary` field
@@ -2554,14 +2578,14 @@ None.
 | ------------ | ------ | ----------- | -------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `page`       | number | `1`         | No       | Integer `>= 1`                                                   | `0` or negative → `400`.                                                                                                                                                     |
 | `limit`      | number | `10`        | No       | Integer `1`-`100`                                                | `0`, negative, or `> 100` → `400` (rejected, not silently clamped).                                                                                                          |
-| `search`     | string | _(none)_    | No       | Any string                                                       | Case-insensitive partial match across `department`, `jobTitle`, the linked `User.name`, and `User.email`. An empty `search=` is treated identically to omitting it entirely. |
-| `department` | string | _(none)_    | No       | Any string                                                       | **Exact** match, case-insensitive (not a partial match — use `search` for partial).                                                                                          |
-| `jobTitle`   | string | _(none)_    | No       | Any string                                                       | Same as `department`.                                                                                                                                                        |
+| `search`      | string | _(none)_    | No       | Any string                                                       | Case-insensitive partial match against the linked **Department's name** (a relation, not a column — see the Department domain, 2026-09-13), `jobTitle`, the linked `User.name`, and `User.email`. An empty `search=` is treated identically to omitting it entirely. |
+| `departmentId` | string | _(none)_   | No       | Valid UUID                                                       | **Changed by the Department domain (2026-09-13) — was a case-insensitive exact-match `department: string` filter.** Now an exact UUID FK match. Invalid UUID format → `400`. |
+| `jobTitle`    | string | _(none)_    | No       | Any string                                                       | **Exact** match, case-insensitive (not a partial match — use `search` for partial).                                                                                          |
 | `managerId`  | string | _(none)_    | No       | Valid UUID                                                       | Exact match. Invalid UUID format → `400`.                                                                                                                                    |
-| `sortBy`     | string | `createdAt` | No       | `department`, `jobTitle`, `salary`, `dateOfJoining`, `createdAt` | Whitelisted — any other value → `400`, never passed through to Prisma's `orderBy` directly.                                                                                  |
+| `sortBy`     | string | `createdAt` | No       | `department`, `jobTitle`, `salary`, `dateOfJoining`, `createdAt` | Whitelisted — any other value → `400`, never passed through to Prisma's `orderBy` directly. `department` sorts by the linked Department's `name` via a nested one-hop `orderBy` (a relation sort, not a column sort) — the query-string value stayed `department` for API stability even though the underlying field is now `departmentId`. |
 | `order`      | string | `desc`      | No       | `asc`, `desc`                                                    | Any other value → `400`.                                                                                                                                                     |
 
-All filters (`department`, `jobTitle`, `managerId`) combine with **AND**;
+All filters (`departmentId`, `jobTitle`, `managerId`) combine with **AND**;
 `search` contributes one **OR** block across its four fields, itself
 ANDed with whatever filters are also present.
 
@@ -2587,11 +2611,12 @@ schema before the service ever sees it; nothing reaches Prisma unvalidated.
     {
       "id": "ecb69110-8183-4769-a98b-8b0f69bf2f6a",
       "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
-      "department": "Support",
+      "departmentId": "adcb7061-89b8-427d-aa4c-b854cb79bfcc",
       "jobTitle": "Specialist",
       "salary": "55000",
       "dateOfJoining": "2024-03-01T00:00:00.000Z",
       "managerId": null,
+      "branchId": null,
       "deletedAt": null,
       "createdAt": "2026-07-05T05:58:39.416Z",
       "updatedAt": "2026-07-05T05:58:39.416Z"
@@ -2618,7 +2643,7 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 | Status | Reason                                | Response (`message`)                                  | When                                      |
 | ------ | ------------------------------------- | ----------------------------------------------------- | ----------------------------------------- |
 | `400`  | `page`/`limit` out of bounds          | Zod's bounds-violation message                        | `page < 1`, `limit < 1`, or `limit > 100` |
-| `400`  | Invalid `managerId`                   | Zod's UUID-format message                             | Malformed UUID supplied                   |
+| `400`  | Invalid `managerId`/`departmentId`    | Zod's UUID-format message                             | Malformed UUID supplied                   |
 | `400`  | Invalid `sortBy`                      | Zod's enum message listing the allowed values         | Any value outside the whitelist           |
 | `400`  | Invalid `order`                       | Zod's enum message                                    | Any value other than `asc`/`desc`         |
 | `401`  | No/invalid/expired access token       | Same as every other protected endpoint                | `authMiddleware` failure                  |
@@ -2633,9 +2658,9 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 | 3   | Out-of-bounds `page`                  | `?page=0`                              | `400`                                                        |
 | 4   | Out-of-bounds `limit`                 | `?limit=0` or `?limit=500`             | `400`                                                        |
 | 5   | Empty search                          | `?search=`                             | `200`, identical `total` to no `search` at all               |
-| 6   | Search by department (Employee field) | `?search=Sales`                        | `200`, only `Sales`-department rows                          |
+| 6   | Search by department name (relation) | `?search=Sales`                        | `200`, only rows whose linked Department's name matches `Sales` |
 | 7   | Search by linked user's name          | `?search=<a linked User's name>`       | `200`, matches via the `user.name` relation                  |
-| 8   | Exact filter, wrong case              | `?department=engineering`              | `200`, still matches `"Engineering"` rows (case-insensitive) |
+| 8   | Exact filter by departmentId          | `?departmentId=<a real Department id>` | `200`, only rows with that exact `departmentId`               |
 | 9   | Sort ascending vs. descending         | `?sortBy=salary&order=asc` / `...desc` | `200`, orders reversed between the two calls                 |
 | 10  | Invalid `sortBy`                      | `?sortBy=notARealColumn`               | `400`                                                        |
 | 11  | As `EMPLOYEE` token                   | _(any)_                                | `403`                                                        |
@@ -2649,7 +2674,7 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 | Tampered/expired JWT                                                     | `401`                                                                                                                           |
 | Attempting `?role=ADMIN` or similar query tampering                      | No effect — authorization reads `req.user.roles` from the verified token only                                                   |
 | `?sortBy=deletedAt` or any real-but-unlisted column name                 | `400` — the whitelist rejects it before it ever reaches Prisma's `orderBy`, regardless of whether the column actually exists    |
-| SQL injection attempt in `search`/`department`/`jobTitle`                | Treated as a literal string — Prisma's parameterized `contains`/`equals` neutralizes it; no query-structure risk                |
+| SQL injection attempt in `search`/`jobTitle`                             | Treated as a literal string — Prisma's parameterized `contains`/`equals` neutralizes it; no query-structure risk                |
 | Extremely long `search` string (10,000+ characters)                      | Currently accepted, no max length — a minor, honestly-acknowledged gap, same class as other unbounded-string fields in this API |
 | Non-numeric `page`/`limit` (e.g. `?page=abc`)                            | `400` — Zod's `coerce.number()` fails, reported as a type-mismatch                                                              |
 
@@ -2661,7 +2686,8 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 | `page` beyond the last page (e.g. `page=999` with only 2 real pages)    | `200`, `{ "employees": [] }` — an out-of-range page is simply an empty slice, not a `404`                                                                  |
 | Multiple rows sharing the identical `sortBy` value (e.g. same `salary`) | The unconditional `id ASC` secondary sort breaks the tie deterministically — repeating the exact same request always returns the same order, verified live |
 | All employees soft-deleted                                              | `200`, `{ "employees": [], "pagination": { "total": 0, ... } }` — soft-deleted rows are invisible to this endpoint, by design                              |
-| An `Employee` with `userId: null` and an active `search` term           | Only ever matches via its own `department`/`jobTitle` fields — the `user.name`/`user.email` branches simply never match a null relation, no error          |
+| An `Employee` with `userId: null` and an active `search` term           | Only ever matches via its linked Department's `name` or its own `jobTitle` — the `user.name`/`user.email` branches simply never match a null relation, no error |
+| An `Employee` matched via `sortBy=department` when two employees share the same Department | Same deterministic `id ASC` tiebreaker applies — nested relation sorts get the same tie-break guarantee as column sorts, verified live |
 
 ## 13. Security Testing
 
@@ -2684,7 +2710,9 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 
 - **Tables affected**: `Employee` (read, filtered/sorted/paginated),
   `User` (read, via relation join — only when `search` is present and
-  matches against `user.name`/`user.email`).
+  matches against `user.name`/`user.email`), `Department` (read, via
+  relation join — whenever `search` is present, since it matches against
+  the linked Department's `name`, and whenever `sortBy=department`).
 - **Rows affected**: none inserted/updated/deleted.
 - **Queries per request**: two, run concurrently via `Promise.all` — one
   `findMany` (the page of results) and one `count` (the total across all
@@ -2694,7 +2722,7 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 ## 15. Request Lifecycle
 
 ```
-GET /api/v1/employees?search=...&department=...&sortBy=...&order=...&page=...&limit=...
+GET /api/v1/employees?search=...&departmentId=...&sortBy=...&order=...&page=...&limit=...
     ↓
 authMiddleware
     ↓
@@ -2723,14 +2751,18 @@ employee.controller.list → employee.service.listEmployees(req.validatedQuery)
   HR application. Revisit only if this specific inconsistency ever
   causes a real problem in practice.
 - `search` uses `contains`/`mode: 'insensitive'` (Postgres `ILIKE`) across
-  four fields, including a join to `User` — a sequential scan on both
-  tables at this data size; a future `pg_trgm` trigram index is the
-  documented upgrade path if this table grows large enough for it to
-  matter (not needed today).
-- Filters (`department`, `jobTitle`, `managerId`) are unindexed exact/
-  case-insensitive matches — fine at current scale; `Employee.userId` and
-  `Employee.managerId` already have indexes from Feature 9, but exact
-  filters on `department`/`jobTitle` do not yet.
+  four fields, including joins to both `User` and `Department` — a
+  sequential scan on all three tables at this data size; a future
+  `pg_trgm` trigram index is the documented upgrade path if this table
+  grows large enough for it to matter (not needed today).
+- `departmentId` is an **exact, indexed** match (`@@index([departmentId])`,
+  added by the Department domain) — unlike `jobTitle`, which remains an
+  unindexed case-insensitive exact match. `Employee.userId` and
+  `Employee.managerId` already have indexes from Feature 9.
+- `sortBy=department` is a nested one-hop relation sort (`orderBy: {
+  department: { name: order } }`) rather than a direct column sort — one
+  extra join, not a separate query; no measurable difference at current
+  scale.
 - `limit`'s hard cap (100) bounds the worst-case single-request cost
   regardless of what's asked for.
 
@@ -2780,8 +2812,8 @@ curl -i "http://localhost:3000/api/v1/employees?page=2&limit=5&sortBy=salary&ord
 curl -i "http://localhost:3000/api/v1/employees?search=Jane" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 
-# Exact filter, case-insensitive
-curl -i "http://localhost:3000/api/v1/employees?department=engineering" \
+# Exact filter by departmentId, and a relation sort by department name
+curl -i "http://localhost:3000/api/v1/employees?departmentId=$DEPARTMENT_ID&sortBy=department&order=asc" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -2797,12 +2829,13 @@ saved request.
 
 - ✅ `200` as `ADMIN`/`MANAGER`, `403` as `EMPLOYEE`, `401` with no token
 - ✅ Pagination: default page/limit, explicit page/limit, out-of-range page
-- ✅ `400` on `page < 1`, `limit < 1`, `limit > 100`, invalid `sortBy`/`order`/`managerId`
+- ✅ `400` on `page < 1`, `limit < 1`, `limit > 100`, invalid `sortBy`/`order`/`managerId`/`departmentId`
 - ✅ Empty `search=` behaves identically to no `search`
-- ✅ `search` matches both `Employee` fields and the linked `User`'s name/email
-- ✅ Exact filters are case-insensitive
-- ✅ Sort order actually reverses between `asc`/`desc`; repeated identical
-  calls return identical ordering (stability)
+- ✅ `search` matches the linked Department's name, `jobTitle`, and the linked `User`'s name/email
+- ✅ `departmentId` exact filter; `jobTitle` exact case-insensitive filter
+- ✅ Sort order actually reverses between `asc`/`desc`, including
+  `sortBy=department`'s relation sort; repeated identical calls return
+  identical ordering (stability)
 - ✅ Empty array (not an error) when no rows match or all are soft-deleted
 - ✅ No sensitive data leaked beyond intended fields
 
@@ -2880,11 +2913,12 @@ same `404`. This is the two-layer authorization design in action:
   "employee": {
     "id": "954690da-d433-4b7e-9e04-1c7be03c36bd",
     "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
-    "department": "Engineering",
+    "departmentId": "c74add11-d421-429d-b46c-a118fc5f817d",
     "jobTitle": "Backend Developer",
     "salary": "75000",
     "dateOfJoining": "2024-01-15T00:00:00.000Z",
     "managerId": null,
+    "branchId": null,
     "deletedAt": null,
     "createdAt": "2026-07-05T04:52:52.814Z",
     "updatedAt": "2026-07-05T04:52:52.814Z"
@@ -3076,7 +3110,7 @@ the fields you want to change.
 
 ```json
 {
-  "department": "Platform Engineering",
+  "departmentId": "0b680ff5-4d81-43e5-9744-279211adcf03",
   "salary": 82000
 }
 ```
@@ -3090,6 +3124,15 @@ Omitting the key entirely means "leave it as-is"; sending `null` means
 ```json
 { "userId": null }
 ```
+
+**`departmentId` is the one exception — it does NOT accept `null`.**
+Unlike `userId`/`managerId`/`branchId`, Department is mandatory
+(docs/domain-department.md ADR-D07): omitting the key means "leave the
+current department as-is"; a new value is re-validated against the same
+assignability check as creation; but `{ "departmentId": null }` fails
+Zod's type check (`departmentId: Invalid input: expected string, received
+null`), since there is no valid "employee has no department" state to
+represent.
 
 ## 7. Validation Rules
 
@@ -3115,11 +3158,12 @@ the service:
   "employee": {
     "id": "954690da-d433-4b7e-9e04-1c7be03c36bd",
     "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
-    "department": "Platform Engineering",
+    "departmentId": "0b680ff5-4d81-43e5-9744-279211adcf03",
     "jobTitle": "Backend Developer",
     "salary": "82000",
     "dateOfJoining": "2024-01-15T00:00:00.000Z",
     "managerId": null,
+    "branchId": null,
     "deletedAt": null,
     "createdAt": "2026-07-05T04:52:52.814Z",
     "updatedAt": "2026-07-05T05:10:00.000Z"
@@ -3134,6 +3178,8 @@ Only `updatedAt` changes automatically among the timestamp fields.
 | Status | Reason                                   | Response (`message`)                                  | When                                                                   |
 | ------ | ---------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------- |
 | `400`  | `managerId` equals the record's own `id` | `"An employee cannot be their own manager"`           | Self-management attempt                                                |
+| `400`  | `departmentId: null`                     | `"departmentId: Invalid input: expected string, received null"` | departmentId is mandatory — unlike `userId`/`managerId`/`branchId`, it cannot be cleared, verified live via Zod directly |
+| `400`  | New `departmentId` doesn't exist or is inactive | Same messages as `POST /employees`               | Re-validated on every change, not just at creation                     |
 | `400`  | Invalid field value(s)                   | Same per-field messages as `POST /employees`          | e.g. negative salary, future date, malformed UUID                      |
 | `401`  | No/invalid/expired access token          | Same as every other protected endpoint                | `authMiddleware` failure                                               |
 | `403`  | Roles don't grant `employee:update:any`  | `"You do not have permission to perform this action"` | Any `EMPLOYEE`, or a `MANAGER`/`ADMIN` role misconfigured in seed data |
@@ -3143,11 +3189,13 @@ Only `updatedAt` changes automatically among the timestamp fields.
 
 | #   | Case                               | Body                                            | Expected                |
 | --- | ---------------------------------- | ----------------------------------------------- | ----------------------- |
-| 1   | Valid partial update               | `{"department":"Platform Engineering"}`         | `200`                   |
+| 1   | Valid partial update               | `{"departmentId":"<a real, active Department id>"}` | `200`                   |
 | 2   | Self-management (`managerId = id`) | `{"managerId":"<same id>"}`                     | `400`                   |
-| 3   | Nonexistent `id`                   | `{"department":"X"}`                            | `404`                   |
+| 3   | Nonexistent `id`                   | `{"jobTitle":"X"}`                              | `404`                   |
 | 4   | As `EMPLOYEE` token                | Any body                                        | `403`                   |
 | 5   | Empty body `{}`                    | Valid — no fields required for a partial update | `200`, no fields change |
+| 6   | `departmentId: null`               | `{"departmentId":null}`                         | `400` — mandatory, cannot be cleared |
+| 7   | Nonexistent/inactive `departmentId` | `{"departmentId":"<bad or inactive id>"}`      | `400`                   |
 
 ## 11. Negative Testing
 
@@ -3228,7 +3276,7 @@ validation schema, by design (see `CLAUDE.md`'s layering rules).
 curl -i -X PATCH http://localhost:3000/api/v1/employees/$EMPLOYEE_ID \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -d '{"department":"Platform Engineering","salary":82000}'
+  -d '{"departmentId":"'"$DEPARTMENT_ID"'","salary":82000}'
 ```
 
 ## 19. Postman Collection Notes
@@ -3240,6 +3288,8 @@ endpoints.
 
 - ✅ Valid partial update (single field, multiple fields, empty body)
 - ✅ `400` on self-management (`managerId = id`)
+- ✅ `400` on `departmentId: null` (mandatory, cannot be cleared) — verified via Zod directly
+- ✅ New `departmentId` re-validated for existence + `ACTIVE` status
 - ✅ `404` on nonexistent/soft-deleted record
 - ✅ `403` as `EMPLOYEE`, `401` with no token
 - ✅ Only `updatedAt` changes among timestamps
@@ -4685,8 +4735,10 @@ Public/Protected:   Protected
 - **Business problem solved**: discoverability of existing branches
   without a dedicated admin UI reading the database directly.
 - **Expected callers**: every role — `branch:read` is deliberately broad,
-  since Branch is non-sensitive reference data (same reasoning as
-  `department`/`jobTitle` being plain visible fields on Employee today).
+  since Branch is non-sensitive reference data (`jobTitle` remains a
+  plain visible field on Employee for the same reason; `department` has
+  since become a governed FK with its own identical `department:read`
+  grant — see endpoint 25).
 
 ## 3. Request Headers
 
@@ -5358,6 +5410,876 @@ curl -i -X DELETE http://localhost:3000/api/v1/branches/$BRANCH_ID \
 
 Run this **last** for any `{{branchId}}` with zero Employee references;
 for a referenced branch, expect and assert on the `409`, not a `200`.
+
+## 20. Testing Checklist
+
+- ✅ Delete with zero references → `200` (verified live)
+- ✅ Delete with an active reference → `409` (verified live)
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `404` for nonexistent `id`
+- ✅ `AuditLog` row created for the deletion
+
+---
+
+---
+
+# 24. `POST /departments`
+
+## 1. Endpoint Information
+
+```
+Feature:            Department Domain (2026-09-13, feature/16-department-domain)
+Endpoint:           Create Department
+Description:        Creates a new functional/organizational classification
+Method:             POST
+URL:                /api/v1/departments
+API Version:        v1
+Module:             modules/departments
+Authentication:     Yes (Bearer access token)
+Authorization:      `department:create` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: closes the same kind of gap Branch closed for
+  location — `docs/domain-department.md` found `Employee.department` was
+  a plain, ungoverned `String`, verified live in this dev database to
+  actually contain 12 distinct free-text values across 30 Employee rows,
+  including test-data noise (`"wefswedf"`, `"A"`, `"Eng"` as a separate
+  value from `"Engineering"`) alongside real ones.
+- **Business problem solved**: department attribution becomes governed,
+  correctable in one place, and queryable ("all Engineering employees")
+  without a fragile string match.
+- **Expected callers**: `ADMIN` only — same scoping decision as Branch (ADR-B07/ADR-D08), deliberately tighter than `employee:*`.
+
+## 3. Request Headers
+
+| Header                                 | Required | Notes                                             |
+| --------------------------------------- | -------- | ---------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `department:create` permission     |
+| `Content-Type: application/json`      | **Yes**  |                                                     |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "name": "Engineering",
+  "code": "ENG"
+}
+```
+
+| Field  | Type   | Required | Description                                             |
+| ------ | ------ | -------- | -------------------------------------------------------- |
+| `name` | string | **Yes**  | Trimmed, non-empty, **unique case-insensitively** across all departments (`"Engineering"` and `"engineering"` conflict) |
+| `code` | string | No       | Trimmed, non-empty when provided, unique (case-sensitive) when provided |
+
+## 7. Validation Rules
+
+- `name`: required, `.trim().min(1)` — a whitespace-only value fails.
+- `code`: optional; when present, `.trim().min(1)`.
+- `status` is **not** accepted at creation — every new department starts
+  `ACTIVE`; status can only be changed afterward via `PATCH /departments/:id`.
+- **Case-insensitive uniqueness on `name` is a genuine divergence from
+  Branch** — Branch's equivalent check is case-sensitive (`domain-branch.md`
+  never made this an explicit requirement; `domain-department.md §3`
+  explicitly does: "unique (case-insensitive) among non-archived
+  departments"). Verified live: creating `"engineering"` after
+  `"Engineering"` already exists returns `409`, not `201`.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "department": {
+    "id": "b8d4b0b3-a9af-4cf2-9134-69860ede3a98",
+    "name": "Engineering",
+    "code": "ENG",
+    "status": "ACTIVE",
+    "createdAt": "2026-09-13T10:17:55.470Z",
+    "updatedAt": "2026-09-13T10:17:55.470Z"
+  }
+}
+```
+
+Verified live against the real dev server.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                                                                 |
+| ------ | ------------------------------------ | ------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `400`  | Validation failed                   | e.g. `"name: Department name is required"`             | Empty/whitespace-only `name`                                          |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                | `authMiddleware` failure                                              |
+| `403`  | Caller lacks `department:create`     | `"You do not have permission to perform this action"` | `EMPLOYEE`/`MANAGER` token                                             |
+| `409`  | Duplicate `name` (case-insensitive) or `code` | `"A department with this name or code already exists"` | Verified live: `"engineering"` after `"Engineering"` exists → `409`  |
+
+## 10. Postman Test Cases
+
+| #   | Case                              | Expected |
+| --- | ---------------------------------- | -------- |
+| 1   | Valid create, `name` only          | `201`    |
+| 2   | Valid create, `name` + `code`      | `201`    |
+| 3   | Duplicate `name`, different case  | `409` — verified live |
+| 4   | Duplicate `code`, different `name` | `409`    |
+| 5   | Empty/whitespace `name`            | `400`    |
+| 6   | As `MANAGER`/`EMPLOYEE` token       | `403`    |
+| 7   | No token                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Malformed JSON body                | `400` from Express's own JSON body-parser                                  |
+| Tampered/expired JWT               | `401`                                                                       |
+| `name`/`code` as a number/array   | `400` — Zod's `.string()` rejects non-string types                          |
+| Extremely long `name`              | Not separately bounded by an explicit max-length rule today — a known, undemonstrated gap, same class as `Branch.name`/`Employee.jobTitle` |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Concurrent creates with the same name (any case)                | One succeeds, the other gets `409` via the DB's own unique constraint on the exact-case `name` column (the case-insensitive pre-check can be beaten by a race the same way Branch's/Employee's can) |
+| `code` omitted entirely                                          | Stored as `null` — no uniqueness conflict with other departments that also have no `code`                                                             |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot create a department —
+  verified live, same `ADMIN`-only scoping as Branch.
+- **Mass assignment**: only `name`/`code` are read from the body.
+
+## 14. Database Impact
+
+- **Tables affected**: `Department` (insert), `AuditLog` (insert).
+- **Transactions**: the `Department` insert and the `AuditLog` insert
+  happen inside one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/departments
+    ↓
+authMiddleware
+    ↓
+requirePermission('department:create')
+    ↓ (403 if not granted)
+validateMiddleware(createDepartmentSchema)
+    ↓ (400 if invalid)
+department.controller.create → department.service.createDepartment(data, actor)
+    ├─ departmentRepository.findByNameOrCode(name, code) [case-insensitive on name] → existing → 409
+    └─ prisma.$transaction:
+         ├─ departmentRepository.create(data, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', afterData, ... }, tx)
+    ↓
+201 { department }
+```
+
+## 16. Performance Notes
+
+Two lookups (case-insensitive `name` + exact `code`) plus one insert plus
+one audit-log insert — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why is Department's name uniqueness case-insensitive when
+  Branch's isn't?** `docs/domain-department.md §3` makes this an explicit
+  business rule ("unique (case-insensitive) among non-archived
+  departments"), directly motivated by the exact free-text mess this
+  domain was built to fix (`"Engineering"` vs `"engineering"` vs
+  `"Enginering"` coexisting). Branch's sign-off never made the equivalent
+  requirement explicit, so its check stayed case-sensitive — a real,
+  intentional difference between two structurally similar domains, not
+  an inconsistency.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/departments \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Engineering","code":"ENG"}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `department.id` as `{{departmentId}}` — used by every
+other Department endpoint and by `POST`/`PATCH /employees`'s
+`departmentId` field.
+
+## 20. Testing Checklist
+
+- ✅ Valid create (with and without `code`) → `201`
+- ✅ Duplicate `name`, case-insensitive → `409` (verified live)
+- ✅ Empty/whitespace `name` → `400`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 25. `GET /departments`
+
+## 1. Endpoint Information
+
+```
+Feature:            Department Domain (2026-09-13, feature/16-department-domain)
+Endpoint:           List Department records
+Method:             GET
+URL:                /api/v1/departments
+API Version:        v1
+Module:             modules/departments
+Authentication:     Yes (Bearer access token)
+Authorization:      `department:read` permission (granted to ADMIN, MANAGER, EMPLOYEE)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Browse/search departments — for admin management screens and for
+populating a department picker when creating/updating an Employee
+(mandatory field there, unlike Branch's optional picker).
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                          |
+| -------------------------------------- | -------- | -------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `department:read` permission |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name      | Type    | Required | Default     | Description                              |
+| ----------- | ------- | -------- | ------------- | ------------------------------------------- |
+| `page`    | integer | No       | `1`         | 1-indexed page number                     |
+| `limit`   | integer | No       | `10` (max 100) | Page size                                |
+| `search`  | string  | No       | —           | Matches `name` and `code` (case-insensitive) |
+| `status`  | enum    | No       | —           | `ACTIVE` or `INACTIVE`                    |
+| `sortBy`  | enum    | No       | `createdAt` | `name`, `code`, `status`, `createdAt`     |
+| `order`   | enum    | No       | `desc`      | `asc` or `desc`                           |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same shape as `GET /branches`'s `listBranchesQuerySchema`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "departments": [
+    {
+      "id": "b8d4b0b3-a9af-4cf2-9134-69860ede3a98",
+      "name": "Engineering",
+      "code": "ENG",
+      "status": "ACTIVE",
+      "createdAt": "2026-09-13T10:17:55.470Z",
+      "updatedAt": "2026-09-13T10:17:55.470Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                  | When                                       |
+| ------ | ------------------------------------ | -------------------------------------------------------- | --------------------------------------------- |
+| `400`  | A query parameter failed validation | e.g. `"limit: Too big: expected number to be <=100"`      | Out-of-bounds `limit`, invalid `sortBy`/`status` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                   |
+| `403`  | Caller lacks `department:read`      | `"You do not have permission to perform this action"`   | Not expected in practice — every seeded role has this grant |
+
+## 10. Postman Test Cases
+
+| #   | Case                          | Expected |
+| --- | -------------------------------- | -------- |
+| 1   | Default pagination              | `200`, up to 10 results |
+| 2   | `search` matches an existing department | `200`, filtered results |
+| 3   | `status=INACTIVE` filter         | `200`, only inactive departments |
+| 4   | `sortBy=name&order=asc`          | `200`, alphabetical      |
+| 5   | `limit=101`                     | `400`    |
+| 6   | As any authenticated role (ADMIN/MANAGER/EMPLOYEE) | `200` — verified live for both ADMIN and EMPLOYEE |
+| 7   | No token                        | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                   |
+| ----------------------------------- | -------------------------------------------------------------- |
+| `sortBy` value outside the allowlist | `400`                                                          |
+| `status` value outside the enum    | `400`                                                          |
+| Tampered/expired JWT               | `401`                                                          |
+
+## 12. Edge Cases
+
+| Scenario                             | Expected Behavior                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `page` beyond the last page             | `200` with an empty `departments` array, not an error                                                     |
+| Two departments with identical `createdAt` | Deterministic ordering via the unconditional secondary `id ASC` tiebreaker                              |
+
+## 13. Security Testing
+
+`department:read` is broad, like `branch:read` — no `:own` scope exists
+or is needed, since Department has no ownership dimension.
+
+## 14. Database Impact
+
+Read-only — `Department.findMany` + `Department.count`, run in parallel
+via `Promise.all`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/departments
+    ↓
+authMiddleware
+    ↓
+requirePermission('department:read')
+    ↓ (403 if not granted)
+validateMiddleware(listDepartmentsQuerySchema, 'query')
+    ↓ (400 if invalid)
+department.controller.list → department.service.listDepartments(query)
+    └─ Promise.all([departmentRepository.findAll(...), departmentRepository.count(...)])
+    ↓
+200 { departments, pagination }
+```
+
+## 16. Performance Notes
+
+Department counts are expected to be modest (tens, not thousands) —
+pagination exists for API consistency, not a demonstrated scale problem.
+
+## 17. Interview Notes
+
+- **Q: Why does `search` here use case-insensitive `contains`, but
+  creation's uniqueness check also needs its own separate
+  case-insensitive `equals`?** Different jobs: `search` is a fuzzy
+  discovery tool (partial match anywhere in the string); the uniqueness
+  check is a precise business-rule guard (exact name, modulo case). They
+  happen to both be case-insensitive, but for different reasons and via
+  different Prisma filter shapes (`contains` vs `equals`).
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/departments?search=Engineering&status=ACTIVE" \
+  -H "Authorization: Bearer $ANY_ROLE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run after `POST /departments` to confirm the created department is
+discoverable via `search`.
+
+## 20. Testing Checklist
+
+- ✅ Default pagination, explicit `page`/`limit`
+- ✅ `search` across `name`/`code`
+- ✅ `status` filter
+- ✅ Sort both directions with deterministic tiebreaker
+- ✅ `200` for ADMIN and EMPLOYEE tokens alike (verified live)
+- ✅ `400` on out-of-bounds `limit`
+
+---
+
+---
+
+# 26. `GET /departments/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Department Domain (2026-09-13, feature/16-department-domain)
+Endpoint:           Get one Department record
+Method:             GET
+URL:                /api/v1/departments/:id
+API Version:        v1
+Module:             modules/departments
+Authentication:     Yes (Bearer access token)
+Authorization:      `department:read` permission (granted to every role)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Fetch a single department's current details, e.g. to populate an edit
+form or resolve an Employee's `departmentId` to a display name.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                          |
+| -------------------------------------- | -------- | -------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `department:read` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Department record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check and the record's existence.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "department": {
+    "id": "b8d4b0b3-a9af-4cf2-9134-69860ede3a98",
+    "name": "Engineering",
+    "code": "ENG",
+    "status": "ACTIVE",
+    "createdAt": "2026-09-13T10:17:55.470Z",
+    "updatedAt": "2026-09-13T10:17:55.470Z"
+  }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                              |
+| ------ | ------------------------------------ | ---------------------------------------------------------- | ------------------------------------ |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure           |
+| `403`  | Caller lacks `department:read`      | `"You do not have permission to perform this action"`   | Not expected in practice           |
+| `404`  | No such department                  | `"Department not found"`                                | Invalid/nonexistent `id`           |
+
+## 10. Postman Test Cases
+
+| #   | Case             | Expected |
+| --- | ------------------ | -------- |
+| 1   | Existing `id`      | `200`    |
+| 2   | Nonexistent `id`   | `404`    |
+| 3   | No token           | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                   | Expected |
+| ----------------------------- | -------- |
+| Malformed (non-UUID) `id`     | `404`    |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+None beyond the standard existence check — Department has no soft-delete
+concept.
+
+## 13. Security Testing
+
+No BOLA concern — no ownership dimension.
+
+## 14. Database Impact
+
+Read-only — single indexed `Department.findUnique`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/departments/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('department:read')
+    ↓ (403 if not granted)
+department.controller.getById → department.service.getDepartmentById(id)
+    └─ departmentRepository.findById(id) → not found → 404
+    ↓
+200 { department }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup by primary key.
+
+## 17. Interview Notes
+
+Structurally identical to `GET /branches/:id` — same reasoning applies.
+
+## 18. cURL Examples
+
+```bash
+curl -s http://localhost:3000/api/v1/departments/$DEPARTMENT_ID \
+  -H "Authorization: Bearer $ANY_ROLE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Uses `{{departmentId}}` saved from `POST /departments`.
+
+## 20. Testing Checklist
+
+- ✅ Valid `id` → `200`
+- ✅ Nonexistent `id` → `404`
+- ✅ `401` with no token
+
+---
+
+---
+
+# 27. `PATCH /departments/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Department Domain (2026-09-13, feature/16-department-domain)
+Endpoint:           Update a Department, including activating/deactivating it
+Method:             PATCH
+URL:                /api/v1/departments/:id
+API Version:        v1
+Module:             modules/departments
+Authentication:     Yes (Bearer access token)
+Authorization:      `department:update` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Correct department details, or retire a department from future
+assignment without losing history — same shape as Branch's equivalent.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                              |
+| -------------------------------------- | -------- | ------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `department:update` permission     |
+| `Content-Type: application/json`      | **Yes**  |                                                         |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Department record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{ "status": "INACTIVE" }
+```
+
+| Field    | Type   | Required | Description                                    |
+| ---------- | ------ | -------- | -------------------------------------------------- |
+| `name`   | string | No       | Trimmed, non-empty when provided                    |
+| `code`   | string | No       | Nullable — `null` clears it; trimmed, non-empty otherwise |
+| `status` | enum   | No       | `ACTIVE` or `INACTIVE`                              |
+
+## 7. Validation Rules
+
+Same trimming/non-empty rules as creation; `name` uniqueness re-checked
+case-insensitively on rename; `status` restricted to the
+`DepartmentStatus` enum.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "department": {
+    "id": "b8d4b0b3-a9af-4cf2-9134-69860ede3a98",
+    "name": "Engineering",
+    "code": "ENG",
+    "status": "INACTIVE",
+    "createdAt": "2026-09-13T10:17:55.470Z",
+    "updatedAt": "2026-09-13T10:18:17.799Z"
+  }
+}
+```
+
+Verified live, including the `status` transition shown above.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                                       |
+| ------ | ------------------------------------ | -------------------------------------------------------- | ---------------------------------------------- |
+| `400`  | Validation failed                   | e.g. `"name: Department name is required"`              | Empty/whitespace-only `name`, invalid `status` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                    |
+| `403`  | Caller lacks `department:update`    | `"You do not have permission to perform this action"`   | Verified live for `EMPLOYEE`                |
+| `404`  | No such department                  | `"Department not found"`                                | Invalid/nonexistent `id`                    |
+| `409`  | Duplicate `name`/`code`             | `"A department with this name or code already exists"`   | Renaming to a name/code already used, case-insensitive on name |
+
+## 10. Postman Test Cases
+
+| #   | Case                              | Expected |
+| --- | ------------------------------------ | -------- |
+| 1   | Update `name` only                   | `200`    |
+| 2   | Deactivate (`status: "INACTIVE"`)    | `200` — verified live |
+| 3   | Reactivate (`status: "ACTIVE"`)      | `200`    |
+| 4   | Rename to another department's existing `name`, any case | `409` |
+| 5   | Nonexistent `id`                     | `404`    |
+| 6   | As `EMPLOYEE`/`MANAGER` token         | `403`    |
+| 7   | No token                             | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                     | Expected |
+| -------------------------------- | -------- |
+| `status` outside the enum        | `400`    |
+| Empty body `{}`                  | `200`, no-op update              |
+| Tampered/expired JWT             | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                       |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Deactivating a department with active Employee assignments         | Succeeds; existing `Employee.departmentId` references are **untouched** — verified live. Only *future* assignment attempts are blocked. |
+| Reactivating a department                                          | Immediately assignable again                                                                                              |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot update a department —
+  verified live.
+- **Mass assignment**: only `name`/`code`/`status` are read from the body.
+
+## 14. Database Impact
+
+- **Tables affected**: `Department` (update), `AuditLog` (insert), inside one `prisma.$transaction`.
+- **Cascade behavior**: none — deactivating never touches `Employee` rows.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/departments/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('department:update')
+    ↓ (403 if not granted)
+validateMiddleware(updateDepartmentSchema)
+    ↓ (400 if invalid)
+department.controller.update → department.service.updateDepartment(id, data, actor)
+    ├─ departmentRepository.findById(id) → not found → 404
+    ├─ (if name/code changing) departmentRepository.findByNameOrCode(...) → conflict → 409
+    └─ prisma.$transaction:
+         ├─ departmentRepository.update(id, data, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', beforeData, afterData, ... }, tx)
+    ↓
+200 { department }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup, optional uniqueness pre-check, one update, one
+audit-log insert.
+
+## 17. Interview Notes
+
+Structurally identical to `PATCH /branches/:id` — the one real difference
+is the case-insensitive rename-collision check (§7 above).
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/departments/$DEPARTMENT_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"INACTIVE"}'
+```
+
+## 19. Postman Collection Notes
+
+Run a deactivate/reactivate pair back-to-back, then re-run
+`POST /employees` with `{{departmentId}}` while inactive to confirm the
+`400` from the assignability check.
+
+## 20. Testing Checklist
+
+- ✅ Field-only update, status-only update, both together
+- ✅ Deactivate → existing Employee links untouched (verified live)
+- ✅ Deactivate → future assignment rejected with `400` (verified live)
+- ✅ `409` on rename collision, case-insensitive
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 28. `DELETE /departments/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Department Domain (2026-09-13, feature/16-department-domain)
+Endpoint:           Hard-delete a Department
+Description:        Permanently removes a Department row - only when zero Employee records reference it
+Method:             DELETE
+URL:                /api/v1/departments/:id
+API Version:        v1
+Module:             modules/departments
+Authentication:     Yes (Bearer access token)
+Authorization:      `department:delete` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Covers the genuine data-entry-mistake case (a department created in
+error, never assigned to any Employee) — the only hard-delete path;
+a referenced department must be deactivated instead.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                             |
+| -------------------------------------- | -------- | --------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `department:delete` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Department record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check, the record's existence, and the
+zero-reference check.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Department deleted successfully"
+}
+```
+
+Verified live for a department with zero Employee references.
+
+## 9. Error Responses
+
+| Status | Reason                                      | Response (`message`)                                                                | When                                                                 |
+| ------ | ---------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token           | Same as every other protected endpoint                                                  | `authMiddleware` failure                                                 |
+| `403`  | Caller lacks `department:delete`                | `"You do not have permission to perform this action"`                                    | Verified live for `EMPLOYEE`                                             |
+| `404`  | No such department                             | `"Department not found"`                                                                 | Invalid/nonexistent `id`                                                  |
+| `409`  | Department is referenced by one or more Employees | `"This department has Employee records referencing it and cannot be deleted - deactivate it instead"` | Verified live. Note: since `departmentId` is mandatory, **every** live Employee references some department. |
+
+## 10. Postman Test Cases
+
+| #   | Case                                          | Expected |
+| --- | ------------------------------------------------ | -------- |
+| 1   | Delete a department with zero Employee references | `200` — verified live |
+| 2   | Delete a department with an active Employee reference | `409` — verified live |
+| 3   | Nonexistent `id`                                  | `404`    |
+| 4   | As `EMPLOYEE`/`MANAGER` token                      | `403`    |
+| 5   | No token                                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario              | Expected |
+| ------------------------ | -------- |
+| Malformed (non-UUID) `id` | `404`    |
+| Tampered/expired JWT      | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                                 | Expected Behavior                                                                                                                                                                       |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Department referenced **only** by a soft-deleted Employee (`deletedAt` set)  | Still `409` — the reference count includes soft-deleted Employee rows, same reasoning as Branch's equivalent (`onDelete: Restrict` would refuse the delete at the DB level regardless). |
+| Concurrent delete requests for the same `id`                                 | One succeeds, the other sees `404` — not independently verified under true concurrency.                                                                                                  |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot delete a department —
+  verified live.
+- **Idempotency under retry**: a retried `DELETE` gets a safe `404` on
+  the second attempt.
+
+## 14. Database Impact
+
+- **Tables affected**: `Department` (delete), `AuditLog` (insert), inside
+  one `prisma.$transaction`.
+- **DB-level backstop**: `Employee.departmentId`'s `onDelete: Restrict`
+  refuses the delete at the database level even if this service-layer
+  check were somehow bypassed.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/departments/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('department:delete')
+    ↓ (403 if not granted)
+department.controller.remove → department.service.deleteDepartment(id, actor)
+    ├─ departmentRepository.findById(id) → not found → 404
+    ├─ departmentRepository.countEmployeesForDepartment(id) → count > 0 → 409
+    └─ prisma.$transaction:
+         ├─ departmentRepository.remove(id, tx)
+         └─ auditLogRepository.create({ action: 'DELETE', beforeData, afterData: null, ... }, tx)
+    ↓
+200 { message: "Department deleted successfully" }
+```
+
+## 16. Performance Notes
+
+One indexed existence lookup, one `Employee` count query, one delete, one
+audit-log insert.
+
+## 17. Interview Notes
+
+- **Q: Since `departmentId` is mandatory, can this endpoint ever actually
+  be used on a department with live employees?** No — it will always
+  `409` in that case, by design. The only realistic use is cleaning up a
+  just-created, never-assigned department (a genuine data-entry mistake),
+  exactly like Branch's equivalent, except Department's mandatoriness
+  makes the "never assigned" window even narrower in practice.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/departments/$DEPARTMENT_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this **last** for any `{{departmentId}}` with zero Employee
+references; for a referenced department, expect and assert on the `409`.
 
 ## 20. Testing Checklist
 

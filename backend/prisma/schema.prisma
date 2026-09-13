@@ -86,7 +86,13 @@ model Employee {
   id            String             @id @default(uuid())
   userId        String?
   user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
-  department    String
+  // Governed master data, not free text (docs/domain-department.md, ADR-D01/
+  // D07) - mandatory, unlike branchId, since the schema's original
+  // `department` String column (removed by migration
+  // add_department_contract, after prisma/backfill-department.js ran) was
+  // itself always required.
+  departmentId  String
+  department    Department         @relation(fields: [departmentId], references: [id], onDelete: Restrict)
   jobTitle      String
   salary        Decimal
   dateOfJoining DateTime
@@ -115,6 +121,7 @@ model Employee {
   @@index([userId])
   @@index([managerId])
   @@index([branchId])
+  @@index([departmentId])
 }
 
 // See docs/domain-branch.md for the full business-architecture sign-off.
@@ -133,6 +140,23 @@ model Branch {
   status    BranchStatus @default(ACTIVE)
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
+  employees Employee[]
+}
+
+// See docs/domain-department.md for the full business-architecture sign-off.
+// Uses a status field, not deletedAt (ADR-D04), same reasoning as Branch.
+enum DepartmentStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Department {
+  id        String           @id @default(uuid())
+  name      String           @unique
+  code      String?          @unique
+  status    DepartmentStatus @default(ACTIVE)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
   employees Employee[]
 }
 

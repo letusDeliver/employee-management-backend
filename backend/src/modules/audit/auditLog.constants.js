@@ -9,4 +9,5 @@ export const AUDIT_ENTITY_TYPES = Object.freeze({
   USER: 'User',
   EMPLOYEE_DOCUMENT: 'EmployeeDocument',
   BRANCH: 'Branch',
+  DEPARTMENT: 'Department',
 });

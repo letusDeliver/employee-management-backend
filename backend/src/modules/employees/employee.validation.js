@@ -8,9 +8,12 @@ const MAX_SALARY = 100_000_000;
 export const createEmployeeSchema = z
   .object({
     userId: z.string().uuid().optional().meta({ example: '5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7b' }),
-    // .trim() first: a whitespace-only value ("   ") would otherwise pass
-    // .min(1) - it has length, it's just not meaningful content.
-    department: z.string().trim().min(1, 'Department is required').meta({ example: 'Engineering' }),
+    // Mandatory, unlike branchId below - docs/domain-department.md ADR-D07:
+    // the schema's original department column was itself always required,
+    // so the FK that replaced it preserves that mandatoriness rather than
+    // loosening it. Validated for existence+ACTIVE status in the service
+    // (departmentService.assertDepartmentAssignable), not just FK-exists.
+    departmentId: z.string().uuid().meta({ example: '5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7c' }),
     jobTitle: z
       .string()
       .trim()
@@ -58,9 +61,10 @@ export const listEmployeesQuerySchema = z
       .transform((value) => (value === '' ? undefined : value))
       .meta({
         example: 'jane',
-        description: "Matches department, jobTitle, and the linked User's name/email",
+        description:
+          "Matches the linked Department's name, jobTitle, and the linked User's name/email",
       }),
-    department: z.string().optional().meta({ example: 'Engineering' }),
+    departmentId: z.string().uuid().optional().meta({ example: null }),
     jobTitle: z.string().optional().meta({ example: 'Backend Engineer' }),
     managerId: z.string().uuid().optional().meta({ example: null }),
     sortBy: z.enum(SORTABLE_FIELDS).default('createdAt'),

@@ -47,7 +47,7 @@ export const EmployeeSchema = z
   .object({
     id: z.uuid().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
     userId: z.uuid().nullable().meta({ example: null }),
-    department: z.string().meta({ example: 'Engineering' }),
+    departmentId: z.uuid().meta({ example: 'b1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5e' }),
     jobTitle: z.string().meta({ example: 'Backend Engineer' }),
     salary: z.string().meta({
       description: 'Prisma Decimal - serializes as a string, not a number',
@@ -72,6 +72,17 @@ export const BranchSchema = z
     updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
   })
   .meta({ id: 'Branch' });
+
+export const DepartmentSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'd1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    name: z.string().meta({ example: 'Engineering' }),
+    code: z.string().nullable().meta({ example: 'ENG' }),
+    status: z.enum(['ACTIVE', 'INACTIVE']).meta({ example: 'ACTIVE' }),
+    createdAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+  })
+  .meta({ id: 'Department' });
 
 export const EmployeeDocumentSchema = z
   .object({

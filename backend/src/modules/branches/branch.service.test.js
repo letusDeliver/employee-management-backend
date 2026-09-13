@@ -13,6 +13,7 @@ const RUN_ID = Date.now();
 const actor = { id: null, ipAddress: '127.0.0.1' };
 const createdEmployeeIds = [];
 const createdBranchIds = [];
+let testDepartmentId;
 
 before(async () => {
   const user = await prisma.user.create({
@@ -23,6 +24,14 @@ before(async () => {
     },
   });
   actor.id = user.id;
+
+  // Employee.departmentId is mandatory (docs/domain-department.md ADR-D07) -
+  // every fixture Employee created below needs a real Department to
+  // reference, even though this suite's actual subject is Branch.
+  const department = await prisma.department.create({
+    data: { name: `Branch Test Department ${RUN_ID}` },
+  });
+  testDepartmentId = department.id;
 });
 
 after(async () => {
@@ -33,6 +42,7 @@ after(async () => {
   if (createdBranchIds.length) {
     await prisma.branch.deleteMany({ where: { id: { in: createdBranchIds } } });
   }
+  await prisma.department.delete({ where: { id: testDepartmentId } });
   await prisma.user.delete({ where: { id: actor.id } });
   await prisma.$disconnect();
 });
@@ -40,7 +50,7 @@ after(async () => {
 const makeEmployee = async (branchId) => {
   const employee = await prisma.employee.create({
     data: {
-      department: 'Engineering',
+      departmentId: testDepartmentId,
       jobTitle: 'Test Engineer',
       salary: 1000,
       dateOfJoining: new Date(),
@@ -112,7 +122,7 @@ test('employee creation honors the branch assignability check', async () => {
 
   const employee = await employeeService.createEmployee(
     {
-      department: 'Sales',
+      departmentId: testDepartmentId,
       jobTitle: 'Test Rep',
       salary: 2000,
       dateOfJoining: new Date(),
@@ -128,7 +138,7 @@ test('employee creation honors the branch assignability check', async () => {
     () =>
       employeeService.createEmployee(
         {
-          department: 'Sales',
+          departmentId: testDepartmentId,
           jobTitle: 'Test Rep 2',
           salary: 2000,
           dateOfJoining: new Date(),

@@ -989,3 +989,99 @@ Deliberately **backend-only** — no frontend changes on this branch, kept
 separate to avoid mixing an unrelated feature area; a Branch admin
 screen and a branch picker in the Employee form are the natural frontend
 follow-up, tracked as a separate future initiative, not started here.)_
+
+_(Department Domain — 2026-09-13, on branch `feature/16-department-domain`
+(based on `feature/15-branch-domain`). Second domain implemented from the
+HRMS/ERP Business Architecture Review (`docs/domain-department.md`).
+Structurally the sibling of Branch, but with one materially bigger,
+genuinely riskier decision: `Employee.departmentId` is **mandatory**
+(ADR-D07), not nullable like `branchId` — the schema's original
+`department` column had always been a required `String`, and the domain
+sign-off deliberately preserved that mandatoriness rather than loosening
+it. This flag was raised to the user explicitly before implementation
+(not decided silently) since it meant a real breaking change to
+`POST`/`PATCH /employees`'s contract, not an additive one; the user chose
+the full breaking migration over a deferred additive-only alternative.
+
+Executed as a real expand → backfill → contract migration sequence
+against live dev data, not a toy example: **expand** (migration
+`add_department_expand`) added the `Department` table and a *nullable*
+`departmentId` alongside the still-live `department` string column;
+**backfill** (`prisma/backfill-department.js`, a new permanent script,
+same category as `prisma/seed.js`) inspected the real dev database and
+found exactly the free-text mess this domain exists to fix — 30 Employee
+rows, 12 distinct values, including test-data noise (`"wefswedf"`, `"A"`,
+`"Eng"` kept as a value distinct from `"Engineering"`) — created one
+`Department` row per distinct value, backfilled every Employee row
+(soft-deleted ones included, since the coming NOT NULL constraint applies
+to every row regardless of `deletedAt`), and asserted zero remaining
+nulls before allowing the next step; **contract**
+(`add_department_contract`, generated via `prisma migrate diff` since
+`prisma migrate dev` refuses destructive changes non-interactively, then
+applied via `prisma migrate deploy`) dropped the old `department` column
+and made `departmentId` `NOT NULL`. Zero data loss, verified by inspecting
+every row's `department`/`departmentId` pair pre- and post-migration.
+
+New module `src/modules/departments/` mirrors Branch's file shape exactly.
+One real divergence from Branch's `findByNameOrCode`: Department's name
+uniqueness check is **case-insensitive** (`docs/domain-department.md §3`
+makes this an explicit business rule, unlike Branch's sign-off), verified
+live (`"engineering"` after `"Engineering"` already exists → `409`).
+ADR-D08 (permission scoping) and ADR-D09 (audit logging) resolved
+identically to Branch's ADR-B07/B08 — `ADMIN`-only mutations, `department:
+read` for all three roles, `AuditLog` extended via
+`AUDIT_ENTITY_TYPES.DEPARTMENT`.
+
+`employee.service.js` changes were more invasive than Branch's: `department`
+removed from `createEmployeeSchema`/`updateEmployeeSchema` entirely,
+replaced by a required `departmentId` (present in `createEmployeeSchema`,
+`.partial()`'d into `updateEmployeeSchema` like every other field but
+deliberately **not** added to the nullable-widening `.extend()` block
+there, since — unlike `userId`/`managerId`/`branchId` — there is no valid
+"clear the department" state; verified live that `{"departmentId": null}`
+is rejected by Zod, not silently accepted). `buildEmployeeWhere`'s
+`search` clause and the `department` filter both moved from a direct
+string comparison to a relation traversal (`department: { name: {
+contains: ... } }` / `where.departmentId`); a new `buildEmployeeOrderBy`
+helper handles `sortBy=department` as a nested one-hop relation sort
+(`orderBy: { department: { name: order } } }`) since 'department' is no
+longer a scalar column — the query-string value itself was kept as
+`department` for API stability even though the underlying field is now
+`departmentId`.
+
+Extended the `node:test` suite: `department.service.test.js` (6 tests,
+mirroring Branch's) plus a fix to the earlier `branch.service.test.js`
+(its fixtures created raw `Employee` rows with a `department` string that
+no longer exists — updated to create a real test `Department` first).
+All 12 tests across both domains pass together. Verified live end-to-end
+against the real running server: create → case-insensitive-duplicate-409
+→ list/search → get → deactivate → assignability 400s (nonexistent,
+inactive, **and missing entirely** — confirming the mandatory-field
+rejection) → delete-blocked-409, plus `sortBy=department`/`search` against
+real pre-existing Employee data (not just fresh fixtures) and explicit
+`EMPLOYEE`-role permission checks. All test/live fixtures cleaned up
+afterward, including one orphaned throwaway user left over from an
+earlier aborted verification attempt in this same session (a Windows/
+Git-Bash `/tmp`-path gotcha, not a code defect — see
+`handbook/TESTING_GUIDE.md`'s existing note on this exact issue).
+`npm run lint` and `npx prettier --check` clean throughout.
+
+`docs/domain-department.md` (ADR-D08/D09 resolution, confidence 87%→91%,
+Weakness 1 updated with the real backfill outcome), `docs/adr-index.md`,
+`docs/deferred-decisions-register.md` updated. `handbook/API_ENDPOINTS.md`
+gained 5 new endpoint entries (24-28) plus extensive updates throughout
+endpoints 9/10/12 (request/response examples, query params, error
+tables, Postman cases, cURL examples) reflecting the breaking
+`department` → `departmentId` change — not just additive documentation,
+since the old field genuinely no longer exists. `backend/README.md`
+updated to match.
+
+**Process note, not a code issue**: this work was initially started
+directly on `feature/15-branch-domain` instead of a fresh branch — caught
+and corrected (via `git checkout -b feature/16-department-domain` before
+anything was committed) once noticed, rather than left as a mixed-concern
+branch. Recorded here so it isn't repeated silently.
+
+Deliberately **backend-only**, same as Branch — a Department admin
+screen and picker in the Employee form are frontend follow-up work, not
+started here.)_

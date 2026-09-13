@@ -26,7 +26,7 @@ registry.registerPath({
   responses: {
     201: jsonResponse('Employee created', z.object({ employee: EmployeeSchema })),
     400: errorResponse(
-      'Validation failed, or userId/managerId does not reference an existing record',
+      'Validation failed, or userId/managerId/branchId/departmentId does not reference an existing record (departmentId additionally rejects an inactive department)',
       {
         status: 'error',
         message: 'userId: references a record that does not exist',
@@ -47,7 +47,7 @@ registry.registerPath({
   tags: TAG,
   summary: 'List non-deleted Employee records',
   description:
-    "Requires the 'employee:read:any' permission. Paginated, searchable (search matches Employee.department/jobTitle AND the linked User's name/email), filterable, sortable. An unconditional secondary `id ASC` sort keeps ordering deterministic across pages.",
+    "Requires the 'employee:read:any' permission. Paginated, searchable (search matches the linked Department's name, Employee.jobTitle, AND the linked User's name/email), filterable (including departmentId), sortable (including by department name, a nested relation sort). An unconditional secondary `id ASC` sort keeps ordering deterministic across pages.",
   security: [{ [bearerAuth.name]: [] }],
   request: { query: listEmployeesQuerySchema },
   responses: {

@@ -3,6 +3,7 @@ import employeeRepository from './employee.repository.js';
 import auditLogRepository from '../audit/auditLog.repository.js';
 import { AUDIT_ACTIONS, AUDIT_ENTITY_TYPES } from '../audit/auditLog.constants.js';
 import branchService from '../branches/branch.service.js';
+import departmentService from '../departments/department.service.js';
 import ConflictError from '../../errors/ConflictError.js';
 import NotFoundError from '../../errors/NotFoundError.js';
 import ForbiddenError from '../../errors/ForbiddenError.js';
@@ -38,7 +39,9 @@ const rethrowForeignKeyViolationAsBadRequest = (error) => {
     ? 'managerId'
     : constraintName.includes('branchId')
       ? 'branchId'
-      : 'userId';
+      : constraintName.includes('departmentId')
+        ? 'departmentId'
+        : 'userId';
 
   throw new BadRequestError(`${field}: references a record that does not exist`);
 };
@@ -55,6 +58,11 @@ const createEmployee = async (data, actor) => {
   if (data.branchId) {
     await branchService.assertBranchAssignable(data.branchId);
   }
+
+  // Unconditional, unlike branchId - departmentId is mandatory
+  // (docs/domain-department.md ADR-D07), so validation guarantees it is
+  // always present at this point.
+  await departmentService.assertDepartmentAssignable(data.departmentId);
 
   try {
     return await prisma.$transaction(async (tx) => {
@@ -104,20 +112,20 @@ const getEmployeeById = async (id, requester) => {
   return employee;
 };
 
-const buildEmployeeWhere = ({ search, department, jobTitle, managerId }) => {
+const buildEmployeeWhere = ({ search, departmentId, jobTitle, managerId }) => {
   const where = {};
 
   if (search) {
     where.OR = [
-      { department: { contains: search, mode: 'insensitive' } },
+      { department: { name: { contains: search, mode: 'insensitive' } } },
       { jobTitle: { contains: search, mode: 'insensitive' } },
       { user: { name: { contains: search, mode: 'insensitive' } } },
       { user: { email: { contains: search, mode: 'insensitive' } } },
     ];
   }
 
-  if (department) {
-    where.department = { equals: department, mode: 'insensitive' };
+  if (departmentId) {
+    where.departmentId = departmentId;
   }
 
   if (jobTitle) {
@@ -131,6 +139,12 @@ const buildEmployeeWhere = ({ search, department, jobTitle, managerId }) => {
   return where;
 };
 
+// 'department' is a relation now, not a scalar column (docs/domain-department.md) -
+// sorting by it means sorting by the linked Department's name (a one-hop
+// nested orderBy), not a direct column comparison like every other sortBy value.
+const buildEmployeeOrderBy = (sortBy, order) =>
+  sortBy === 'department' ? { department: { name: order } } : { [sortBy]: order };
+
 const listEmployees = async (query) => {
   const { page, limit, sortBy, order, ...filters } = query;
   const where = buildEmployeeWhere(filters);
@@ -141,7 +155,7 @@ const listEmployees = async (query) => {
   const [employees, total] = await Promise.all([
     employeeRepository.findAll({
       where,
-      orderBy: [{ [sortBy]: order }, { id: 'asc' }],
+      orderBy: [buildEmployeeOrderBy(sortBy, order), { id: 'asc' }],
       skip: (page - 1) * limit,
       take: limit,
     }),
@@ -168,6 +182,13 @@ const updateEmployee = async (id, data, actor) => {
   // as-is" (already validated when it was originally assigned).
   if (data.branchId) {
     await branchService.assertBranchAssignable(data.branchId);
+  }
+
+  // departmentId is never nullable (unlike branchId) - the schema itself
+  // rejects `null`, so only "present and being changed" vs. "omitted, leave
+  // as-is" are real cases here.
+  if (data.departmentId) {
+    await departmentService.assertDepartmentAssignable(data.departmentId);
   }
 
   try {

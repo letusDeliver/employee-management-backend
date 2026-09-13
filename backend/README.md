@@ -120,7 +120,7 @@ All routes are mounted under `/api/v1`.
 | `GET`    | `/auth/me`                             | Access token (Bearer)                                  | Return the current authenticated user                                                                                                                                                                                 |
 | `GET`    | `/users`                               | Access token, `user:list` permission                   | List registered users — paginated (`page`/`limit`), searchable (`search`, across `name`/`email`), filterable (`role`), sortable (`sortBy`/`order`)                                                                    |
 | `POST`   | `/employees`                           | Access token, `employee:create` permission             | Create an Employee (HR) record                                                                                                                                                                                        |
-| `GET`    | `/employees`                           | Access token, `employee:read:any` permission           | List non-deleted Employee records — paginated (`page`/`limit`), searchable (`search`, across Employee fields + linked User name/email), filterable (`department`/`jobTitle`/`managerId`), sortable (`sortBy`/`order`) |
+| `GET`    | `/employees`                           | Access token, `employee:read:any` permission           | List non-deleted Employee records — paginated (`page`/`limit`), searchable (`search`, across the linked Department's name + jobTitle + linked User name/email), filterable (`departmentId`/`jobTitle`/`managerId`), sortable (`sortBy`/`order`) |
 | `GET`    | `/employees/:id`                       | Access token, `employee:read:any` or `:own` permission | Get one Employee record (own record allowed for `EMPLOYEE`)                                                                                                                                                           |
 | `PATCH`  | `/employees/:id`                       | Access token, `employee:update:any` permission         | Partially update an Employee record                                                                                                                                                                                   |
 | `DELETE` | `/employees/:id`                       | Access token, `employee:delete:any` permission         | Soft-delete an Employee record                                                                                                                                                                                        |
@@ -134,9 +134,20 @@ All routes are mounted under `/api/v1`.
 | `GET`    | `/branches/:id`                        | Access token, `branch:read` permission (every role)     | Get one Branch record                                                                                                                                                                                                 |
 | `PATCH`  | `/branches/:id`                        | Access token, `branch:update` permission (ADMIN only)   | Update a Branch, including activating/deactivating it                                                                                                                                                                 |
 | `DELETE` | `/branches/:id`                        | Access token, `branch:delete` permission (ADMIN only)   | Hard-delete a Branch — only when zero Employee records reference it                                                                                                                                                   |
+| `POST`   | `/departments`                         | Access token, `department:create` permission (ADMIN only) | Create a Department (functional/organizational classification)                                                                                                                                                       |
+| `GET`    | `/departments`                         | Access token, `department:read` permission (every role) | List Department records — paginated, searchable (`name`/`code`, case-insensitive), filterable (`status`), sortable                                                                                                    |
+| `GET`    | `/departments/:id`                     | Access token, `department:read` permission (every role) | Get one Department record                                                                                                                                                                                             |
+| `PATCH`  | `/departments/:id`                     | Access token, `department:update` permission (ADMIN only) | Update a Department, including activating/deactivating it                                                                                                                                                             |
+| `DELETE` | `/departments/:id`                     | Access token, `department:delete` permission (ADMIN only) | Hard-delete a Department — only when zero Employee records reference it                                                                                                                                               |
 
 `POST`/`PATCH /employees` also accept an optional `branchId`, validated
 against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
+
+**Breaking change (2026-09-13):** Employee's free-text `department`
+(`String`) field was removed and replaced by a **mandatory**
+`departmentId`, validated the same way as `branchId` but required, not
+optional (existing data was backfilled via
+`backend/prisma/backfill-department.js` before the column was dropped).
 
 Authorization is permission-based (see `../handbook/API_ENDPOINTS.md`), not
 role-based — `ADMIN`/`MANAGER`/`EMPLOYEE` are role names seeded with a
@@ -170,7 +181,7 @@ src/
 ├── docs/                     # OpenAPI registry/generator/security + Swagger UI mounting
 ├── errors/                  # Typed AppError hierarchy
 ├── middlewares/              # auth, permission (RBAC), validate, upload (Multer), error, notFound
-├── modules/                  # Feature-first domain modules (auth, users, rbac, employees, branches, audit)
+├── modules/                  # Feature-first domain modules (auth, users, rbac, employees, branches, departments, audit)
 ├── routes/                   # Router aggregation
 └── utils/                    # asyncHandler, jwt
 
