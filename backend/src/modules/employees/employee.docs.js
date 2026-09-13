@@ -26,7 +26,7 @@ registry.registerPath({
   responses: {
     201: jsonResponse('Employee created', z.object({ employee: EmployeeSchema })),
     400: errorResponse(
-      'Validation failed, or userId/managerId/branchId/departmentId/designationId does not reference an existing record (departmentId/designationId additionally reject an inactive record)',
+      'Validation failed (including an invalid employmentType value), or userId/managerId/branchId/departmentId/designationId does not reference an existing record (departmentId/designationId additionally reject an inactive record)',
       {
         status: 'error',
         message: 'userId: references a record that does not exist',
@@ -47,7 +47,7 @@ registry.registerPath({
   tags: TAG,
   summary: 'List non-deleted Employee records',
   description:
-    "Requires the 'employee:read:any' permission. Paginated, searchable (search matches the linked Department's name, the linked Designation's name, AND the linked User's name/email), filterable (including departmentId and designationId), sortable (including by department/designation name, a nested relation sort). An unconditional secondary `id ASC` sort keeps ordering deterministic across pages.",
+    "Requires the 'employee:read:any' permission. Paginated, searchable (search matches the linked Department's name, the linked Designation's name, AND the linked User's name/email), filterable (including departmentId, designationId, and employmentType), sortable (including by department/designation name, a nested relation sort, and by employmentType, a plain scalar sort). An unconditional secondary `id ASC` sort keeps ordering deterministic across pages.",
   security: [{ [bearerAuth.name]: [] }],
   request: { query: listEmployeesQuerySchema },
   responses: {

@@ -53,8 +53,8 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the two most load-
 ## Employment Type — [[domain-employment-type]]
 | ADR | Summary | Status |
 |---|---|---|
-| ET01 | Closed enum, not a managed aggregate (diverges from Branch/Department/Designation) | Accepted |
-| ET02 | `employmentType` mandatory, single current value | Accepted |
+| ET01 | Closed enum, not a managed aggregate (diverges from Branch/Department/Designation) | Accepted; Implemented (2026-09-13) |
+| ET02 | `employmentType` mandatory, single current value | Accepted; Implemented (2026-09-13) — 30 pre-existing Employee rows assigned `FULL_TIME` by a one-time migration default (no free-text precursor existed to derive a real value from, unlike Branch/Department/Designation), immediately dropped so every future write requires it explicitly |
 | ET03 | Eligibility/calculation rules live in consuming domains (Leave, Payroll), not here | Accepted |
 
 ## Holiday Calendar — [[domain-holiday-calendar]]

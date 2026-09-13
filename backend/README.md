@@ -120,7 +120,7 @@ All routes are mounted under `/api/v1`.
 | `GET`    | `/auth/me`                             | Access token (Bearer)                                  | Return the current authenticated user                                                                                                                                                                                 |
 | `GET`    | `/users`                               | Access token, `user:list` permission                   | List registered users — paginated (`page`/`limit`), searchable (`search`, across `name`/`email`), filterable (`role`), sortable (`sortBy`/`order`)                                                                    |
 | `POST`   | `/employees`                           | Access token, `employee:create` permission             | Create an Employee (HR) record                                                                                                                                                                                        |
-| `GET`    | `/employees`                           | Access token, `employee:read:any` permission           | List non-deleted Employee records — paginated (`page`/`limit`), searchable (`search`, across the linked Department's name + linked Designation's name + linked User name/email), filterable (`departmentId`/`designationId`/`managerId`), sortable (`sortBy`/`order`) |
+| `GET`    | `/employees`                           | Access token, `employee:read:any` permission           | List non-deleted Employee records — paginated (`page`/`limit`), searchable (`search`, across the linked Department's name + linked Designation's name + linked User name/email), filterable (`departmentId`/`designationId`/`employmentType`/`managerId`), sortable (`sortBy`/`order`) |
 | `GET`    | `/employees/:id`                       | Access token, `employee:read:any` or `:own` permission | Get one Employee record (own record allowed for `EMPLOYEE`)                                                                                                                                                           |
 | `PATCH`  | `/employees/:id`                       | Access token, `employee:update:any` permission         | Partially update an Employee record                                                                                                                                                                                   |
 | `DELETE` | `/employees/:id`                       | Access token, `employee:delete:any` permission         | Soft-delete an Employee record                                                                                                                                                                                        |
@@ -159,6 +159,15 @@ optional (existing data was backfilled via
 `designationId`, same treatment as `departmentId` above (existing data was
 backfilled via `backend/prisma/backfill-designation.js` before the column
 was dropped).
+
+**New required field (2026-09-13):** `POST`/`PATCH /employees` now also
+require `employmentType` (`FULL_TIME`/`PART_TIME`/`CONTRACT`/`INTERN`) — a
+closed, code-defined enum, not a managed master-data table like
+Branch/Department/Designation (see `docs/domain-employment-type.md`,
+ADR-ET01). Unlike those three, there was no free-text precursor column;
+the 30 pre-existing Employee rows were assigned `FULL_TIME` by a one-time
+migration default, then the default was dropped so every future write
+must specify it explicitly.
 
 Authorization is permission-based (see `../handbook/API_ENDPOINTS.md`), not
 role-based — `ADMIN`/`MANAGER`/`EMPLOYEE` are role names seeded with a

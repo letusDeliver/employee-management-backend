@@ -100,6 +100,14 @@ model Employee {
   // itself always required.
   designationId String
   designation   Designation        @relation(fields: [designationId], references: [id], onDelete: Restrict)
+  // Closed, code-defined enum, not a managed aggregate like Branch/
+  // Department/Designation above (docs/domain-employment-type.md, ADR-ET01)
+  // - unlike those three, no free-text precursor column ever existed here;
+  // this is new ground, not a governance upgrade. Mandatory (ADR-ET02): no
+  // "unknown" state. Deliberately no @default here - every future create
+  // must specify it explicitly; existing rows were one-time backfilled to
+  // FULL_TIME by migration add_employment_type (see that migration's SQL).
+  employmentType EmploymentType
   salary        Decimal
   dateOfJoining DateTime
   managerId     String?
@@ -183,6 +191,22 @@ model Designation {
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
   employees Employee[]
+}
+
+// See docs/domain-employment-type.md for the full business-architecture
+// sign-off. Unlike BranchStatus/DepartmentStatus/DesignationStatus above,
+// this is not a lifecycle-status enum on a managed aggregate - it IS the
+// aggregate (ADR-ET01): a closed, code-defined classification with no
+// backing table, no repository, no CRUD service, because each value
+// carries real downstream-behavior significance (future Leave accrual,
+// Payroll calculation basis) that an admin-creatable row could never
+// safely carry. Adding a value here is a deliberate code change + release,
+// never a runtime admin action.
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERN
 }
 
 model EmployeeDocument {

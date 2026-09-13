@@ -119,7 +119,7 @@ const getEmployeeById = async (id, requester) => {
   return employee;
 };
 
-const buildEmployeeWhere = ({ search, departmentId, designationId, managerId }) => {
+const buildEmployeeWhere = ({ search, departmentId, designationId, employmentType, managerId }) => {
   const where = {};
 
   if (search) {
@@ -137,6 +137,12 @@ const buildEmployeeWhere = ({ search, departmentId, designationId, managerId }) 
 
   if (designationId) {
     where.designationId = designationId;
+  }
+
+  // Exact match on a closed enum - no relation involved (unlike
+  // departmentId/designationId), so this is a plain scalar filter.
+  if (employmentType) {
+    where.employmentType = employmentType;
   }
 
   if (managerId) {

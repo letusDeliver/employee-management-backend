@@ -49,6 +49,9 @@ export const EmployeeSchema = z
     userId: z.uuid().nullable().meta({ example: null }),
     departmentId: z.uuid().meta({ example: 'b1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5e' }),
     designationId: z.uuid().meta({ example: 'e1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5f' }),
+    employmentType: z.enum(['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERN']).meta({
+      example: 'FULL_TIME',
+    }),
     salary: z.string().meta({
       description: 'Prisma Decimal - serializes as a string, not a number',
       example: '85000.00',

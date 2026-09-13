@@ -291,6 +291,25 @@ through, one feature earlier. Every existing Employee row was backfilled
 and 12 above (their Request Body/Validation Rules sections are updated in
 place, not duplicated here) and endpoints 29-33 below.
 
+**As of the Employment Type domain (2026-09-13)**: `Employee` gained a new
+**required** field, `employmentType` — one of exactly four code-defined
+values, `FULL_TIME`/`PART_TIME`/`CONTRACT`/`INTERN` (a Prisma enum, not a
+managed master-data table like Branch/Department/Designation above; see
+`docs/domain-employment-type.md` ADR-ET01). Unlike the `department` →
+`departmentId` and `jobTitle` → `designationId` changes above, this is
+**not** a breaking rename of an existing field — there was no free-text
+`employmentType`/equivalent column before, so nothing was backfilled from
+real data; the one-time migration
+(`prisma/migrations/20260913205319_add_employment_type`) assigned every
+pre-existing row `FULL_TIME` via a temporary column `DEFAULT` that was
+dropped in the same migration statement, so every future `POST`/`PATCH`
+must supply `employmentType` explicitly (ADR-ET02: no "unknown" state).
+No new endpoint, module, permission, or `AuditLog` entity type was added
+— conversions are captured by Employee's existing audit logging with zero
+new code. See endpoints 9, 10, and 12 above (their Request Body/Query
+Parameters/Validation Rules sections are updated in place, not duplicated
+here).
+
 **As of Feature 9**, authorization is permission-based, not role-based —
 `ADMIN`/`MANAGER`/`EMPLOYEE` are just role _names_ that happen to be
 granted certain permissions (seeded in `prisma/seed.js`); routes check
@@ -2275,6 +2294,7 @@ None.
   "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
   "departmentId": "c74add11-d421-429d-b46c-a118fc5f817d",
   "designationId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+  "employmentType": "FULL_TIME",
   "salary": 75000,
   "dateOfJoining": "2024-01-15",
   "managerId": null,
@@ -2287,6 +2307,7 @@ None.
 | `userId`        | string (UUID)     | No       | Links this Employee to a login account. Omit for an HR-only record with no system access.                                                                       |
 | `departmentId`  | string (UUID)     | **Yes**  | **Changed by the Department domain (2026-09-13) — was free-text `department: string`, now a mandatory FK.** Must reference an existing Department whose `status` is `ACTIVE` — checked via `departmentService.assertDepartmentAssignable`, the same synchronous-read shape as `branchId`'s check (see endpoint 24's domain). Rejects with `400 departmentId: Invalid input: expected string, received undefined` (missing entirely), `400 departmentId: references a record that does not exist`, or `400 departmentId: this department is not active and cannot be assigned`. Verified live, including the missing-field case. |
 | `designationId` | string (UUID)     | **Yes**  | **Changed by the Designation domain (2026-09-13) — was free-text `jobTitle: string`, now a mandatory FK, same reasoning and same transformation as `departmentId` above.** Must reference an existing Designation whose `status` is `ACTIVE` — checked via `designationService.assertDesignationAssignable`, the same synchronous-read shape as `departmentId`'s check (see endpoint 29's domain). Rejects with `400 designationId: Invalid input: expected string, received undefined` (missing entirely), `400 designationId: references a record that does not exist`, or `400 designationId: this designation is not active and cannot be assigned`. Verified live, including the missing-field case. |
+| `employmentType` | string (enum)    | **Yes**  | **Added by the Employment Type domain (2026-09-13).** One of exactly four values: `FULL_TIME`, `PART_TIME`, `CONTRACT`, `INTERN`. A closed, code-defined enum, not an FK — unlike `departmentId`/`designationId` there is no existence/status check to perform in the service, only Zod's enum validation. Missing entirely, or any other value (e.g. `"FREELANCER"`), both produce the identical `400` — `"employmentType: Invalid option: expected one of "FULL_TIME"\|"PART_TIME"\|"CONTRACT"\|"INTERN""` (Zod's enum-validation message doesn't distinguish "missing" from "invalid"). Verified live for both. |
 | `salary`        | number            | Yes      | Must be a positive number, capped at 100,000,000 (a sanity ceiling, not a real business limit).                                                                |
 | `dateOfJoining` | string (ISO date) | Yes      | Coerced to a `Date`. Cannot be in the future.                                                                                                                   |
 | `managerId`     | string (UUID)     | No       | Must reference an existing `Employee.id`. Cannot equal the created record's own id (checked in the service, since the id doesn't exist yet at validation time). |
@@ -2314,6 +2335,20 @@ Enforced by `src/modules/employees/employee.validation.js`'s
   trimming/uniqueness rule now lives on `Designation.name` instead (see
   endpoint 29), since `jobTitle` is no longer a free-text field on
   Employee at all.
+- `employmentType`: **Added by the Employment Type domain (2026-09-13).**
+  `z.enum(['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERN'])` — the closed
+  list is hard-coded in `employee.validation.js`'s own `EMPLOYMENT_TYPES`
+  array, mirrored 1:1 against the Prisma `EmploymentType` enum (there is
+  no repository/service to own it, since it's not a managed aggregate —
+  `docs/domain-employment-type.md` ADR-ET01). Required, with no
+  `.optional()` and no schema-level `@default` (ADR-ET02: "no unknown
+  state"). Both a missing `employmentType` and an invalid one (e.g.
+  `"FREELANCER"`) produce the exact same message, since Zod's enum
+  validation doesn't distinguish the two cases:
+  `"employmentType: Invalid option: expected one of "FULL_TIME"|"PART_TIME"|"CONTRACT"|"INTERN""`.
+  Verified live for both. Unlike `departmentId`/`designationId`, there is
+  no business-rule validation step in the service — a plain enum value has
+  no existence/status to check.
 - `salary`: must be a positive number, capped at 100,000,000. Custom
   messages: `"Salary must be a positive number"` /
   `"Salary seems unreasonably high"`. The cap is a sanity ceiling meant
@@ -2349,6 +2384,7 @@ Enforced by `src/modules/employees/employee.validation.js`'s
     "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
     "departmentId": "c74add11-d421-429d-b46c-a118fc5f817d",
     "designationId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "employmentType": "FULL_TIME",
     "salary": "75000",
     "dateOfJoining": "2024-01-15T00:00:00.000Z",
     "managerId": null,
@@ -2363,6 +2399,7 @@ Enforced by `src/modules/employees/employee.validation.js`'s
 | Field                | Description                                                                                                                                                                                   |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `employee.id`        | UUID, server-generated.                                                                                                                                                                       |
+| `employee.employmentType` | Echoes the request value exactly — one of `FULL_TIME`/`PART_TIME`/`CONTRACT`/`INTERN`. **Added by the Employment Type domain (2026-09-13).**                                          |
 | `employee.salary`    | **Returned as a string**, not a number — Prisma's `Decimal` type serializes to a string in JSON to avoid floating-point precision loss. Expect this in every response that includes `salary`. |
 | `employee.deletedAt` | `null` for a live record — see `DELETE /employees/:id` for the soft-delete value.                                                                                                             |
 | `employee.managerId` | `null` unless supplied.                                                                                                                                                                       |
@@ -2371,11 +2408,12 @@ Enforced by `src/modules/employees/employee.validation.js`'s
 
 | Status | Reason                                               | Response (`message`)                                                                       | When                                                                                                                                        |
 | ------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `400`  | Missing required field(s)                            | e.g. `"departmentId: Invalid input: expected string, received undefined"` (joined per field) | Any of `departmentId`/`designationId`/`salary`/`dateOfJoining` absent — verified live for `departmentId`                                   |
+| `400`  | Missing required field(s)                            | e.g. `"departmentId: Invalid input: expected string, received undefined"` (joined per field) | Any of `departmentId`/`designationId`/`employmentType`/`salary`/`dateOfJoining` absent — verified live for `departmentId` and `employmentType` |
 | `400`  | Negative/zero salary                                 | `"salary: Salary must be a positive number"`                                               | `salary <= 0`                                                                                                                               |
 | `400`  | Salary over the sanity ceiling                       | `"salary: Salary seems unreasonably high"`                                                 | `salary > 100,000,000`                                                                                                                       |
 | `400`  | `departmentId` doesn't exist or is inactive          | `"departmentId: references a record that does not exist"` / `"departmentId: this department is not active and cannot be assigned"` | Verified live for both                                                                                                                       |
 | `400`  | `designationId` doesn't exist or is inactive         | `"designationId: references a record that does not exist"` / `"designationId: this designation is not active and cannot be assigned"` | Verified live for both — same shape as `departmentId`'s equivalent check                                                                     |
+| `400`  | `employmentType` missing or not one of the 4 allowed values | `"employmentType: Invalid option: expected one of "FULL_TIME"\|"PART_TIME"\|"CONTRACT"\|"INTERN""` | **Added by the Employment Type domain (2026-09-13).** Identical message for both "missing" and "invalid" (e.g. `"FREELANCER"`) — Zod's enum validation doesn't distinguish the two. Verified live for both. |
 | `400`  | Future `dateOfJoining`                               | `"dateOfJoining: Date of joining cannot be in the future"`                                 | Date is after "now"                                                                                                                         |
 | `400`  | Invalid UUID for `userId`/`managerId`/`departmentId`/`designationId`/`branchId` | Zod's default UUID-format message                              | Malformed UUID string supplied                                                                                                              |
 | `400`  | Malformed JSON body                                  | `"Invalid JSON in request body"`                                                           | Same as every other JSON-body endpoint                                                                                                      |
@@ -2388,10 +2426,10 @@ Enforced by `src/modules/employees/employee.validation.js`'s
 
 | #   | Case                 | Body                                                                                                                        | Expected                            |
 | --- | -------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| 1   | Valid, with `userId` | `{"userId":"<uuid>","departmentId":"<uuid>","designationId":"<uuid>","salary":75000,"dateOfJoining":"2024-01-15"}` | `201`                               |
+| 1   | Valid, with `userId` | `{"userId":"<uuid>","departmentId":"<uuid>","designationId":"<uuid>","employmentType":"FULL_TIME","salary":75000,"dateOfJoining":"2024-01-15"}` | `201`                               |
 | 2   | Valid, no `userId`   | Same, minus `userId`                                                                                                        | `201`, `employee.userId: null`      |
 | 3   | Duplicate `userId`   | Same `userId` as test 1, run again                                                                                          | `409`                               |
-| 4   | Empty body           | `{}`                                                                                                                        | `400`, `departmentId`/`designationId`/`salary`/`dateOfJoining` all listed |
+| 4   | Empty body           | `{}`                                                                                                                        | `400`, `departmentId`/`designationId`/`employmentType`/`salary`/`dateOfJoining` all listed |
 | 5   | Negative salary      | `{..., "salary": -500}`                                                                                                     | `400`                               |
 | 6   | Future date          | `{..., "dateOfJoining": "2099-01-01"}`                                                                                      | `400`                               |
 | 7   | As `EMPLOYEE` token  | Any valid body                                                                                                              | `403`                               |
@@ -2401,12 +2439,15 @@ Enforced by `src/modules/employees/employee.validation.js`'s
 | 11  | Inactive `departmentId` | `{..., "departmentId": "<id of an INACTIVE department>"}`                                                                 | `400` — verified live               |
 | 12  | Nonexistent `designationId` | `{..., "designationId": "00000000-0000-0000-0000-000000000000"}`                                                     | `400`, not `500` — verified live    |
 | 13  | Inactive `designationId` | `{..., "designationId": "<id of an INACTIVE designation>"}`                                                             | `400` — verified live               |
+| 14  | Missing `employmentType` | Same as test 1, minus `employmentType`                                                                                 | `400` — verified live               |
+| 15  | Invalid `employmentType` | `{..., "employmentType": "FREELANCER"}`                                                                                | `400` — same message as test 14, verified live |
 
 ## 11. Negative Testing
 
 | Payload/Scenario                                        | Expected                                                                                                       |
 | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | Wrong data types (`"salary": "not-a-number"`)           | `400` — Zod type-check fails                                                                                   |
+| Invalid `employmentType` enum value (`"FREELANCER"`)    | `400` — same message as a missing `employmentType`, since Zod's enum validation doesn't distinguish the two   |
 | Malformed JSON                                          | `400`, `"Invalid JSON in request body"`                                                                        |
 | Tampered/expired JWT                                    | `401`                                                                                                          |
 | Wrong role (`EMPLOYEE`)                                 | `403`                                                                                                          |
@@ -2529,7 +2570,7 @@ employee.service.createEmployee(data, { id: req.user.id, ipAddress: req.ip })
 curl -i -X POST http://localhost:3000/api/v1/employees \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -d '{"departmentId":"'"$DEPARTMENT_ID"'","designationId":"'"$DESIGNATION_ID"'","salary":75000,"dateOfJoining":"2024-01-15"}'
+  -d '{"departmentId":"'"$DEPARTMENT_ID"'","designationId":"'"$DESIGNATION_ID"'","employmentType":"FULL_TIME","salary":75000,"dateOfJoining":"2024-01-15"}'
 ```
 
 ## 19. Postman Collection Notes
@@ -2545,8 +2586,10 @@ Requires `{{accessToken}}` to resolve to `employee:create` (`ADMIN`/
 - ✅ `201` re-creating for a `userId` whose prior Employee record was soft-deleted
 - ✅ `400` (not `500`) on nonexistent `userId`/`managerId`/`branchId`/`departmentId`/`designationId`
 - ✅ `400` on inactive `departmentId`/`branchId`/`designationId`, missing fields, negative salary, future date
+- ✅ `400` on missing or invalid `employmentType` (e.g. `"FREELANCER"`) — identical message for both, verified live
 - ✅ `403` as `EMPLOYEE`, `401` with no token
 - ✅ `salary` returned as a string, not a number
+- ✅ `employmentType` echoed back exactly as sent
 - ✅ No sensitive data leaked beyond the intended `salary` field
 - ✅ Logs verified: no tokens/secrets logged
 
@@ -2602,13 +2645,14 @@ None.
 | `search`      | string | _(none)_    | No       | Any string                                                       | Case-insensitive partial match against the linked **Department's name** (a relation, not a column — see the Department domain, 2026-09-13), the linked **Designation's name** (a relation, not a column — see the Designation domain, 2026-09-13), the linked `User.name`, and `User.email`. An empty `search=` is treated identically to omitting it entirely. |
 | `departmentId` | string | _(none)_   | No       | Valid UUID                                                       | **Changed by the Department domain (2026-09-13) — was a case-insensitive exact-match `department: string` filter.** Now an exact UUID FK match. Invalid UUID format → `400`. |
 | `designationId` | string | _(none)_   | No       | Valid UUID                                                       | **Changed by the Designation domain (2026-09-13) — was a case-insensitive exact-match `jobTitle: string` filter.** Now an exact UUID FK match, the identical transformation `department` → `departmentId` already went through. Invalid UUID format → `400`. |
+| `employmentType` | string | _(none)_  | No       | `FULL_TIME`, `PART_TIME`, `CONTRACT`, `INTERN`                    | **Added by the Employment Type domain (2026-09-13).** Exact-match filter on the plain scalar column — unlike `departmentId`/`designationId` there is no FK/relation involved at all, since `employmentType` isn't a foreign key. Any value outside the 4-item whitelist → `400` (Zod enum rejection), same enum-validation shape as `POST`/`PATCH`'s body field. |
 | `managerId`  | string | _(none)_    | No       | Valid UUID                                                       | Exact match. Invalid UUID format → `400`.                                                                                                                                    |
-| `sortBy`     | string | `createdAt` | No       | `department`, `designation`, `salary`, `dateOfJoining`, `createdAt` | Whitelisted — any other value → `400`, never passed through to Prisma's `orderBy` directly. `department` sorts by the linked Department's `name`, and `designation` sorts by the linked Designation's `name`, each via a nested one-hop `orderBy` (a relation sort, not a column sort) — the query-string values stayed `department`/`designation` for API stability even though the underlying fields are now `departmentId`/`designationId`. |
+| `sortBy`     | string | `createdAt` | No       | `department`, `designation`, `employmentType`, `salary`, `dateOfJoining`, `createdAt` | Whitelisted — any other value → `400`, never passed through to Prisma's `orderBy` directly. `department` sorts by the linked Department's `name`, and `designation` sorts by the linked Designation's `name`, each via a nested one-hop `orderBy` (a relation sort, not a column sort). **`employmentType` (added by the Employment Type domain, 2026-09-13) is a plain scalar sort** — `orderBy: { employmentType: order }` directly, no nested relation object, since it isn't a foreign key — the same shape as `salary`/`dateOfJoining`/`createdAt`, not the relation-sort shape `department`/`designation` use. The query-string values stayed `department`/`designation` for API stability even though the underlying fields are now `departmentId`/`designationId`. |
 | `order`      | string | `desc`      | No       | `asc`, `desc`                                                    | Any other value → `400`.                                                                                                                                                     |
 
-All filters (`departmentId`, `designationId`, `managerId`) combine with
-**AND**; `search` contributes one **OR** block across its four fields,
-itself ANDed with whatever filters are also present.
+All filters (`departmentId`, `designationId`, `employmentType`, `managerId`)
+combine with **AND**; `search` contributes one **OR** block across its four
+fields, itself ANDed with whatever filters are also present.
 
 ## 6. Request Body
 
@@ -2634,6 +2678,7 @@ schema before the service ever sees it; nothing reaches Prisma unvalidated.
       "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
       "departmentId": "adcb7061-89b8-427d-aa4c-b854cb79bfcc",
       "designationId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+      "employmentType": "FULL_TIME",
       "salary": "55000",
       "dateOfJoining": "2024-03-01T00:00:00.000Z",
       "managerId": null,
@@ -2665,6 +2710,7 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 | ------ | ------------------------------------- | ----------------------------------------------------- | ----------------------------------------- |
 | `400`  | `page`/`limit` out of bounds          | Zod's bounds-violation message                        | `page < 1`, `limit < 1`, or `limit > 100` |
 | `400`  | Invalid `managerId`/`departmentId`/`designationId` | Zod's UUID-format message                | Malformed UUID supplied                   |
+| `400`  | Invalid `employmentType` filter value | Zod's enum message listing the 4 allowed values — same shape as `POST`/`PATCH`'s body-field error | **Added by the Employment Type domain (2026-09-13).** Any value outside `FULL_TIME`/`PART_TIME`/`CONTRACT`/`INTERN` |
 | `400`  | Invalid `sortBy`                      | Zod's enum message listing the allowed values         | Any value outside the whitelist           |
 | `400`  | Invalid `order`                       | Zod's enum message                                    | Any value other than `asc`/`desc`         |
 | `401`  | No/invalid/expired access token       | Same as every other protected endpoint                | `authMiddleware` failure                  |
@@ -2688,6 +2734,9 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 | 12  | Invalid `sortBy`                      | `?sortBy=notARealColumn`               | `400`                                                        |
 | 13  | As `EMPLOYEE` token                   | _(any)_                                | `403`                                                        |
 | 14  | No token                              | _(any)_                                | `401`                                                        |
+| 15  | Exact filter by `employmentType`      | `?employmentType=INTERN`               | `200`, only rows with that exact `employmentType`             |
+| 16  | Sort by `employmentType`, ascending vs. descending | `?sortBy=employmentType&order=asc` / `...desc` | `200`, a plain scalar sort — orders reversed between the two calls |
+| 17  | Invalid `employmentType` filter value | `?employmentType=FREELANCER`           | `400`                                                        |
 
 ## 11. Negative Testing
 
@@ -2697,6 +2746,7 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 | Tampered/expired JWT                                                     | `401`                                                                                                                           |
 | Attempting `?role=ADMIN` or similar query tampering                      | No effect — authorization reads `req.user.roles` from the verified token only                                                   |
 | `?sortBy=deletedAt` or any real-but-unlisted column name                 | `400` — the whitelist rejects it before it ever reaches Prisma's `orderBy`, regardless of whether the column actually exists    |
+| `?employmentType=FREELANCER` or any value outside the 4-item enum        | `400` — Zod's enum rejection, same shape as `POST`/`PATCH`'s body-field validation                                             |
 | SQL injection attempt in `search`                                        | Treated as a literal string — Prisma's parameterized `contains`/`equals` neutralizes it; no query-structure risk                |
 | Extremely long `search` string (10,000+ characters)                      | Currently accepted, no max length — a minor, honestly-acknowledged gap, same class as other unbounded-string fields in this API |
 | Non-numeric `page`/`limit` (e.g. `?page=abc`)                            | `400` — Zod's `coerce.number()` fails, reported as a type-mismatch                                                              |
@@ -2711,6 +2761,7 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 | All employees soft-deleted                                              | `200`, `{ "employees": [], "pagination": { "total": 0, ... } }` — soft-deleted rows are invisible to this endpoint, by design                              |
 | An `Employee` with `userId: null` and an active `search` term           | Only ever matches via its linked Department's `name` or its linked Designation's `name` — the `user.name`/`user.email` branches simply never match a null relation, no error |
 | An `Employee` matched via `sortBy=department`/`sortBy=designation` when two employees share the same Department/Designation | Same deterministic `id ASC` tiebreaker applies — nested relation sorts get the same tie-break guarantee as column sorts, verified live |
+| `sortBy=employmentType`, where only 4 distinct values exist across potentially many rows | Every row ties with several others on the primary sort key — the unconditional `id ASC` secondary sort does most of the actual ordering work here, more visibly than for higher-cardinality columns like `salary`, but the behavior itself is identical, not a special case |
 
 ## 13. Security Testing
 
@@ -2738,7 +2789,9 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
   the linked Department's `name`, and whenever `sortBy=department`),
   `Designation` (read, via relation join — whenever `search` is present,
   since it matches against the linked Designation's `name`, and whenever
-  `sortBy=designation`).
+  `sortBy=designation`). `employmentType` (added by the Employment Type
+  domain, 2026-09-13) never triggers an extra join — it's a plain column
+  on `Employee` itself, not a relation.
 - **Rows affected**: none inserted/updated/deleted.
 - **Queries per request**: two, run concurrently via `Promise.all` — one
   `findMany` (the page of results) and one `count` (the total across all
@@ -2748,7 +2801,7 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 ## 15. Request Lifecycle
 
 ```
-GET /api/v1/employees?search=...&departmentId=...&designationId=...&sortBy=...&order=...&page=...&limit=...
+GET /api/v1/employees?search=...&departmentId=...&designationId=...&employmentType=...&sortBy=...&order=...&page=...&limit=...
     ↓
 authMiddleware
     ↓
@@ -2757,7 +2810,7 @@ requirePermission('employee:read:any')
 validateMiddleware(listEmployeesQuerySchema, 'query')
     ↓ (400 on Zod failure; result lands on req.validatedQuery, not req.query)
 employee.controller.list → employee.service.listEmployees(req.validatedQuery)
-    ├─ buildEmployeeWhere({ search, departmentId, designationId, managerId })
+    ├─ buildEmployeeWhere({ search, departmentId, designationId, employmentType, managerId })
     └─ Promise.all([
          employeeRepository.findAll({ where, orderBy: [{[sortBy]: order}, {id: 'asc'}], skip, take }),
          employeeRepository.count(where),
@@ -2792,6 +2845,16 @@ employee.controller.list → employee.service.listEmployees(req.validatedQuery)
   `orderBy: { designation: { name: order } }`) rather than a direct
   column sort — one extra join, not a separate query; no measurable
   difference at current scale.
+- **`employmentType` (added by the Employment Type domain, 2026-09-13) is
+  a plain scalar filter/sort** — `where.employmentType = employmentType` /
+  `orderBy: { employmentType: order }` directly on `Employee`, no join at
+  all, structurally cheaper than `departmentId`/`designationId`'s FK
+  matches. It has **no `@@index`** — a deliberate omission, not an
+  oversight: with only 4 possible values, a B-tree index has poor
+  selectivity (each value matches roughly a quarter of all rows) and
+  Postgres's planner would likely ignore it in favor of a sequential scan
+  anyway at any realistic table size; revisit only if this table grows
+  large enough for a value distribution to make an index worthwhile.
 - `limit`'s hard cap (100) bounds the worst-case single-request cost
   regardless of what's asked for.
 
@@ -2848,6 +2911,10 @@ curl -i "http://localhost:3000/api/v1/employees?departmentId=$DEPARTMENT_ID&sort
 # Exact filter by designationId, and a relation sort by designation name
 curl -i "http://localhost:3000/api/v1/employees?designationId=$DESIGNATION_ID&sortBy=designation&order=asc" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Exact filter by employmentType, and a plain scalar sort by employmentType
+curl -i "http://localhost:3000/api/v1/employees?employmentType=INTERN&sortBy=employmentType&order=asc" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 ## 19. Postman Collection Notes
@@ -2862,12 +2929,13 @@ saved request.
 
 - ✅ `200` as `ADMIN`/`MANAGER`, `403` as `EMPLOYEE`, `401` with no token
 - ✅ Pagination: default page/limit, explicit page/limit, out-of-range page
-- ✅ `400` on `page < 1`, `limit < 1`, `limit > 100`, invalid `sortBy`/`order`/`managerId`/`departmentId`/`designationId`
+- ✅ `400` on `page < 1`, `limit < 1`, `limit > 100`, invalid `sortBy`/`order`/`managerId`/`departmentId`/`designationId`/`employmentType`
 - ✅ Empty `search=` behaves identically to no `search`
 - ✅ `search` matches the linked Department's name, the linked Designation's name, and the linked `User`'s name/email
-- ✅ `departmentId` exact filter; `designationId` exact filter
+- ✅ `departmentId` exact filter; `designationId` exact filter; `employmentType` exact filter (plain scalar, no relation)
 - ✅ Sort order actually reverses between `asc`/`desc`, including
-  `sortBy=department`'s and `sortBy=designation`'s relation sorts;
+  `sortBy=department`'s and `sortBy=designation`'s relation sorts and
+  `sortBy=employmentType`'s plain scalar sort;
   repeated identical calls return identical ordering (stability)
 - ✅ Empty array (not an error) when no rows match or all are soft-deleted
 - ✅ No sensitive data leaked beyond intended fields
@@ -3158,17 +3226,30 @@ Omitting the key entirely means "leave it as-is"; sending `null` means
 { "userId": null }
 ```
 
-**`departmentId` and `designationId` are the two exceptions — neither
+**`departmentId`, `designationId`, and (as of the Employment Type domain,
+2026-09-13) `employmentType` are the exceptions — none of the three
 accepts `null`.** Unlike `userId`/`managerId`/`branchId`, Department and
 Designation are both mandatory (docs/domain-department.md ADR-D07,
-docs/domain-designation.md ADR-DS07): omitting either key means "leave
-the current value as-is"; a new value is re-validated against the same
-assignability check as creation; but `{ "departmentId": null }` or
-`{ "designationId": null }` fails Zod's type check (`departmentId:
-Invalid input: expected string, received null` /
-`designationId: Invalid input: expected string, received null`), since
-there is no valid "employee has no department"/"employee has no
-designation" state to represent.
+docs/domain-designation.md ADR-DS07), and Employment Type is mandatory for
+a different reason — it's not an FK at all, it's a closed enum with no
+"unassigned" state (docs/domain-employment-type.md ADR-ET02): omitting the
+key means "leave the current value as-is"; a new value is re-validated
+(for `departmentId`/`designationId`) against the same assignability check
+as creation, or (for `employmentType`) against the same 4-value enum
+check as creation; but `{ "departmentId": null }`, `{ "designationId":
+null }`, or `{ "employmentType": null }` all fail Zod's validation —
+`departmentId: Invalid input: expected string, received null` /
+`designationId: Invalid input: expected string, received null` /
+`employmentType: Invalid option: expected one of "FULL_TIME"|"PART_TIME"|"CONTRACT"|"INTERN"`
+— since there is no valid "employee has no department"/"employee has no
+designation"/"employee has no employment type" state to represent. A
+**conversion** (e.g. `INTERN` → `FULL_TIME`) is fully supported and
+requires no special handling — just send the new value, same as any other
+scalar field change:
+
+```json
+{ "employmentType": "FULL_TIME" }
+```
 
 ## 7. Validation Rules
 
@@ -3189,6 +3270,17 @@ the service:
   by the Designation domain (2026-09-13), same shape as `departmentId`'s
   re-validation. Unlike `branchId`, there is no "clear it" path, since
   `designationId` cannot be `null` (see §6 above).
+- **`employmentType`, when present, is re-validated by the same Zod
+  `z.enum([...])` check as creation** — added by the Employment Type
+  domain (2026-09-13). Unlike `departmentId`/`designationId`, there is
+  **no service-layer business-rule check at all** for a new
+  `employmentType` value: it's a closed, code-defined enum, not an FK, so
+  Zod's enum validation is the entire guard, both on create and on
+  update. A conversion (e.g. `INTERN` → `FULL_TIME`) is otherwise treated
+  as an ordinary field change — no extra business rule, no cycle/history
+  check. Unlike `branchId` (which **can** be nulled to clear the link),
+  `employmentType` joins `departmentId`/`designationId` in having no
+  "clear it" path at all — there is no valid unset state for it (see §6).
 
 ## 8. Successful Response
 
@@ -3201,6 +3293,7 @@ the service:
     "userId": "283a2b17-b05d-49aa-8915-d58c5658f2bb",
     "departmentId": "0b680ff5-4d81-43e5-9744-279211adcf03",
     "designationId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "employmentType": "FULL_TIME",
     "salary": "82000",
     "dateOfJoining": "2024-01-15T00:00:00.000Z",
     "managerId": null,
@@ -3221,8 +3314,10 @@ Only `updatedAt` changes automatically among the timestamp fields.
 | `400`  | `managerId` equals the record's own `id` | `"An employee cannot be their own manager"`           | Self-management attempt                                                |
 | `400`  | `departmentId: null`                     | `"departmentId: Invalid input: expected string, received null"` | departmentId is mandatory — unlike `userId`/`managerId`/`branchId`, it cannot be cleared, verified live via Zod directly |
 | `400`  | `designationId: null`                    | `"designationId: Invalid input: expected string, received null"` | designationId is mandatory — same reasoning as `departmentId`, cannot be cleared, verified live via Zod directly |
+| `400`  | `employmentType: null`                   | `"employmentType: Invalid option: expected one of "FULL_TIME"\|"PART_TIME"\|"CONTRACT"\|"INTERN""` | **Added by the Employment Type domain (2026-09-13).** employmentType is mandatory — same reasoning as `departmentId`/`designationId`, cannot be cleared; identical message to a missing/invalid value, since Zod's enum validation doesn't distinguish any of the three cases. Verified live. |
 | `400`  | New `departmentId` doesn't exist or is inactive | Same messages as `POST /employees`               | Re-validated on every change, not just at creation                     |
 | `400`  | New `designationId` doesn't exist or is inactive | Same messages as `POST /employees`              | Re-validated on every change, not just at creation                     |
+| `400`  | New `employmentType` not one of the 4 allowed values | Same message as `POST /employees`           | **Added by the Employment Type domain (2026-09-13).** Re-validated on every change, not just at creation — but purely a Zod enum check, no service-layer existence/status check (it isn't an FK) |
 | `400`  | Invalid field value(s)                   | Same per-field messages as `POST /employees`          | e.g. negative salary, future date, malformed UUID                      |
 | `401`  | No/invalid/expired access token          | Same as every other protected endpoint                | `authMiddleware` failure                                               |
 | `403`  | Roles don't grant `employee:update:any`  | `"You do not have permission to perform this action"` | Any `EMPLOYEE`, or a `MANAGER`/`ADMIN` role misconfigured in seed data |
@@ -3241,6 +3336,9 @@ Only `updatedAt` changes automatically among the timestamp fields.
 | 7   | Nonexistent/inactive `departmentId` | `{"departmentId":"<bad or inactive id>"}`      | `400`                   |
 | 8   | `designationId: null`              | `{"designationId":null}`                        | `400` — mandatory, cannot be cleared |
 | 9   | Nonexistent/inactive `designationId` | `{"designationId":"<bad or inactive id>"}`    | `400`                   |
+| 10  | Conversion, `INTERN` → `FULL_TIME` | `{"employmentType":"FULL_TIME"}` (on a record currently `INTERN`) | `200`, `employee.employmentType: "FULL_TIME"` |
+| 11  | `employmentType: null`             | `{"employmentType":null}`                       | `400` — mandatory, cannot be cleared, verified live |
+| 12  | Invalid `employmentType`           | `{"employmentType":"FREELANCER"}`               | `400` — same message as test 11         |
 
 ## 11. Negative Testing
 
@@ -3256,6 +3354,7 @@ behave identically, applied to whichever fields are sent.
 | Concurrent updates to the same record from two requests     | Last write wins — no optimistic-locking/version check exists; **not independently verified under true concurrency**, same honestly-flagged gap as elsewhere in this project |
 | Setting `managerId` to a _different_, valid Employee's `id` | `200` — no cycle-detection beyond the direct self-reference check (a longer manager cycle, e.g. A→B→A, is **not** currently detected — a known, undemonstrated gap)         |
 | Sending `{"userId": null}` (or `managerId`) to clear an existing link | `200` — the column is set to `NULL`. Verified live: linked a real `Employee` to a `User`, sent `{"userId": null}`, confirmed the response and a fresh `GET` both show `userId: null`. Omitting the key instead of sending `null` leaves the previous value untouched — the two are not equivalent. |
+| Converting `employmentType` (e.g. `INTERN` → `FULL_TIME`) | `200` — treated as an ordinary scalar field change, no special-cased "conversion" endpoint or business rule. **Added by the Employment Type domain (2026-09-13)**: verified live, including that the resulting `AuditLog` `UPDATE` row's `beforeData`/`afterData` both correctly reflect the old/new `employmentType` value. |
 
 ## 13. Security Testing
 
@@ -3278,6 +3377,12 @@ behave identically, applied to whichever fields are sent.
   `AuditLog` insert happen inside one `prisma.$transaction` — the audit
   entry's `beforeData` is the record as fetched just before the update,
   `afterData` is the record just after.
+- **`employmentType` conversions require zero new audit code** — added by
+  the Employment Type domain (2026-09-13). A `PATCH` changing
+  `employmentType` flows through the exact same `AuditLog` write path as
+  every other Employee field change (`AUDIT_ENTITY_TYPES.EMPLOYEE`,
+  `action: 'UPDATE'`, full before/after `Employee` state) — verified live.
+  No Employee-field audit gap exists for `employmentType`.
 
 ## 15. Request Lifecycle
 
@@ -3322,6 +3427,12 @@ curl -i -X PATCH http://localhost:3000/api/v1/employees/$EMPLOYEE_ID \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d '{"departmentId":"'"$DEPARTMENT_ID"'","salary":82000}'
+
+# Employment Type conversion (e.g. INTERN -> FULL_TIME)
+curl -i -X PATCH http://localhost:3000/api/v1/employees/$EMPLOYEE_ID \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"employmentType":"FULL_TIME"}'
 ```
 
 ## 19. Postman Collection Notes
@@ -3335,10 +3446,14 @@ endpoints.
 - ✅ `400` on self-management (`managerId = id`)
 - ✅ `400` on `departmentId: null` (mandatory, cannot be cleared) — verified via Zod directly
 - ✅ `400` on `designationId: null` (mandatory, cannot be cleared) — verified via Zod directly
+- ✅ `400` on `employmentType: null` (mandatory, cannot be cleared) — verified via Zod directly
 - ✅ New `departmentId`/`designationId` re-validated for existence + `ACTIVE` status
+- ✅ New `employmentType` re-validated against the 4-value enum (no existence/status check — not an FK)
+- ✅ Conversion success (e.g. `employmentType`: `INTERN` → `FULL_TIME`)
 - ✅ `404` on nonexistent/soft-deleted record
 - ✅ `403` as `EMPLOYEE`, `401` with no token
 - ✅ Only `updatedAt` changes among timestamps
+- ✅ `employmentType` change produces a normal `AuditLog` `UPDATE` row (full before/after state) — verified live
 - ✅ No sensitive data leaked
 
 ---

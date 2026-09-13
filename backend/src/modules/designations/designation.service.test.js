@@ -51,6 +51,7 @@ const makeEmployee = async (designationId) => {
     data: {
       departmentId: testDepartmentId,
       designationId,
+      employmentType: 'FULL_TIME',
       salary: 1000,
       dateOfJoining: new Date(),
     },
@@ -135,6 +136,7 @@ test('employee creation requires a valid, active designationId', async () => {
     {
       departmentId: testDepartmentId,
       designationId: activeDesignation.id,
+      employmentType: 'FULL_TIME',
       salary: 2000,
       dateOfJoining: new Date(),
     },
@@ -150,6 +152,7 @@ test('employee creation requires a valid, active designationId', async () => {
         {
           departmentId: testDepartmentId,
           designationId: '00000000-0000-0000-0000-000000000000',
+          employmentType: 'FULL_TIME',
           salary: 2000,
           dateOfJoining: new Date(),
         },

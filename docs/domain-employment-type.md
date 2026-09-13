@@ -1,6 +1,6 @@
 ---
 Domain: Employment Type
-Status: FINAL
+Status: Implemented (2026-09-13)
 Date: 2026-07-27
 Depends on: docs/domain-identity-employee-lifecycle.md
 ---
@@ -76,7 +76,7 @@ This is the first domain in the review where the central Step-1-through-7 questi
 
 ## 8. Open Questions
 
-None structural. One minor implementation note (not a design question): whether the AuditLog extension for tracking employment-type conversions is worth doing now or deferred alongside the same open AuditLog questions for Branch/Department/Designation — recommend bundling this decision with those, not resolving it in isolation.
+**Resolved (2026-09-13):** the AuditLog question — no extension was needed. An employment-type conversion is just a normal `PATCH /employees/:id`, and Employee's existing audit logging (`AUDIT_ENTITY_TYPES.EMPLOYEE`) already records the full before/after Employee state on every update, `employmentType` included.
 
 ## 9. Deferred Decisions
 
@@ -111,13 +111,12 @@ This most directly constrains the future **Leave** domain (accrual eligibility/r
 ## Architecture Decision Records
 
 **ADR-ET01 — Employment Type as a Closed Enum, Not a Managed Aggregate**
-Status: Accepted
+Status: Accepted; Implemented (2026-09-13)
 Summary: Unlike Branch/Department/Designation, Employment Type is a fixed, code-defined enumeration, not an admin-manageable master-data table, because its values carry real downstream-behavior significance in domains not yet built.
 Consequences: New values require a code change and release, not a runtime admin action. If a future verified requirement demands open, customer-defined categories, this ADR must be explicitly superseded (see §6).
 
 **ADR-ET02 — employmentType Mandatory, Single Current Value**
-Status: Accepted
-Summary: Required field on Employee, no history/effective-dating today.
+Status: Accepted; Implemented (2026-09-13) — a required `EmploymentType` enum column on `Employee`. No free-text precursor existed to backfill from (unlike Branch/Department/Designation); the 30 pre-existing Employee rows were assigned `FULL_TIME` by a one-time migration default, immediately dropped so every future write must specify it explicitly.
 
 **ADR-ET03 — Eligibility/Calculation Rules Live in Consuming Domains**
 Status: Accepted
@@ -125,10 +124,10 @@ Summary: This domain owns only the classification; Leave/Payroll own their own r
 
 ## Final Sign-off
 
-**Implementation readiness:** Ready. No open structural questions; the one deliberate divergence (closed enum vs. managed table) is fully argued and justified, not left ambiguous.
+**Implementation readiness:** Implemented (2026-09-13). All ADRs resolved.
 
-**Confidence score: 90%**
+**Confidence score: 92%** (was 90% pre-implementation; the closed-enum decision proved out cleanly — no repository, no service, no new permissions or AuditLog entity type were needed, exactly as designed, and the existing Employee-level audit logging already captures conversions with no extension required).
 
-**Remaining blockers:** None structural. Bundle the AuditLog-extension-for-conversions question with the equivalent open items already carried by Branch/Department/Designation.
+**Remaining blockers:** None. The AuditLog-extension question named in §8 turned out not to apply — conversions are ordinary `PATCH /employees/:id` calls, already fully captured by Employee's existing audit logging.
 
 **Recommended next domain:** Holiday Calendar — a prerequisite for both Shift and Attendance, since both need to know which dates are non-working before their own rules can be fully specified.

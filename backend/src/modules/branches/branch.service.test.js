@@ -60,6 +60,7 @@ const makeEmployee = async (branchId) => {
     data: {
       departmentId: testDepartmentId,
       designationId: testDesignationId,
+      employmentType: 'FULL_TIME',
       salary: 1000,
       dateOfJoining: new Date(),
       branchId,
@@ -132,6 +133,7 @@ test('employee creation honors the branch assignability check', async () => {
     {
       departmentId: testDepartmentId,
       designationId: testDesignationId,
+      employmentType: 'FULL_TIME',
       salary: 2000,
       dateOfJoining: new Date(),
       branchId: activeBranch.id,
@@ -148,6 +150,7 @@ test('employee creation honors the branch assignability check', async () => {
         {
           departmentId: testDepartmentId,
           designationId: testDesignationId,
+          employmentType: 'FULL_TIME',
           salary: 2000,
           dateOfJoining: new Date(),
           branchId: '00000000-0000-0000-0000-000000000000',

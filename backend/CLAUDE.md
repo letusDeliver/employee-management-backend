@@ -1153,3 +1153,70 @@ gained 5 new endpoint entries (29-33) plus updates throughout endpoints
 Deliberately **backend-only**, same as Branch/Department — a Designation
 admin screen and picker in the Employee form are frontend follow-up work,
 not started here.)_
+
+_(Employment Type Domain — 2026-09-13, on branch
+`feature/18-employment-type-domain` (based on
+`feature/17-designation-domain`). Fourth domain from the HRMS/ERP Business
+Architecture Review (`docs/domain-employment-type.md`), and the first one
+architected deliberately differently from the last three: per ADR-ET01,
+Employment Type is a **closed, code-defined enum** (`FULL_TIME |
+PART_TIME | CONTRACT | INTERN`), not an admin-manageable master-data
+table like Branch/Department/Designation, because each value carries real
+downstream-behavior significance (future Leave accrual, Payroll
+calculation basis) that an admin-creatable row could never safely carry
+on its own. Consequence: no new module, no repository, no CRUD service,
+no new endpoints, no new permissions, no new AuditLog entity type - just
+a required enum field on `Employee` and the corresponding
+validation/query changes.
+
+Genuinely new ground, unlike Branch/Department/Designation: **verified
+fact**, no `employmentType`-shaped column existed anywhere before this,
+so there was no free-text precursor to derive real historical values
+from. This required a real judgment call flagged to the user before
+implementing (not decided silently): all 30 pre-existing Employee rows
+needed *some* value to satisfy the incoming `NOT NULL` constraint, so
+every one was assigned `FULL_TIME` via a temporary `DEFAULT 'FULL_TIME'`
+in the migration SQL itself (a single-step migration, no separate
+expand/backfill/contract sequence needed since there was nothing to
+preserve) - the default was dropped immediately after
+(`ALTER COLUMN ... DROP DEFAULT`) so every future `POST`/`PATCH` must
+specify `employmentType` explicitly (ADR-ET02: no unknown state).
+
+`employmentType` added to `createEmployeeSchema` (required), `.partial()`'d
+into `updateEmployeeSchema` but deliberately not added to the
+nullable-widening `.extend()` block - same non-nullable treatment as
+`departmentId`/`designationId`, verified live that `{"employmentType":
+null}` is rejected by Zod, not silently accepted. `buildEmployeeWhere`
+gained a plain scalar `employmentType` filter (no relation - unlike
+`departmentId`/`designationId`, there's no FK or existence/status check
+to perform, since it's a value, not a reference to another aggregate's
+identity); `employmentType` was added to `SORTABLE_FIELDS` and correctly
+falls through `buildEmployeeOrderBy`'s default branch as a plain column
+sort, since `RELATION_SORT_FIELDS` only lists `department`/`designation`.
+
+New `employee.employmentType.test.js` (3 tests: all four values accepted,
+an invalid value rejected, a conversion overwrites the current value on
+update) - no service-level test file since there's no service to test.
+Existing `branch/department/designation.service.test.js` fixtures needed
+`employmentType: 'FULL_TIME'` added to their raw `Employee` creates, same
+fix class as every previous domain's break. All 21 tests across all four
+domains pass together. Verified live end-to-end: missing-field 400,
+invalid-value 400 (same Zod message, since enum validation doesn't
+distinguish the two cases), valid creation with each value, filter by
+`employmentType`, sort by `employmentType` (confirmed genuinely a plain
+scalar sort against real data), a real `INTERN` → `FULL_TIME` conversion
+via `PATCH`, null-rejection on `PATCH`, and confirmed the conversion was
+captured by Employee's *existing* audit logging with zero new code -
+exactly as the domain doc's own architecture predicted (§5: "no new
+architectural mechanism" needed).
+
+`docs/domain-employment-type.md` (ADR-ET01/ET02 implementation confirmed,
+the AuditLog open question resolved as "not applicable", confidence
+90%→92%), `docs/adr-index.md` updated. `handbook/API_ENDPOINTS.md` updated
+in place across endpoints 9/10/12 (a new required field, not a
+renamed/removed one like Department's/Designation's breaking changes -
+framed accordingly) plus a new Endpoint Index note - no new endpoint
+sections needed, since there are no new endpoints. `backend/README.md`
+updated to match.
+
+Deliberately **backend-only**, same as the prior three domains.)_
