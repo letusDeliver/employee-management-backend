@@ -20,12 +20,16 @@ registry.registerPath({
   path: '/branches',
   tags: TAG,
   summary: 'Create a Branch',
-  description: "Requires the 'branch:create' permission.",
+  description:
+    "Requires the 'branch:create' permission. Also accepts an optional holidayCalendarId (docs/domain-holiday-calendar.md, ADR-HC03) - validated for existence+ACTIVE status the same way branchId is validated when assigned to an Employee.",
   security: [{ [bearerAuth.name]: [] }],
   request: { body: { content: { 'application/json': { schema: createBranchSchema } } } },
   responses: {
     201: jsonResponse('Branch created', z.object({ branch: BranchSchema })),
-    400: errorResponse('Validation failed'),
+    400: errorResponse(
+      'Validation failed, or holidayCalendarId does not reference an existing, active record',
+      { status: 'error', message: 'holidayCalendarId: references a record that does not exist' },
+    ),
     401: errorResponse('Missing, invalid, or expired access token'),
     403: errorResponse("Caller lacks the 'branch:create' permission"),
     409: errorResponse('A branch with this name or code already exists', {
@@ -80,7 +84,7 @@ registry.registerPath({
   tags: TAG,
   summary: 'Update a Branch, including activating/deactivating it',
   description:
-    "Requires the 'branch:update' permission. Deactivating a branch (status: INACTIVE) never modifies existing Employee.branchId references - it only blocks future assignment (domain-branch.md's positive-allowlist rule).",
+    "Requires the 'branch:update' permission. Deactivating a branch (status: INACTIVE) never modifies existing Employee.branchId references - it only blocks future assignment (domain-branch.md's positive-allowlist rule). holidayCalendarId accepts explicit null to unassign (unlike creation, where it's simply omitted).",
   security: [{ [bearerAuth.name]: [] }],
   request: {
     params: idParam,
@@ -88,7 +92,13 @@ registry.registerPath({
   },
   responses: {
     200: jsonResponse('Branch updated', z.object({ branch: BranchSchema })),
-    400: errorResponse('Validation failed'),
+    400: errorResponse(
+      'Validation failed, or holidayCalendarId does not reference an existing, active record',
+      {
+        status: 'error',
+        message: 'holidayCalendarId: this holiday calendar is not active and cannot be assigned',
+      },
+    ),
     401: errorResponse('Missing, invalid, or expired access token'),
     403: errorResponse("Caller lacks the 'branch:update' permission"),
     404: errorResponse('No Branch with this id', {

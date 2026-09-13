@@ -1,5 +1,6 @@
 import prisma from '../../config/database.js';
 import branchRepository from './branch.repository.js';
+import holidayCalendarService from '../holidayCalendars/holidayCalendar.service.js';
 import auditLogRepository from '../audit/auditLog.repository.js';
 import { AUDIT_ACTIONS, AUDIT_ENTITY_TYPES } from '../audit/auditLog.constants.js';
 import ConflictError from '../../errors/ConflictError.js';
@@ -10,11 +11,26 @@ const DUPLICATE_BRANCH_MESSAGE = 'A branch with this name or code already exists
 
 const normalizeForAudit = (record) => JSON.parse(JSON.stringify(record));
 
+// Translates a Prisma foreign-key-violation (P2003) on holidayCalendarId
+// into a client-safe 400 - same pattern as employee.service.js's equivalent
+// for branchId/departmentId/designationId.
+const rethrowForeignKeyViolationAsBadRequest = (error) => {
+  if (error.code !== 'P2003') {
+    throw error;
+  }
+
+  throw new BadRequestError('holidayCalendarId: references a record that does not exist');
+};
+
 const createBranch = async (data, actor) => {
   const existing = await branchRepository.findByNameOrCode(data.name, data.code);
 
   if (existing) {
     throw new ConflictError(DUPLICATE_BRANCH_MESSAGE);
+  }
+
+  if (data.holidayCalendarId) {
+    await holidayCalendarService.assertHolidayCalendarAssignable(data.holidayCalendarId);
   }
 
   try {
@@ -44,7 +60,7 @@ const createBranch = async (data, actor) => {
       throw new ConflictError(DUPLICATE_BRANCH_MESSAGE);
     }
 
-    throw error;
+    rethrowForeignKeyViolationAsBadRequest(error);
   }
 };
 
@@ -110,6 +126,14 @@ const updateBranch = async (id, data, actor) => {
     }
   }
 
+  // Only validated when a new holidayCalendarId is actually being set -
+  // `null` means "unassign" (no check needed) and `undefined` means "leave
+  // as-is" (already validated when originally assigned), same pattern as
+  // employee.service.js's branchId handling.
+  if (data.holidayCalendarId) {
+    await holidayCalendarService.assertHolidayCalendarAssignable(data.holidayCalendarId);
+  }
+
   try {
     return await prisma.$transaction(async (tx) => {
       const updated = await branchRepository.update(id, data, tx);
@@ -134,7 +158,7 @@ const updateBranch = async (id, data, actor) => {
       throw new ConflictError(DUPLICATE_BRANCH_MESSAGE);
     }
 
-    throw error;
+    rethrowForeignKeyViolationAsBadRequest(error);
   }
 };
 

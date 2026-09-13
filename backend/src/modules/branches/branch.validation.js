@@ -9,6 +9,11 @@ export const createBranchSchema = z
       .min(1)
       .optional()
       .meta({ example: 'BLR-01', description: 'Optional, but unique when provided' }),
+    // Optional (docs/domain-holiday-calendar.md, ADR-HC03) - validated for
+    // existence+ACTIVE status in the service
+    // (holidayCalendarService.assertHolidayCalendarAssignable), same pattern
+    // as branchId/departmentId/designationId on Employee.
+    holidayCalendarId: z.string().uuid().optional().meta({ example: null }),
   })
   .meta({ id: 'CreateBranchRequest' });
 
@@ -19,6 +24,10 @@ export const updateBranchSchema = z
     }),
     code: z.string().trim().min(1).nullable().optional().meta({ example: 'BLR-01' }),
     status: z.enum(['ACTIVE', 'INACTIVE']).optional().meta({ example: 'INACTIVE' }),
+    // Nullable, unlike createBranchSchema's own .optional() only - a PATCH
+    // needs a way to express "unassign this calendar", same widening
+    // Employee's userId/managerId/branchId already get.
+    holidayCalendarId: z.string().uuid().nullable().optional().meta({ example: null }),
   })
   .meta({ id: 'UpdateBranchRequest' });
 

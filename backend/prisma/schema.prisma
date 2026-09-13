@@ -153,9 +153,19 @@ model Branch {
   name      String       @unique
   code      String?      @unique
   status    BranchStatus @default(ACTIVE)
+  // Optional (docs/domain-holiday-calendar.md, ADR-HC03) - fulfills the item
+  // explicitly deferred in this domain's own Deferred Decisions table
+  // ("timezone/statutory/holiday-calendar fields"), added additively without
+  // altering any accepted Branch ADR. Absence means "no holidays applied,"
+  // never an error - the positive-allowlist philosophy applied to Branch
+  // itself this time, not just to what Branch is assigned to.
+  holidayCalendarId String?
+  holidayCalendar   HolidayCalendar? @relation(fields: [holidayCalendarId], references: [id], onDelete: Restrict)
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
   employees Employee[]
+
+  @@index([holidayCalendarId])
 }
 
 // See docs/domain-department.md for the full business-architecture sign-off.
@@ -207,6 +217,53 @@ enum EmploymentType {
   PART_TIME
   CONTRACT
   INTERN
+}
+
+// See docs/domain-holiday-calendar.md for the full business-architecture
+// sign-off. Uses a status field, not deletedAt (mirrors Branch/Department/
+// Designation) - deactivation blocks future assignment to new Branches but
+// never retroactively touches existing Branch.holidayCalendarId references
+// or deletes Holiday entries.
+enum HolidayCalendarStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// Aggregate root (ADR-HC01) - a named, year-agnostic, reusable container of
+// dated Holiday entries (ADR-HC02), referenced optionally by many Branches
+// (ADR-HC03). No `code` field - unlike Branch/Department/Designation, this
+// domain's own sign-off never names one as useful here.
+model HolidayCalendar {
+  id        String                @id @default(uuid())
+  name      String                @unique
+  status    HolidayCalendarStatus @default(ACTIVE)
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+  holidays  Holiday[]
+  branches  Branch[]
+}
+
+// Child entity, cascade-deleted with its parent calendar (ADR-HC01 §3) - no
+// independent identity meaningful outside HolidayCalendar, mirroring the
+// existing Employee -> EmployeeDocument cascade shape. Unlike EmployeeDocument,
+// entries here are freely editable/removable (docs/domain-holiday-calendar.md
+// §2) - no other domain holds a direct reference to a specific Holiday row,
+// consumers resolve "is date X a holiday" by date, never by Holiday id.
+model Holiday {
+  id                String          @id @default(uuid())
+  holidayCalendarId String
+  holidayCalendar   HolidayCalendar @relation(fields: [holidayCalendarId], references: [id], onDelete: Cascade)
+  date              DateTime
+  name              String
+  isOptional        Boolean         @default(false)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  // Enforces §4's mandatory invariant ("a Holiday entry's date must be
+  // unique within its own calendar") at the DB level, not just in the
+  // service layer.
+  @@unique([holidayCalendarId, date])
+  @@index([holidayCalendarId])
 }
 
 model EmployeeDocument {

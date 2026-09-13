@@ -71,6 +71,7 @@ export const BranchSchema = z
     name: z.string().meta({ example: 'Bengaluru HQ' }),
     code: z.string().nullable().meta({ example: 'BLR-01' }),
     status: z.enum(['ACTIVE', 'INACTIVE']).meta({ example: 'ACTIVE' }),
+    holidayCalendarId: z.uuid().nullable().meta({ example: null }),
     createdAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
     updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
   })
@@ -97,6 +98,28 @@ export const DesignationSchema = z
     updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
   })
   .meta({ id: 'Designation' });
+
+export const HolidayCalendarSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'f1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    name: z.string().meta({ example: 'India Public Holidays' }),
+    status: z.enum(['ACTIVE', 'INACTIVE']).meta({ example: 'ACTIVE' }),
+    createdAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+  })
+  .meta({ id: 'HolidayCalendar' });
+
+export const HolidaySchema = z
+  .object({
+    id: z.uuid().meta({ example: 'a9b8c7d6-e5f4-4a3b-8c1d-0e9f8a7b6c5d' }),
+    holidayCalendarId: z.uuid().meta({ example: 'f1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    date: z.iso.datetime().meta({ example: '2026-08-15T00:00:00.000Z' }),
+    name: z.string().meta({ example: 'Independence Day' }),
+    isOptional: z.boolean().meta({ example: false }),
+    createdAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+  })
+  .meta({ id: 'Holiday' });
 
 export const EmployeeDocumentSchema = z
   .object({

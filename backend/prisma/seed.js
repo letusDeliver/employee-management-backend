@@ -134,6 +134,35 @@ const PERMISSIONS = [
     scope: null,
     description: 'Hard-delete a designation with zero Employee references',
   },
+  {
+    key: 'holidayCalendar:create',
+    resource: 'holidayCalendar',
+    action: 'create',
+    scope: null,
+    description: 'Create a holiday calendar',
+  },
+  {
+    key: 'holidayCalendar:read',
+    resource: 'holidayCalendar',
+    action: 'read',
+    scope: null,
+    description: 'Read holiday calendar records and their holiday entries',
+  },
+  {
+    key: 'holidayCalendar:update',
+    resource: 'holidayCalendar',
+    action: 'update',
+    scope: null,
+    description:
+      'Update a holiday calendar (including activating/deactivating it) and manage its holiday entries',
+  },
+  {
+    key: 'holidayCalendar:delete',
+    resource: 'holidayCalendar',
+    action: 'delete',
+    scope: null,
+    description: 'Hard-delete a holiday calendar with zero Branch references',
+  },
 ];
 
 const ROLE_PERMISSIONS = {
@@ -155,6 +184,10 @@ const ROLE_PERMISSIONS = {
     'designation:read',
     'designation:update',
     'designation:delete',
+    'holidayCalendar:create',
+    'holidayCalendar:read',
+    'holidayCalendar:update',
+    'holidayCalendar:delete',
   ],
   MANAGER: [
     'employee:create',
@@ -164,8 +197,15 @@ const ROLE_PERMISSIONS = {
     'branch:read',
     'department:read',
     'designation:read',
+    'holidayCalendar:read',
   ],
-  EMPLOYEE: ['employee:read:own', 'branch:read', 'department:read', 'designation:read'],
+  EMPLOYEE: [
+    'employee:read:own',
+    'branch:read',
+    'department:read',
+    'designation:read',
+    'holidayCalendar:read',
+  ],
 };
 
 const seedPermissions = async () => {
@@ -203,7 +243,7 @@ const seedRolesAndGrants = async () => {
 const main = async () => {
   await seedPermissions();
   await seedRolesAndGrants();
-  console.log('Seed complete: 3 system roles, 18 permissions, role-permission grants.');
+  console.log('Seed complete: 3 system roles, 22 permissions, role-permission grants.');
 };
 
 main()

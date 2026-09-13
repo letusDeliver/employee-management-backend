@@ -60,11 +60,12 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the two most load-
 ## Holiday Calendar — [[domain-holiday-calendar]]
 | ADR | Summary | Status |
 |---|---|---|
-| HC01 | HolidayCalendar/Holiday as a dedicated domain | Accepted |
-| HC02 | Calendar is year-agnostic, accumulates dated entries | Accepted |
-| HC03 | Branch-level optional assignment (`Branch.holidayCalendarId`, additive to Branch, not a redesign) | Accepted |
-| HC04 | Reusable holiday-resolution query (consumed by Attendance and Leave) | Accepted (recommendation) |
+| HC01 | HolidayCalendar/Holiday as a dedicated domain | Accepted; Implemented (2026-09-13) |
+| HC02 | Calendar is year-agnostic, accumulates dated entries | Accepted; Implemented (2026-09-13) |
+| HC03 | Branch-level optional assignment (`Branch.holidayCalendarId`, additive to Branch, not a redesign) | Accepted; Implemented (2026-09-13) |
+| HC04 | Reusable holiday-resolution query (consumed by Attendance and Leave) | Accepted (recommendation); Implemented (2026-09-13) — the calendar-level primitive (`isDateHolidayInCalendar`) only; the full multi-hop chain is left for Attendance/Leave to build when needed |
 | HC05 | Per-employee optional/restricted holiday election deferred to Leave | Deferred |
+| HC06 | Permission scoping | Accepted; Implemented (2026-09-13) — `ADMIN`-only mutations, read for all roles |
 
 ## Shift — [[domain-shift]]
 | ADR | Summary | Status |

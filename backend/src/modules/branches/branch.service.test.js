@@ -13,6 +13,7 @@ const RUN_ID = Date.now();
 const actor = { id: null, ipAddress: '127.0.0.1' };
 const createdEmployeeIds = [];
 const createdBranchIds = [];
+const createdHolidayCalendarIds = [];
 let testDepartmentId;
 let testDesignationId;
 
@@ -48,6 +49,9 @@ after(async () => {
   }
   if (createdBranchIds.length) {
     await prisma.branch.deleteMany({ where: { id: { in: createdBranchIds } } });
+  }
+  if (createdHolidayCalendarIds.length) {
+    await prisma.holidayCalendar.deleteMany({ where: { id: { in: createdHolidayCalendarIds } } });
   }
   await prisma.department.delete({ where: { id: testDepartmentId } });
   await prisma.designation.delete({ where: { id: testDesignationId } });
@@ -158,6 +162,33 @@ test('employee creation honors the branch assignability check', async () => {
         actor,
       ),
     { message: 'branchId: references a record that does not exist' },
+  );
+});
+
+test('branch creation honors the holiday calendar assignability check', async () => {
+  const calendar = await prisma.holidayCalendar.create({
+    data: { name: `Branch Test Holiday Calendar ${RUN_ID}` },
+  });
+  createdHolidayCalendarIds.push(calendar.id);
+
+  const branch = await branchService.createBranch(
+    { name: `Kolkata Site ${RUN_ID}`, holidayCalendarId: calendar.id },
+    actor,
+  );
+  createdBranchIds.push(branch.id);
+
+  assert.equal(branch.holidayCalendarId, calendar.id);
+
+  await assert.rejects(
+    () =>
+      branchService.createBranch(
+        {
+          name: `Invalid Calendar Site ${RUN_ID}`,
+          holidayCalendarId: '00000000-0000-0000-0000-000000000000',
+        },
+        actor,
+      ),
+    { message: 'holidayCalendarId: references a record that does not exist' },
   );
 });
 

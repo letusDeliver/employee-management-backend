@@ -1220,3 +1220,95 @@ sections needed, since there are no new endpoints. `backend/README.md`
 updated to match.
 
 Deliberately **backend-only**, same as the prior three domains.)_
+
+_(Holiday Calendar Domain — 2026-09-13, on branch
+`feature/19-holiday-calendar-domain` (based on
+`feature/18-employment-type-domain`). Fifth domain from the HRMS/ERP
+Business Architecture Review (`docs/domain-holiday-calendar.md`), and
+structurally the most complex one yet - the first **parent-child
+aggregate** (`HolidayCalendar` owns cascade-deleted `Holiday` entries,
+mirroring the existing `Employee` → `EmployeeDocument` shape), the first
+domain where the **FK direction reverses** (`Branch.holidayCalendarId`,
+optional - Branch becomes a consumer of another axis instead of only
+Employee consuming Branch/Department/Designation), and the first
+**multi-hop cross-domain read chain** (Employee→Branch→HolidayCalendar→
+Holiday).
+
+Resolved the one open item this domain's own sign-off left open
+(permission scoping, now ADR-HC06) identically to
+Branch/Department/Designation: `ADMIN`-only mutations (calendar CRUD and
+holiday-entry CRUD, since entries are aggregate-internal - no separate
+`holiday:*` permission set), `holidayCalendar:read` for all roles.
+
+Deliberately did **not** over-build ADR-HC04's resolution-query
+recommendation: implemented only the calendar-level primitive
+(`holidayCalendarService.isDateHolidayInCalendar(holidayCalendarId,
+date)`), which is genuinely this domain's own service responsibility per
+its architecture section (§5: "provide the query 'is date X a holiday
+for calendar Y'"). Did not build the fuller Employee→Branch→
+HolidayCalendar orchestration chain, since no Attendance/Leave consumer
+exists yet to call it and the domain doc itself explicitly assigns that
+job to "whichever of Attendance/Leave is designed next" - building it
+now would have been speculative infrastructure with zero callers.
+
+New module `src/modules/holidayCalendars/` - two repositories
+(`holidayCalendar.repository.js` for the aggregate root,
+`holiday.repository.js` for the child entity), one service exposing both
+calendar CRUD and nested holiday-entry CRUD, one controller, one routes
+file with nested `/:id/holidays[/:holidayId]` routes mirroring
+`employee.routes.js`'s existing `/:id/documents` nesting exactly. No
+`code` field on `HolidayCalendar`, unlike Branch/Department/Designation -
+this domain's own sign-off never names one as useful here, so none was
+added speculatively. Holiday's date-uniqueness-within-calendar invariant
+(§4) is enforced at the DB level via `@@unique([holidayCalendarId,
+date])`, not just in the service layer.
+
+`branch.service.js` gained a new optional `holidayCalendarId` on
+create/update, with an `assertHolidayCalendarAssignable` check (must
+exist, must be `ACTIVE`) - the same positive-allowlist shape every prior
+assignability check uses, just consumed by Branch this time instead of
+Employee. `updateBranchSchema` widens `holidayCalendarId` to nullable
+(unlike `createBranchSchema`'s plain `.optional()`), matching the
+established "PATCH needs a way to express unassignment" pattern already
+used for Employee's `userId`/`managerId`/`branchId`.
+
+Two new `AuditLog` entity types (`HOLIDAY_CALENDAR`, `HOLIDAY`) - each
+holiday-entry mutation gets its own audit record keyed by the Holiday's
+own id, the same own-entity audit pattern already established by
+`EmployeeDocument` (a child entity that also gets independent audit
+entries rather than being folded into its parent's).
+
+New `holidayCalendar.service.test.js` (8 tests: calendar CRUD,
+duplicate-name rejection, duplicate-date-within-calendar rejection via
+the DB unique constraint, the `isDateHolidayInCalendar` resolution query
+resolving both true and false correctly, holiday entry edit/remove with
+no reference restriction, calendar deactivation blocking future Branch
+assignment while preserving existing links, and delete-blocked-when-
+referenced-by-Branch) plus a new test in `branch.service.test.js` for the
+holidayCalendarId assignability check. All 30 tests across all five
+domains pass together. One test-writing gotcha hit and fixed: calling
+`holidayCalendarService.addHoliday` directly from a test (bypassing the
+route layer's Zod `z.coerce.date()`) requires passing real `Date` objects,
+not date strings - Prisma's client validates `DateTime` input strictly
+and rejects a bare `"2026-08-15"` string with "premature end of input."
+
+Verified live end-to-end against the running server: calendar CRUD,
+duplicate-name/duplicate-date 409s, holiday add/list/edit/remove, Branch
+assignment (valid, nonexistent-400, inactive-400), unassignment via
+explicit `null` on `PATCH /branches/:id`, delete-blocked-409 while
+referenced then successful delete after unassignment, and EMPLOYEE-role
+permission checks (read allowed, create forbidden). All live-verification
+fixtures cleaned up afterward, respecting the dependency order this
+domain adds: Branch must be deleted/unassigned before its HolidayCalendar
+can be deleted (`onDelete: Restrict`), the reverse of every prior
+domain's cleanup order.
+
+`docs/domain-holiday-calendar.md` (ADR-HC06 added and implemented, ADR-HC04
+implementation-scoped explicitly, confidence 84%→89%), `docs/adr-index.md`,
+`docs/deferred-decisions-register.md` updated. `handbook/API_ENDPOINTS.md`
+gained new endpoint docs for the calendar and nested holiday routes plus
+updates to the Branch section for `holidayCalendarId` (delegated to a
+background agent given the expected size, then verified). `backend/README.md`
+updated to match.
+
+Deliberately **backend-only**, same as every prior domain.)_

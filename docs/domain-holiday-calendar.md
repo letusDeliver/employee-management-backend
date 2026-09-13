@@ -1,6 +1,6 @@
 ---
 Domain: Holiday Calendar
-Status: FINAL — with open questions on optional/restricted holidays
+Status: Implemented (2026-09-13)
 Date: 2026-07-27
 Depends on: docs/domain-identity-employee-lifecycle.md, docs/domain-branch.md
 ---
@@ -78,7 +78,7 @@ Holiday Calendar defines **which dates are non-working for a given part of the o
 ## 8. Open Questions
 
 1. Per-employee optional/restricted holiday election — explicitly deferred to Leave's design (§7), not resolved here.
-2. Permission scoping for calendar/holiday management — same unresolved `ADMIN`-only vs. `ADMIN`+`MANAGER` pattern as prior domains.
+2. **Resolved (2026-09-13):** Permission scoping — `ADMIN`-only mutations (calendar CRUD and holiday-entry CRUD, since entries are aggregate-internal), `holidayCalendar:read` granted to every role. Same resolution as Branch/Department/Designation.
 
 ## 9. Deferred Decisions
 
@@ -128,19 +128,22 @@ Summary: `Branch.holidayCalendarId` is nullable; many branches may share one cal
 Consequences: This is an additive field on the already-finalized Branch aggregate. It does not contradict any accepted Branch ADR (B01–B08) — it fulfills the item explicitly named in Branch's own Deferred Decisions table. No superseding ADR is required; this is documented as an extension, not a redesign.
 
 **ADR-HC04 — Reusable Holiday-Resolution Query**
-Status: Accepted (recommendation)
-Summary: The Employee→Branch→HolidayCalendar→Holiday chain should be exposed as a single shared query, not re-implemented per consumer.
+Status: Accepted (recommendation); Implemented (2026-09-13) — `holidayCalendarService.isDateHolidayInCalendar(holidayCalendarId, date)` is the calendar-level primitive this domain owns. The fuller Employee→Branch→HolidayCalendar chain remains deliberately unbuilt — no Attendance/Leave consumer exists yet to call it, and building it speculatively would be exactly the kind of unused orchestration code this domain's own §5 warns against. Still flagged as a job for whichever of Attendance/Leave is implemented next.
 
 **ADR-HC05 — Per-Employee Optional Holiday Election Deferred to Leave**
 Status: Deferred
 Summary: This domain marks holidays as optional/mandatory; tracking individual elections is Leave's responsibility.
 
+**ADR-HC06 — Permission Scoping**
+Status: Accepted; Implemented (2026-09-13)
+Summary: `ADMIN`-only mutations (calendar CRUD and holiday-entry CRUD), `holidayCalendar:read` granted to every role — same resolution as Branch (ADR-B07), Department (ADR-D08), and Designation (ADR-DS06).
+
 ## Final Sign-off
 
-**Implementation readiness:** Ready. Open items are scope-boundary clarifications (§8), not structural blockers.
+**Implementation readiness:** Implemented (2026-09-13). Permission scoping resolved; the optional-holiday-election boundary remains correctly deferred to Leave's future design, not a blocker here.
 
-**Confidence score: 84%** — slightly lower than prior domains, reflecting the genuine complexity of the multi-hop read chain and the optional-holiday boundary question, both flagged rather than hidden.
+**Confidence score: 89%** (was 84% pre-implementation; the parent-child aggregate, the reversed FK direction on Branch, and the calendar-level resolution query all proved out cleanly against real data with no surprises — the remaining uncertainty is genuinely Leave's to resolve, not this domain's).
 
-**Remaining blockers:** None structural. Confirm permission scoping alongside the other open permission-scoping items; confirm the optional-holiday-election boundary when Leave is designed.
+**Remaining blockers:** None. Confirm the optional-holiday-election boundary when Leave is designed; build the full Employee→Branch→HolidayCalendar resolution chain when Attendance or Leave needs it.
 
 **Recommended next domain:** Shift — it defines recurring working-day patterns and weekly off-days, which is the concept explicitly excluded from Holiday Calendar (§9) and is a prerequisite for Attendance.

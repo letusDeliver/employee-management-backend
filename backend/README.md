@@ -144,9 +144,23 @@ All routes are mounted under `/api/v1`.
 | `GET`    | `/designations/:id`                    | Access token, `designation:read` permission (every role) | Get one Designation record                                                                                                                                                                                            |
 | `PATCH`  | `/designations/:id`                    | Access token, `designation:update` permission (ADMIN only) | Update a Designation, including activating/deactivating it                                                                                                                                                            |
 | `DELETE` | `/designations/:id`                    | Access token, `designation:delete` permission (ADMIN only) | Hard-delete a Designation — only when zero Employee records reference it                                                                                                                                              |
+| `POST`   | `/holiday-calendars`                   | Access token, `holidayCalendar:create` permission (ADMIN only) | Create a Holiday Calendar (named, year-agnostic container)                                                                                                                                                        |
+| `GET`    | `/holiday-calendars`                   | Access token, `holidayCalendar:read` permission (every role) | List Holiday Calendar records — paginated, searchable (`name`), filterable (`status`), sortable                                                                                                                     |
+| `GET`    | `/holiday-calendars/:id`               | Access token, `holidayCalendar:read` permission (every role) | Get one Holiday Calendar record (does not include Holiday entries — see the `/holidays` endpoint below)                                                                                                              |
+| `PATCH`  | `/holiday-calendars/:id`               | Access token, `holidayCalendar:update` permission (ADMIN only) | Update a Holiday Calendar, including activating/deactivating it                                                                                                                                                      |
+| `DELETE` | `/holiday-calendars/:id`               | Access token, `holidayCalendar:delete` permission (ADMIN only) | Hard-delete a Holiday Calendar — only when zero Branch records reference it (Holiday entries cascade-delete)                                                                                                         |
+| `POST`   | `/holiday-calendars/:id/holidays`      | Access token, `holidayCalendar:update` permission (ADMIN only) | Add a Holiday entry (date must be unique within the calendar)                                                                                                                                                        |
+| `GET`    | `/holiday-calendars/:id/holidays`      | Access token, `holidayCalendar:read` permission (every role) | List a Holiday Calendar's Holiday entries, ordered by date                                                                                                                                                           |
+| `PATCH`  | `/holiday-calendars/:id/holidays/:holidayId` | Access token, `holidayCalendar:update` permission (ADMIN only) | Update a Holiday entry                                                                                                                                                                                          |
+| `DELETE` | `/holiday-calendars/:id/holidays/:holidayId` | Access token, `holidayCalendar:update` permission (ADMIN only) | Remove a Holiday entry (no reference restriction)                                                                                                                                                               |
 
 `POST`/`PATCH /employees` also accept an optional `branchId`, validated
 against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
+
+`POST`/`PATCH /branches` also accept an optional `holidayCalendarId`
+(2026-09-13, `docs/domain-holiday-calendar.md` ADR-HC03), validated the
+same way — must exist and be `ACTIVE`. Absence means no holidays are
+applied for that branch, never an error.
 
 **Breaking change (2026-09-13):** Employee's free-text `department`
 (`String`) field was removed and replaced by a **mandatory**
@@ -201,7 +215,7 @@ src/
 ├── docs/                     # OpenAPI registry/generator/security + Swagger UI mounting
 ├── errors/                  # Typed AppError hierarchy
 ├── middlewares/              # auth, permission (RBAC), validate, upload (Multer), error, notFound
-├── modules/                  # Feature-first domain modules (auth, users, rbac, employees, branches, departments, designations, audit)
+├── modules/                  # Feature-first domain modules (auth, users, rbac, employees, branches, departments, designations, holidayCalendars, audit)
 ├── routes/                   # Router aggregation
 └── utils/                    # asyncHandler, jwt
 

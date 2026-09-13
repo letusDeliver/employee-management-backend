@@ -11,4 +11,6 @@ export const AUDIT_ENTITY_TYPES = Object.freeze({
   BRANCH: 'Branch',
   DEPARTMENT: 'Department',
   DESIGNATION: 'Designation',
+  HOLIDAY_CALENDAR: 'HolidayCalendar',
+  HOLIDAY: 'Holiday',
 });

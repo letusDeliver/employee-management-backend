@@ -268,6 +268,15 @@ in Postman's cookie jar once register/login/refresh sets it.
 | 31  | Designations | `GET`    | `/designations/:id`                   | Access token              | `designation:read`                             | Protected          |
 | 32  | Designations | `PATCH`  | `/designations/:id`                   | Access token              | `designation:update`                           | Protected          |
 | 33  | Designations | `DELETE` | `/designations/:id`                   | Access token              | `designation:delete`                           | Protected          |
+| 34  | Holiday Calendars | `POST`   | `/holiday-calendars`                              | Access token          | `holidayCalendar:create`                       | Protected          |
+| 35  | Holiday Calendars | `GET`    | `/holiday-calendars`                              | Access token          | `holidayCalendar:read`                         | Protected          |
+| 36  | Holiday Calendars | `GET`    | `/holiday-calendars/:id`                          | Access token          | `holidayCalendar:read`                         | Protected          |
+| 37  | Holiday Calendars | `PATCH`  | `/holiday-calendars/:id`                          | Access token          | `holidayCalendar:update`                       | Protected          |
+| 38  | Holiday Calendars | `DELETE` | `/holiday-calendars/:id`                          | Access token          | `holidayCalendar:delete`                       | Protected          |
+| 39  | Holiday Calendars | `POST`   | `/holiday-calendars/:id/holidays`                 | Access token          | `holidayCalendar:update`                       | Protected          |
+| 40  | Holiday Calendars | `GET`    | `/holiday-calendars/:id/holidays`                 | Access token          | `holidayCalendar:read`                         | Protected          |
+| 41  | Holiday Calendars | `PATCH`  | `/holiday-calendars/:id/holidays/:holidayId`      | Access token          | `holidayCalendar:update`                       | Protected          |
+| 42  | Holiday Calendars | `DELETE` | `/holiday-calendars/:id/holidays/:holidayId`      | Access token          | `holidayCalendar:update`                       | Protected          |
 
 **As of the Branch domain (2026-09-13)**, `Employee` create/update also
 accept an optional `branchId` — see endpoints 9 and 12 above, whose
@@ -309,6 +318,34 @@ No new endpoint, module, permission, or `AuditLog` entity type was added
 new code. See endpoints 9, 10, and 12 above (their Request Body/Query
 Parameters/Validation Rules sections are updated in place, not duplicated
 here).
+
+**As of the Holiday Calendar domain (2026-09-13)**: a new fifth
+master-data domain, and the first **parent-child aggregate** among
+them — `HolidayCalendar` (`id`, `name` — **unique, case-sensitive, no
+`code` field**, unlike Branch/Department/Designation above — `status`,
+timestamps) owns a child `Holiday` collection (`id`, `holidayCalendarId`,
+`date`, `name`, `isOptional` — defaults to `false` — timestamps), with a
+compound-unique constraint on `(holidayCalendarId, date)` enforced at the
+database level: no two entries on the same date within one calendar. See
+endpoints 34-38 below for calendar-level CRUD (`POST`/`GET`/`GET`/`PATCH`/
+`DELETE /holiday-calendars`) and endpoints 39-42 for the nested Holiday
+CRUD (`/holiday-calendars/:id/holidays`), following the same parent-child
+shape as Employee/EmployeeDocument (endpoints 16-18) — a `GET
+/holiday-calendars/:id` deliberately does **not** embed its Holiday
+entries; they're fetched separately via endpoint 40. Holiday entries
+cascade-delete automatically at the database level (`onDelete: Cascade`)
+whenever their parent calendar is hard-deleted; the calendar itself can
+never be hard-deleted while any `Branch` references it (`409`, the same
+"deactivate it instead" pattern already used by Branch/Department/
+Designation's own delete guards — see endpoint 38). `Branch` also gained
+a new optional field, `holidayCalendarId` (UUID, nullable, references
+`HolidayCalendar.id`, `onDelete: Restrict`) — see endpoints 19 and 22
+above (their Request Body/Validation Rules/Successful Response sections
+are updated in place, not duplicated here). Mutations require
+`holidayCalendar:create`/`update`/`delete` (`ADMIN` only, as seeded);
+`holidayCalendar:read` is granted to every role, the same broad
+reference-data reasoning already applied to `branch:read`/
+`department:read`/`designation:read`.
 
 **As of Feature 9**, authorization is permission-based, not role-based —
 `ADMIN`/`MANAGER`/`EMPLOYEE` are just role _names_ that happen to be
@@ -4721,14 +4758,16 @@ None.
 ```json
 {
   "name": "Bengaluru HQ",
-  "code": "BLR-01"
+  "code": "BLR-01",
+  "holidayCalendarId": "f1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
 }
 ```
 
-| Field  | Type   | Required | Description                                             |
-| ------ | ------ | -------- | -------------------------------------------------------- |
-| `name` | string | **Yes**  | Trimmed, non-empty, unique across all branches            |
-| `code` | string | No       | Trimmed, non-empty when provided, unique when provided    |
+| Field               | Type   | Required | Description                                             |
+| ------------------- | ------ | -------- | -------------------------------------------------------- |
+| `name`              | string | **Yes**  | Trimmed, non-empty, unique across all branches            |
+| `code`              | string | No       | Trimmed, non-empty when provided, unique when provided    |
+| `holidayCalendarId` | string (UUID) | No | **Added by the Holiday Calendar domain (2026-09-13).** Optional — omit entirely for "no holidays applied." When provided, must reference an existing `HolidayCalendar` whose `status` is `ACTIVE`. |
 
 ## 7. Validation Rules
 
@@ -4737,6 +4776,20 @@ None.
 - `status` is **not** accepted at creation — every new branch starts
   `ACTIVE` (`BranchStatus` default in `schema.prisma`); status can only be
   changed afterward via `PATCH /branches/:id`.
+- `holidayCalendarId`: optional (`.optional()` only, not nullable — same
+  shape as `code`, unlike its widened `.nullable().optional()` form on
+  `PATCH`, see endpoint 22). When present, it's validated by
+  `holidayCalendarService.assertHolidayCalendarAssignable` — the exact
+  same positive-allowlist pattern already used for `branchId`/
+  `departmentId`/`designationId` on Employee (ADR-B06/D06/DS06's shape,
+  reused here with Branch as the consumer instead of Employee):
+  - the referenced `HolidayCalendar` must exist, else
+    `400 "holidayCalendarId: references a record that does not exist"`;
+  - it must additionally be `status: "ACTIVE"`, else
+    `400 "holidayCalendarId: this holiday calendar is not active and cannot be assigned"`.
+  A raw foreign-key violation (Prisma `P2003` — the race-condition case
+  where the calendar is deleted between the check and the insert) is also
+  translated to the same "does not exist" `400`, never a raw `500`.
 
 ## 8. Successful Response
 
@@ -4749,19 +4802,25 @@ None.
     "name": "Bengaluru HQ",
     "code": "BLR-01",
     "status": "ACTIVE",
+    "holidayCalendarId": "f1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
     "createdAt": "2026-09-13T09:54:38.817Z",
     "updatedAt": "2026-09-13T09:54:38.817Z"
   }
 }
 ```
 
-Verified live against the real dev server.
+Verified live against the real dev server, including the
+`holidayCalendarId`-assigned case above; `holidayCalendarId` is `null`
+when omitted (**added by the Holiday Calendar domain, 2026-09-13** — every
+Branch response now includes this field).
 
 ## 9. Error Responses
 
 | Status | Reason                              | Response (`message`)                                | When                                                                 |
 | ------ | ------------------------------------ | ------------------------------------------------------ | ---------------------------------------------------------------------- |
 | `400`  | Validation failed                   | e.g. `"name: Branch name is required"`                | Empty/whitespace-only `name`                                          |
+| `400`  | `holidayCalendarId` does not reference an existing record | `"holidayCalendarId: references a record that does not exist"` | **Added by the Holiday Calendar domain (2026-09-13).** Nonexistent id, verified live |
+| `400`  | `holidayCalendarId` references an `INACTIVE` calendar | `"holidayCalendarId: this holiday calendar is not active and cannot be assigned"` | **Added by the Holiday Calendar domain (2026-09-13).** Verified live |
 | `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                | `authMiddleware` failure                                              |
 | `403`  | Caller lacks `branch:create`         | `"You do not have permission to perform this action"` | `EMPLOYEE` or `MANAGER` token — verified live                          |
 | `409`  | Duplicate `name` or `code`           | `"A branch with this name or code already exists"`     | Verified live: creating the same `name` twice returns `409` on the 2nd |
@@ -4777,6 +4836,9 @@ Verified live against the real dev server.
 | 5   | Empty/whitespace `name`            | `400`    |
 | 6   | As `MANAGER`/`EMPLOYEE` token       | `403`    |
 | 7   | No token                          | `401`    |
+| 8   | Valid create with an `ACTIVE` `holidayCalendarId` | `201` — verified live. **Added by the Holiday Calendar domain (2026-09-13).** |
+| 9   | Create with a nonexistent `holidayCalendarId`     | `400` — verified live. **Added by the Holiday Calendar domain (2026-09-13).** |
+| 10  | Create with an `INACTIVE` `holidayCalendarId`     | `400` — verified live. **Added by the Holiday Calendar domain (2026-09-13).** |
 
 ## 11. Negative Testing
 
@@ -4786,6 +4848,7 @@ Verified live against the real dev server.
 | Tampered/expired JWT               | `401`                                                                       |
 | `name`/`code` as a number/array   | `400` — Zod's `.string()` rejects non-string types                          |
 | Extremely long `name` (thousands of chars) | Not separately bounded by an explicit max-length rule today — a known, undemonstrated gap, not verified live in this pass |
+| `holidayCalendarId` not a valid UUID | `400` — Zod's `.uuid()` rejects malformed values. **Added by the Holiday Calendar domain (2026-09-13).** |
 
 ## 12. Edge Cases
 
@@ -4793,21 +4856,28 @@ Verified live against the real dev server.
 | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Concurrent creates with the same `name`                          | One succeeds, the other gets `409` — the pre-check can be beaten by a race, but the database's own unique constraint on `name`/`code` is the real guarantee (same pattern as Employee's `userId` uniqueness), translated from Prisma's `P2002` |
 | `code` omitted entirely                                          | Stored as `null` — no uniqueness conflict with other branches that also have no `code`                                                                |
+| `holidayCalendarId` omitted entirely                             | Stored as `null` — "no holidays applied," never an error (ADR-HC03's positive-allowlist framing extended to Branch itself). **Added by the Holiday Calendar domain (2026-09-13).** |
 
 ## 13. Security Testing
 
 - **Authorization**: confirm `MANAGER` cannot create a branch — verified
   live. This is a deliberate departure from Employee's scoping, where
   `MANAGER` has full parity with `ADMIN`.
-- **Mass assignment**: only `name`/`code` are read from the body — Zod's
-  schema strips anything else (e.g. an attempted `status: "ACTIVE"` or
-  `id` in the body is silently ignored, not applied).
+- **Mass assignment**: only `name`/`code`/`holidayCalendarId` are read
+  from the body — Zod's schema strips anything else (e.g. an attempted
+  `status: "ACTIVE"` or `id` in the body is silently ignored, not
+  applied).
 
 ## 14. Database Impact
 
-- **Tables affected**: `Branch` (insert), `AuditLog` (insert).
+- **Tables affected**: `Branch` (insert), `AuditLog` (insert), plus a read
+  of `HolidayCalendar` when `holidayCalendarId` is provided (the
+  assignability check — **added by the Holiday Calendar domain,
+  2026-09-13**).
 - **Transactions**: the `Branch` insert and the `AuditLog` insert happen
   inside one `prisma.$transaction` — same pattern as Employee's mutations.
+  The `holidayCalendarId` assignability check runs **before** this
+  transaction, same ordering as the name/code duplicate pre-check.
 
 ## 15. Request Lifecycle
 
@@ -4822,6 +4892,7 @@ validateMiddleware(createBranchSchema)
     ↓ (400 if invalid)
 branch.controller.create → branch.service.createBranch(data, actor)
     ├─ branchRepository.findByNameOrCode(name, code) → existing → 409
+    ├─ (if holidayCalendarId provided) holidayCalendarService.assertHolidayCalendarAssignable(holidayCalendarId) → 400 if missing/inactive
     └─ prisma.$transaction:
          ├─ branchRepository.create(data, tx)
          └─ auditLogRepository.create({ action: 'CREATE', afterData, ... }, tx)
@@ -4831,9 +4902,11 @@ branch.controller.create → branch.service.createBranch(data, actor)
 
 ## 16. Performance Notes
 
-Two indexed lookups (name/code uniqueness pre-check) plus one insert plus
-one audit-log insert in the same transaction — no notable performance
-concerns at current scale.
+Two indexed lookups (name/code uniqueness pre-check), plus one more
+indexed lookup when `holidayCalendarId` is provided (the assignability
+check — **added by the Holiday Calendar domain, 2026-09-13**), plus one
+insert plus one audit-log insert in the same transaction — no notable
+performance concerns at current scale.
 
 ## 17. Interview Notes
 
@@ -4846,6 +4919,16 @@ concerns at current scale.
   too?** Branch is foundational org-structure master data shared
   system-wide — a mistake here has a wider blast radius than a single
   Employee record (ADR-B07).
+- **Q: Why does `holidayCalendarId` reuse `branchId`'s exact
+  assignability-check shape instead of something new?** **Added by the
+  Holiday Calendar domain (2026-09-13).** Consistency — every FK-style
+  optional/mandatory assignment field introduced so far (`branchId`,
+  `departmentId`, `designationId` on Employee) already follows the same
+  "exists + `ACTIVE`" positive-allowlist check, returning the same
+  `field: references a record that does not exist` / `field: this <thing>
+  is not active and cannot be assigned` message shape. `holidayCalendarId`
+  is simply the first case where Branch is the *consumer* of this pattern
+  rather than only ever being its subject.
 
 ## 18. cURL Examples
 
@@ -4856,10 +4939,20 @@ curl -i -X POST http://localhost:3000/api/v1/branches \
   -d '{"name":"Bengaluru HQ","code":"BLR-01"}'
 ```
 
+```bash
+# With an optional holidayCalendarId (added by the Holiday Calendar domain, 2026-09-13)
+curl -i -X POST http://localhost:3000/api/v1/branches \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Bengaluru HQ","code":"BLR-01","holidayCalendarId":"'"$HOLIDAY_CALENDAR_ID"'"}'
+```
+
 ## 19. Postman Collection Notes
 
 Save the returned `branch.id` as `{{branchId}}` — used by every other
-Branch endpoint and by `POST /employees`'s `branchId` field.
+Branch endpoint and by `POST /employees`'s `branchId` field. Save
+`{{holidayCalendarId}}` from `POST /holiday-calendars` (endpoint 34)
+beforehand if exercising the assignment cases.
 
 ## 20. Testing Checklist
 
@@ -4868,6 +4961,10 @@ Branch endpoint and by `POST /employees`'s `branchId` field.
 - ✅ Empty/whitespace `name` → `400`
 - ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
 - ✅ `AuditLog` row created with correct `beforeData: null`/`afterData`
+- ✅ Valid create with an `ACTIVE` `holidayCalendarId` → `201`, field echoed back (verified live). **Added by the Holiday Calendar domain (2026-09-13).**
+- ✅ Nonexistent `holidayCalendarId` → `400` (verified live)
+- ✅ `INACTIVE` `holidayCalendarId` → `400` (verified live)
+- ✅ `holidayCalendarId` omitted → stored/returned as `null`
 
 ---
 
@@ -4949,6 +5046,7 @@ coerced from query strings to integers).
       "name": "Bengaluru HQ",
       "code": "BLR-01",
       "status": "ACTIVE",
+      "holidayCalendarId": null,
       "createdAt": "2026-09-13T09:54:38.817Z",
       "updatedAt": "2026-09-13T09:54:38.817Z"
     }
@@ -4958,6 +5056,10 @@ coerced from query strings to integers).
 ```
 
 Verified live, including `search` matching a branch by partial name.
+`holidayCalendarId` (nullable) is present on every Branch object as of
+the Holiday Calendar domain (2026-09-13) — this list endpoint's own
+`GET`/`Query Parameters` shape is otherwise unchanged (no
+`holidayCalendarId` filter exists in `listBranchesQuerySchema`).
 
 ## 9. Error Responses
 
@@ -5120,18 +5222,20 @@ No body — only the permission check and the record's existence.
     "name": "Bengaluru HQ",
     "code": "BLR-01",
     "status": "ACTIVE",
+    "holidayCalendarId": null,
     "createdAt": "2026-09-13T09:54:38.817Z",
     "updatedAt": "2026-09-13T09:54:53.078Z"
   }
 }
 ```
 
-Verified live.
+Verified live. `holidayCalendarId` (nullable) is present as of the
+Holiday Calendar domain (2026-09-13).
 
 ## 9. Error Responses
 
 | Status | Reason                              | Response (`message`)                                | When                              |
-| ------ | ------------------------------------ | -------------------------------------------------------- | ------------------------------------ |
+| ------ | ------------------------------------ | ---------------------------------------------------------- | ------------------------------------ |
 | `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure           |
 | `403`  | Caller lacks `branch:read`           | `"You do not have permission to perform this action"`   | Not expected in practice           |
 | `404`  | No such branch                      | `"Branch not found"`                                    | Invalid/nonexistent `id`, verified live |
@@ -5260,11 +5364,12 @@ None.
 { "status": "INACTIVE" }
 ```
 
-| Field    | Type   | Required | Description                                    |
-| ---------- | ------ | -------- | -------------------------------------------------- |
-| `name`   | string | No       | Trimmed, non-empty when provided                    |
-| `code`   | string | No       | Nullable — `null` clears it; trimmed, non-empty otherwise |
-| `status` | enum   | No       | `ACTIVE` or `INACTIVE`                              |
+| Field               | Type   | Required | Description                                    |
+| ------------------- | ------ | -------- | -------------------------------------------------- |
+| `name`              | string | No       | Trimmed, non-empty when provided                    |
+| `code`              | string | No       | Nullable — `null` clears it; trimmed, non-empty otherwise |
+| `status`            | enum   | No       | `ACTIVE` or `INACTIVE`                              |
+| `holidayCalendarId` | string (UUID) | No | **Added by the Holiday Calendar domain (2026-09-13).** Nullable — send `null` to explicitly unassign; omit to leave unchanged; a UUID value (re-)assigns, and must reference an existing, `ACTIVE` `HolidayCalendar`. |
 
 All fields are independently optional (partial update) — send only the
 field(s) being changed.
@@ -5273,6 +5378,21 @@ field(s) being changed.
 
 Same trimming/non-empty rules as creation for `name`/`code`; `status`
 restricted to the `BranchStatus` enum.
+
+`holidayCalendarId` is `.nullable().optional()` here — widened from
+creation's `.optional()`-only form, the same widening already applied to
+Employee's `userId`/`managerId`/`branchId` (**added by the Holiday
+Calendar domain, 2026-09-13**):
+
+- **omitted** (`undefined`): left as-is, no check re-run (already
+  validated when originally assigned);
+- **explicit `null`**: unassigns — no existence/status check needed;
+- **a UUID value**: re-validated by
+  `holidayCalendarService.assertHolidayCalendarAssignable`, exactly as at
+  creation — nonexistent → `400 "holidayCalendarId: references a record
+  that does not exist"`; `INACTIVE` → `400 "holidayCalendarId: this
+  holiday calendar is not active and cannot be assigned"`. A raw `P2003`
+  foreign-key violation is translated to the same "does not exist" `400`.
 
 ## 8. Successful Response
 
@@ -5285,19 +5405,25 @@ restricted to the `BranchStatus` enum.
     "name": "Bengaluru HQ",
     "code": "BLR-01",
     "status": "INACTIVE",
+    "holidayCalendarId": null,
     "createdAt": "2026-09-13T09:54:38.817Z",
     "updatedAt": "2026-09-13T09:54:53.078Z"
   }
 }
 ```
 
-Verified live, including the `status` transition shown above.
+Verified live, including the `status` transition shown above, and
+(**added by the Holiday Calendar domain, 2026-09-13**) `holidayCalendarId`
+present in every response and settable to a valid `ACTIVE` calendar id or
+explicitly cleared back to `null`.
 
 ## 9. Error Responses
 
 | Status | Reason                              | Response (`message`)                                | When                                       |
 | ------ | ------------------------------------ | -------------------------------------------------------- | ---------------------------------------------- |
 | `400`  | Validation failed                   | e.g. `"name: Branch name is required"`                  | Empty/whitespace-only `name`, invalid `status` |
+| `400`  | `holidayCalendarId` does not reference an existing record | `"holidayCalendarId: references a record that does not exist"` | **Added by the Holiday Calendar domain (2026-09-13).** Nonexistent id |
+| `400`  | `holidayCalendarId` references an `INACTIVE` calendar | `"holidayCalendarId: this holiday calendar is not active and cannot be assigned"` | **Added by the Holiday Calendar domain (2026-09-13).** Verified live |
 | `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                    |
 | `403`  | Caller lacks `branch:update`        | `"You do not have permission to perform this action"`   | Verified live for `EMPLOYEE`                |
 | `404`  | No such branch                      | `"Branch not found"`                                    | Invalid/nonexistent `id`                    |
@@ -5314,6 +5440,10 @@ Verified live, including the `status` transition shown above.
 | 5   | Nonexistent `id`                     | `404`    |
 | 6   | As `EMPLOYEE`/`MANAGER` token         | `403`    |
 | 7   | No token                             | `401`    |
+| 8   | Assign a valid `ACTIVE` `holidayCalendarId` | `200` — verified live. **Added by the Holiday Calendar domain (2026-09-13).** |
+| 9   | Assign a nonexistent `holidayCalendarId`    | `400` — verified live. **Added by the Holiday Calendar domain (2026-09-13).** |
+| 10  | Assign an `INACTIVE` `holidayCalendarId`    | `400` — verified live. **Added by the Holiday Calendar domain (2026-09-13).** |
+| 11  | Unassign via `{"holidayCalendarId": null}`  | `200`, `branch.holidayCalendarId` becomes `null` — verified live. **Added by the Holiday Calendar domain (2026-09-13).** |
 
 ## 11. Negative Testing
 
@@ -5322,6 +5452,7 @@ Verified live, including the `status` transition shown above.
 | `status` outside the enum        | `400`    |
 | Empty body `{}`                  | `200`, no-op update (no fields to change) — not separately verified live in this pass |
 | Tampered/expired JWT             | `401`    |
+| `holidayCalendarId` not a valid UUID (and not `null`) | `400` — Zod's `.uuid()` rejects malformed values. **Added by the Holiday Calendar domain (2026-09-13).** |
 
 ## 12. Edge Cases
 
@@ -5329,21 +5460,27 @@ Verified live, including the `status` transition shown above.
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
 | Deactivating a branch with active Employee assignments             | Succeeds; existing `Employee.branchId` references are **untouched** — verified live. Only *future* assignment attempts are blocked (see `POST /employees`'s branch-assignability check). |
 | Reactivating a branch                                              | Immediately assignable again — the positive-allowlist check only looks at current `status`, not history                    |
+| Deactivating a `HolidayCalendar` that is still assigned to this branch | This branch's `holidayCalendarId` link is **untouched** — verified live; deactivation only blocks *future* assignment of that calendar to a *different* branch, mirroring Branch's own deactivation semantics. **Added by the Holiday Calendar domain (2026-09-13).** |
+| Unassigning (`holidayCalendarId: null`) then re-assigning the same, now possibly-inactive, calendar | Re-assignment re-runs the full existence+`ACTIVE` check — `null` never short-circuits future validation. **Added by the Holiday Calendar domain (2026-09-13).** |
 
 ## 13. Security Testing
 
 - **Authorization**: confirm `MANAGER` cannot update a branch — same
   `ADMIN`-only scoping as create/delete (ADR-B07).
-- **Mass assignment**: only `name`/`code`/`status` are read from the body
-  — Zod strips anything else (e.g. an attempted `id` or `createdAt` in
-  the body is ignored).
+- **Mass assignment**: only `name`/`code`/`status`/`holidayCalendarId`
+  are read from the body — Zod strips anything else (e.g. an attempted
+  `id` or `createdAt` in the body is ignored).
 
 ## 14. Database Impact
 
-- **Tables affected**: `Branch` (update), `AuditLog` (insert).
+- **Tables affected**: `Branch` (update), `AuditLog` (insert), plus a
+  read of `HolidayCalendar` when `holidayCalendarId` is a non-null,
+  non-omitted value (the assignability check — **added by the Holiday
+  Calendar domain, 2026-09-13**).
 - **Transactions**: the `Branch` update and the `AuditLog` insert happen
   inside one `prisma.$transaction`.
-- **Cascade behavior**: none — deactivating never touches `Employee` rows.
+- **Cascade behavior**: none — deactivating never touches `Employee` rows,
+  nor does it touch `Holiday` rows on any assigned calendar.
 
 ## 15. Request Lifecycle
 
@@ -5359,6 +5496,7 @@ validateMiddleware(updateBranchSchema)
 branch.controller.update → branch.service.updateBranch(id, data, actor)
     ├─ branchRepository.findById(id) → not found → 404
     ├─ (if name/code changing) branchRepository.findByNameOrCode(...) → conflict → 409
+    ├─ (if holidayCalendarId is a truthy value) holidayCalendarService.assertHolidayCalendarAssignable(holidayCalendarId) → 400 if missing/inactive
     └─ prisma.$transaction:
          ├─ branchRepository.update(id, data, tx)
          └─ auditLogRepository.create({ action: 'UPDATE', beforeData, afterData, ... }, tx)
@@ -5368,7 +5506,9 @@ branch.controller.update → branch.service.updateBranch(id, data, actor)
 
 ## 16. Performance Notes
 
-Single indexed lookup, optional uniqueness pre-check, one update, one
+Single indexed lookup, optional uniqueness pre-check, plus one more
+indexed lookup when a non-null `holidayCalendarId` is being (re-)assigned
+(**added by the Holiday Calendar domain, 2026-09-13**), one update, one
 audit-log insert — no notable performance concerns.
 
 ## 17. Interview Notes
@@ -5381,6 +5521,15 @@ audit-log insert — no notable performance concerns.
   is explicit that deactivation never modifies or nulls existing
   `Employee.branchId` references, only blocks *future* assignment.
   Verified live.
+- **Q: Why does `holidayCalendarId` need `null` to unassign instead of
+  just omitting it, like `code` does to leave it unchanged?** **Added by
+  the Holiday Calendar domain (2026-09-13).** Zod (and every service
+  method here) treats `undefined` as "field not present in this patch"
+  and `null` as "explicitly set to empty" — two different intents that a
+  single `.optional()` can't express. This is the identical
+  `.nullable().optional()` widening already used for Employee's
+  `userId`/`managerId`/`branchId`, applied here for the first time to a
+  field on Branch itself.
 
 ## 18. cURL Examples
 
@@ -5391,11 +5540,29 @@ curl -i -X PATCH http://localhost:3000/api/v1/branches/$BRANCH_ID \
   -d '{"status":"INACTIVE"}'
 ```
 
+```bash
+# Assign a holiday calendar (added by the Holiday Calendar domain, 2026-09-13)
+curl -i -X PATCH http://localhost:3000/api/v1/branches/$BRANCH_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"holidayCalendarId":"'"$HOLIDAY_CALENDAR_ID"'"}'
+```
+
+```bash
+# Unassign it again via explicit null (added by the Holiday Calendar domain, 2026-09-13)
+curl -i -X PATCH http://localhost:3000/api/v1/branches/$BRANCH_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"holidayCalendarId":null}'
+```
+
 ## 19. Postman Collection Notes
 
 Run a deactivate/reactivate pair back-to-back to confirm both transitions
 work, then re-run `POST /employees` with `{{branchId}}` while inactive to
-confirm the `400` from the assignability check.
+confirm the `400` from the assignability check. For `holidayCalendarId`,
+run assign → unassign (`null`) → re-assign in sequence against
+`{{holidayCalendarId}}` from endpoint 34.
 
 ## 20. Testing Checklist
 
@@ -5405,6 +5572,10 @@ confirm the `400` from the assignability check.
 - ✅ `409` on rename collision
 - ✅ `403` as `EMPLOYEE`, `401` with no token
 - ✅ `AuditLog` row created with correct before/after snapshots
+- ✅ Assign a valid `ACTIVE` `holidayCalendarId` → `200` (verified live)
+- ✅ Assign a nonexistent/`INACTIVE` `holidayCalendarId` → `400` (verified live)
+- ✅ Unassign via `{"holidayCalendarId": null}` → `200`, becomes `null` (verified live)
+- ✅ Omitting `holidayCalendarId` leaves the existing value unchanged
 
 ---
 
@@ -7335,3 +7506,1786 @@ references; for a referenced designation, expect and assert on the `409`.
 - ✅ Delete with an active reference → `409` (verified live)
 - ✅ `403` as `EMPLOYEE`, `401` with no token
 - ✅ `404` for nonexistent `id`
+
+---
+
+---
+
+# 34. `POST /holiday-calendars`
+
+## 1. Endpoint Information
+
+```
+Feature:            Holiday Calendar Domain (2026-09-13, feature/19-holiday-calendar-domain)
+Endpoint:           Create Holiday Calendar
+Description:        Creates a new named, year-agnostic, reusable holiday calendar
+Method:             POST
+URL:                /api/v1/holiday-calendars
+API Version:        v1
+Module:             modules/holidayCalendars
+Authentication:     Yes (Bearer access token)
+Authorization:      `holidayCalendar:create` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: fulfills the item `docs/domain-branch.md` explicitly
+  deferred in its own Deferred Decisions table (a "timezone/statutory/
+  holiday-calendar field" on Branch) — see `docs/domain-holiday-calendar.md`
+  ADR-HC01/HC03.
+- **Business problem solved**: lets an organization define a named set of
+  public/statutory holidays once (e.g. "India Public Holidays") and share
+  it across every Branch in that region, instead of duplicating dates
+  per-branch or leaving holidays unmodeled entirely.
+- **Expected callers**: `ADMIN` only — the fifth master-data domain to
+  follow this project's now-standard "ADMIN-only mutations, broad read"
+  shape (ADR-HC06, same resolution as Branch/Department/Designation).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                  |
+| -------------------------------------- | -------- | ------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `holidayCalendar:create` permission |
+| `Content-Type: application/json`      | **Yes**  |                                                          |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "name": "India Public Holidays"
+}
+```
+
+| Field  | Type   | Required | Description                                                                 |
+| ------ | ------ | -------- | ---------------------------------------------------------------------------- |
+| `name` | string | **Yes**  | Trimmed, non-empty, unique across all holiday calendars (**case-sensitive** — no `code` field exists in this domain, unlike Branch/Department/Designation) |
+
+## 7. Validation Rules
+
+- `name`: required, `.trim().min(1, 'Holiday calendar name is required')`
+  — a whitespace-only value fails.
+- There is no `code` field at all — `docs/domain-holiday-calendar.md`
+  never names a use case for one, unlike Branch/Department/Designation.
+- `status` is **not** accepted at creation — every new calendar starts
+  `ACTIVE` (`HolidayCalendarStatus` default in `schema.prisma`); status
+  can only be changed afterward via `PATCH /holiday-calendars/:id`.
+- Uniqueness on `name` is a **case-sensitive exact match**
+  (`holidayCalendarRepository.findByName` queries `where: { name }` with
+  no `mode: 'insensitive'`) — unlike `department.repository.js`'s
+  explicitly case-insensitive equivalent. `"India Holidays"` and
+  `"india holidays"` are two distinct, both-valid rows here.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "holidayCalendar": {
+    "id": "f1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "name": "India Public Holidays",
+    "status": "ACTIVE",
+    "createdAt": "2026-09-13T10:12:04.221Z",
+    "updatedAt": "2026-09-13T10:12:04.221Z"
+  }
+}
+```
+
+Verified live against the real dev server. Note the absence of a `code`
+field and of any embedded `holidays` array — Holiday entries are always
+fetched separately (`GET /holiday-calendars/:id/holidays`, endpoint 40).
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                     | When                                                                       |
+| ------ | ------------------------------------ | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `400`  | Validation failed                   | `"name: Holiday calendar name is required"`                | Empty/whitespace-only or missing `name`                                     |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                    | `authMiddleware` failure                                                    |
+| `403`  | Caller lacks `holidayCalendar:create` | `"You do not have permission to perform this action"`     | `EMPLOYEE` token — verified live. `MANAGER` also lacks this grant per `prisma/seed.js` (not separately re-verified live in this pass). |
+| `409`  | Duplicate `name`                    | `"A holiday calendar with this name already exists"`        | Verified live: creating the same `name` twice returns `409` on the 2nd     |
+
+## 10. Postman Test Cases
+
+| #   | Case                                        | Expected |
+| --- | -------------------------------------------- | -------- |
+| 1   | Valid create                                 | `201` — verified live |
+| 2   | Duplicate `name`                             | `409` — verified live |
+| 3   | Same name, different casing (e.g. `india public holidays`) | `201` — a separate, non-conflicting row (case-sensitive uniqueness); not independently re-verified live in this pass, follows directly from the repository's exact-match query |
+| 4   | Empty/whitespace `name`                      | `400`    |
+| 5   | As `MANAGER`/`EMPLOYEE` token                 | `403` — verified live for `EMPLOYEE` |
+| 6   | No token                                     | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                    | Expected                                                                     |
+| -------------------------------------------- | ------------------------------------------------------------------------------- |
+| Malformed JSON body                          | `400` from Express's own JSON body-parser, before this route's handler runs   |
+| Tampered/expired JWT                         | `401`                                                                          |
+| `name` as a number/array                     | `400` — Zod's `.string()` rejects non-string types                            |
+| Extra fields in the body (e.g. `code`, `status`) | Silently stripped by Zod — never persisted, never an error (mass-assignment guard) |
+| Extremely long `name` (thousands of chars)   | Not separately bounded by an explicit max-length rule today — a known, undemonstrated gap, not verified live in this pass, same category as Branch's/Department's/Designation's identical gap |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                                                     |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Concurrent creates with the same `name`                          | One succeeds, the other gets `409` — the pre-check can be beaten by a race, but the database's own unique constraint on `name` is the real guarantee, translated from Prisma's `P2002` |
+| Names differing only by case                                     | Both succeed as independent rows — see Validation Rules; no cross-case dedup exists in this domain                                                                                        |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `EMPLOYEE` cannot create a holiday calendar
+  — verified live. `MANAGER` is excluded by the identical seeded
+  permission grant (`holidayCalendar:create` is `ADMIN`-only in
+  `prisma/seed.js`'s `ROLE_PERMISSIONS`).
+- **Mass assignment**: only `name` is read from the body — Zod's schema
+  strips anything else (e.g. an attempted `status: "ACTIVE"` or `id` in
+  the body is silently ignored, not applied).
+
+## 14. Database Impact
+
+- **Tables affected**: `HolidayCalendar` (insert), `AuditLog` (insert).
+- **Transactions**: the `HolidayCalendar` insert and the `AuditLog`
+  insert happen inside one `prisma.$transaction` — same pattern as every
+  other domain's create mutation.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/holiday-calendars
+    ↓
+authMiddleware
+    ↓
+requirePermission('holidayCalendar:create')
+    ↓ (403 if not granted)
+validateMiddleware(createHolidayCalendarSchema)
+    ↓ (400 if invalid)
+holidayCalendar.controller.create → holidayCalendar.service.createHolidayCalendar(data, actor)
+    ├─ holidayCalendarRepository.findByName(name) → existing → 409
+    └─ prisma.$transaction:
+         ├─ holidayCalendarRepository.create(data, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', entityType: 'HolidayCalendar', afterData, ... }, tx)
+    ↓
+201 { holidayCalendar }
+```
+
+## 16. Performance Notes
+
+One indexed lookup (name uniqueness pre-check) plus one insert plus one
+audit-log insert in the same transaction — calendar counts are expected
+to stay small (a handful per organization/region, updated ~annually per
+`docs/domain-holiday-calendar.md §11`), so no notable performance
+concerns.
+
+## 17. Interview Notes
+
+- **Q: Why no `code` field, unlike Branch/Department/Designation?**
+  Those three domains each named a real downstream need for a short,
+  stable identifier distinct from the display name (Payroll/reporting
+  integration). `docs/domain-holiday-calendar.md`'s own sign-off never
+  identifies an equivalent need here — `name` alone is sufficient, and
+  adding an unused field speculatively would contradict this domain's own
+  §5 warning against building unneeded orchestration/fields.
+- **Q: Why is `name` uniqueness case-sensitive here when Department's is
+  case-insensitive?** Each domain's own architecture sign-off makes this
+  call independently — Department's explicitly names case-insensitivity
+  as a requirement (`docs/domain-department.md §3`), while Holiday
+  Calendar's sign-off does not raise it at all, so the simpler,
+  default (case-sensitive) database behavior was kept.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/holiday-calendars \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"India Public Holidays"}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `holidayCalendar.id` as `{{holidayCalendarId}}` — used
+by every other Holiday Calendar endpoint, the nested Holiday endpoints
+(39-42), and by `POST`/`PATCH /branches`'s `holidayCalendarId` field
+(endpoints 19 and 22).
+
+## 20. Testing Checklist
+
+- ✅ Valid create → `201`
+- ✅ Duplicate `name` → `409`
+- ✅ Empty/whitespace `name` → `400`
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created with correct `beforeData: null`/`afterData`
+- ✅ No `code` field accepted or returned; no `holidays` array embedded
+
+---
+
+---
+
+# 35. `GET /holiday-calendars`
+
+## 1. Endpoint Information
+
+```
+Feature:            Holiday Calendar Domain (2026-09-13, feature/19-holiday-calendar-domain)
+Endpoint:           List Holiday Calendar records
+Description:        Paginated, searchable, filterable, sortable list of holiday calendars
+Method:             GET
+URL:                /api/v1/holiday-calendars
+API Version:        v1
+Module:             modules/holidayCalendars
+Authentication:     Yes (Bearer access token)
+Authorization:      `holidayCalendar:read` permission (granted to ADMIN, MANAGER, EMPLOYEE)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: lets any authenticated user browse/search holiday
+  calendars — needed for admin management screens and for populating a
+  calendar picker when creating/updating a Branch.
+- **Business problem solved**: discoverability of existing calendars
+  without a dedicated admin UI reading the database directly.
+- **Expected callers**: every role — `holidayCalendar:read` is
+  deliberately broad, the same non-sensitive-reference-data reasoning
+  already applied to `branch:read`/`department:read`/`designation:read`.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                |
+| -------------------------------------- | -------- | ------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `holidayCalendar:read` permission |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name      | Type    | Required | Default     | Description                                    |
+| ----------- | ------- | -------- | ------------- | ------------------------------------------------- |
+| `page`    | integer | No       | `1`         | 1-indexed page number                            |
+| `limit`   | integer | No       | `10` (max 100) | Page size                                     |
+| `search`  | string  | No       | —           | Matches `name` only (case-insensitive)             |
+| `status`  | enum    | No       | —           | `ACTIVE` or `INACTIVE`                            |
+| `sortBy`  | enum    | No       | `createdAt` | `name`, `status`, `createdAt`                     |
+| `order`   | enum    | No       | `desc`      | `asc` or `desc`                                   |
+
+Note the asymmetry with creation/uniqueness: `search` is
+case-**insensitive** (`mode: 'insensitive'` in
+`buildHolidayCalendarWhere`), even though the `name`-uniqueness check at
+create/update time is case-**sensitive** — searching for `"india"` finds
+a calendar named `"India Public Holidays"`, but creating a second
+`"india public holidays"` calendar is still allowed, not rejected as a
+duplicate.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same shape as `GET /branches`'s `listBranchesQuerySchema` (`limit`
+capped at 100, `sortBy` restricted to an allowlist, `page`/`limit`
+coerced from query strings to integers) — there is no `code` to search
+against here, unlike Branch/Department/Designation's `search` (name +
+code).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "holidayCalendars": [
+    {
+      "id": "f1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "name": "India Public Holidays",
+      "status": "ACTIVE",
+      "createdAt": "2026-09-13T10:12:04.221Z",
+      "updatedAt": "2026-09-13T10:12:04.221Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+Verified live, including `search` matching a calendar by partial,
+case-insensitive name.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                    | When                                             |
+| ------ | ------------------------------------ | ----------------------------------------------------------- | --------------------------------------------------- |
+| `400`  | A query parameter failed validation | e.g. `"limit: Too big: expected number to be <=100"`         | Out-of-bounds `limit`, invalid `sortBy`/`status`   |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                     | `authMiddleware` failure                          |
+| `403`  | Caller lacks `holidayCalendar:read` | `"You do not have permission to perform this action"`      | Not expected in practice — every seeded role has this grant |
+
+## 10. Postman Test Cases
+
+| #   | Case                                | Expected |
+| --- | -------------------------------------- | -------- |
+| 1   | Default pagination                     | `200`, up to 10 results |
+| 2   | `search` matches an existing calendar (any case) | `200`, filtered results — verified live |
+| 3   | `status=INACTIVE` filter               | `200`, only inactive calendars |
+| 4   | `sortBy=name&order=asc`                | `200`, alphabetical      |
+| 5   | `limit=101`                            | `400`    |
+| 6   | As `EMPLOYEE` token                     | `200` — verified live |
+| 7   | No token                               | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected |
+| ----------------------------------- | -------------- |
+| `sortBy` value outside the allowlist | `400`          |
+| `status` value outside the enum    | `400`          |
+| Tampered/expired JWT               | `401`          |
+
+## 12. Edge Cases
+
+| Scenario                             | Expected Behavior                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `page` beyond the last page             | `200` with an empty `holidayCalendars` array, not an error — same convention as every other list endpoint    |
+| Two calendars with identical `createdAt` (unlikely but possible) | Deterministic ordering via the unconditional secondary `id ASC` tiebreaker, same pattern as Branches/Departments/Designations |
+
+## 13. Security Testing
+
+- **Authorization**: `holidayCalendar:read` is intentionally broad —
+  there is no `:own` scope, since a holiday calendar has no concept of
+  ownership by a specific user. Confirmed live that an `EMPLOYEE` token
+  can read this list.
+
+## 14. Database Impact
+
+Read-only — `HolidayCalendar.findMany` + `HolidayCalendar.count`, run in
+parallel via `Promise.all`, not a `$transaction`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/holiday-calendars
+    ↓
+authMiddleware
+    ↓
+requirePermission('holidayCalendar:read')
+    ↓ (403 if not granted)
+validateMiddleware(listHolidayCalendarsQuerySchema, 'query')
+    ↓ (400 if invalid)
+holidayCalendar.controller.list → holidayCalendar.service.listHolidayCalendars(query)
+    └─ Promise.all([holidayCalendarRepository.findAll(...), holidayCalendarRepository.count(...)])
+    ↓
+200 { holidayCalendars, pagination }
+```
+
+## 16. Performance Notes
+
+Two parallel indexed queries; calendar counts are expected to be modest
+(tens, not thousands — `docs/domain-holiday-calendar.md §11`), so
+pagination exists for consistency with the rest of the API rather than a
+demonstrated scale problem today.
+
+## 17. Interview Notes
+
+- **Q: Why does `EMPLOYEE` get `holidayCalendar:read` when it doesn't get
+  broader write access anywhere in this domain?** Same reasoning as
+  Branch/Department/Designation — this is non-sensitive reference data
+  with no ownership dimension, so the simplest correct grant is read
+  access for everyone (ADR-HC06).
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/holiday-calendars?search=india&status=ACTIVE" \
+  -H "Authorization: Bearer $ANY_ROLE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run after `POST /holiday-calendars` to confirm the created calendar is
+discoverable via `search`.
+
+## 20. Testing Checklist
+
+- ✅ Default pagination, explicit `page`/`limit`
+- ✅ Case-insensitive `search` on `name`
+- ✅ `status` filter
+- ✅ Sort both directions with deterministic tiebreaker
+- ✅ `200` for `EMPLOYEE` token (verified live)
+- ✅ `400` on out-of-bounds `limit`
+
+---
+
+---
+
+# 36. `GET /holiday-calendars/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Holiday Calendar Domain (2026-09-13, feature/19-holiday-calendar-domain)
+Endpoint:           Get one Holiday Calendar record
+Method:             GET
+URL:                /api/v1/holiday-calendars/:id
+API Version:        v1
+Module:             modules/holidayCalendars
+Authentication:     Yes (Bearer access token)
+Authorization:      `holidayCalendar:read` permission (granted to every role)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Fetch a single holiday calendar's current details, e.g. to populate an
+edit form. Deliberately does **not** include its Holiday entries — see
+`GET /holiday-calendars/:id/holidays` (endpoint 40) instead, the same
+"never embed a child collection inline" precedent already set by
+`GET /employees/:id` never embedding `documents`.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                |
+| -------------------------------------- | -------- | ------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `holidayCalendar:read` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                   |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The Holiday Calendar record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check and the record's existence.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "holidayCalendar": {
+    "id": "f1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "name": "India Public Holidays",
+    "status": "ACTIVE",
+    "createdAt": "2026-09-13T10:12:04.221Z",
+    "updatedAt": "2026-09-13T10:12:19.442Z"
+  }
+}
+```
+
+Verified live. No `holidays` array is present, by design.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                 | When                                     |
+| ------ | ------------------------------------ | -------------------------------------------------------- | ------------------------------------------- |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                  |
+| `403`  | Caller lacks `holidayCalendar:read`  | `"You do not have permission to perform this action"`   | Not expected in practice                  |
+| `404`  | No such holiday calendar            | `"Holiday calendar not found"`                          | Invalid/nonexistent `id`, verified live   |
+
+## 10. Postman Test Cases
+
+| #   | Case             | Expected |
+| --- | ------------------ | -------- |
+| 1   | Existing `id`      | `200`    |
+| 2   | Nonexistent `id`   | `404`    |
+| 3   | No token           | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                   | Expected |
+| ----------------------------- | -------- |
+| Malformed (non-UUID) `id`     | `404` — same as every other endpoint taking `id` in the path |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+None beyond the standard existence check — `HolidayCalendar` has no
+soft-delete concept, so there is no "exists but deleted" state to
+distinguish (same as Branch/Department/Designation).
+
+## 13. Security Testing
+
+No BOLA concern — `HolidayCalendar` has no ownership dimension; every
+grant of `holidayCalendar:read` sees identical data regardless of who's
+asking.
+
+## 14. Database Impact
+
+Read-only — single indexed `HolidayCalendar.findUnique`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/holiday-calendars/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('holidayCalendar:read')
+    ↓ (403 if not granted)
+holidayCalendar.controller.getById → holidayCalendar.service.getHolidayCalendarById(id)
+    └─ holidayCalendarRepository.findById(id) → not found → 404
+    ↓
+200 { holidayCalendar }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup by primary key — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why doesn't this response embed the calendar's Holiday entries,
+  the way `GET /employees/:id` doesn't embed `documents`?** Same
+  reasoning transplanted directly: an unbounded-cardinality child
+  collection embedded inline would make this response's size
+  unpredictable, and most callers of "get this one calendar" (e.g. an
+  edit-name-or-status form) don't need the full holiday list at all —
+  it's one extra, clearly-named request away (endpoint 40) for the
+  callers that do.
+
+## 18. cURL Examples
+
+```bash
+curl -s http://localhost:3000/api/v1/holiday-calendars/$HOLIDAY_CALENDAR_ID \
+  -H "Authorization: Bearer $ANY_ROLE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Uses `{{holidayCalendarId}}` saved from `POST /holiday-calendars`.
+
+## 20. Testing Checklist
+
+- ✅ Valid `id` → `200`
+- ✅ Nonexistent `id` → `404`
+- ✅ `401` with no token
+- ✅ No `holidays` array present in the response
+
+---
+
+---
+
+# 37. `PATCH /holiday-calendars/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Holiday Calendar Domain (2026-09-13, feature/19-holiday-calendar-domain)
+Endpoint:           Update a Holiday Calendar, including activating/deactivating it
+Method:             PATCH
+URL:                /api/v1/holiday-calendars/:id
+API Version:        v1
+Module:             modules/holidayCalendars
+Authentication:     Yes (Bearer access token)
+Authorization:      `holidayCalendar:update` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: covers both ordinary field edits (`name`) and the
+  lifecycle transition (`status`) — there is no separate
+  activate/deactivate endpoint, mirroring Branch/Department/Designation's
+  single-PATCH pattern.
+- **Business problem solved**: lets an admin rename a calendar or retire
+  it from future Branch assignment without losing history or disturbing
+  Branches already linked to it.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                  |
+| -------------------------------------- | -------- | --------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `holidayCalendar:update` permission   |
+| `Content-Type: application/json`      | **Yes**  |                                                             |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                   |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The Holiday Calendar record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{ "status": "INACTIVE" }
+```
+
+| Field    | Type   | Required | Description                                    |
+| ---------- | ------ | -------- | -------------------------------------------------- |
+| `name`   | string | No       | Trimmed, non-empty when provided; same case-sensitive uniqueness as creation |
+| `status` | enum   | No       | `ACTIVE` or `INACTIVE`                              |
+
+Both fields are independently optional (partial update) — send only the
+field(s) being changed. There is no `code` field to update (none exists
+in this domain).
+
+## 7. Validation Rules
+
+Same trimming/non-empty rule as creation for `name`; `status` restricted
+to the `HolidayCalendarStatus` enum.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "holidayCalendar": {
+    "id": "f1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "name": "India Public Holidays",
+    "status": "INACTIVE",
+    "createdAt": "2026-09-13T10:12:04.221Z",
+    "updatedAt": "2026-09-13T10:12:34.556Z"
+  }
+}
+```
+
+Verified live, including the `status` transition shown above.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                     | When                                       |
+| ------ | ------------------------------------ | ------------------------------------------------------------ | ---------------------------------------------- |
+| `400`  | Validation failed                   | e.g. `"name: Holiday calendar name is required"`             | Empty/whitespace-only `name`, invalid `status` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                      | `authMiddleware` failure                    |
+| `403`  | Caller lacks `holidayCalendar:update` | `"You do not have permission to perform this action"`      | `EMPLOYEE`/`MANAGER` token                  |
+| `404`  | No such holiday calendar            | `"Holiday calendar not found"`                               | Invalid/nonexistent `id`                    |
+| `409`  | Duplicate `name`                    | `"A holiday calendar with this name already exists"`          | Renaming to a name already used by a *different* calendar (exact, case-sensitive match) |
+
+## 10. Postman Test Cases
+
+| #   | Case                              | Expected |
+| --- | ------------------------------------ | -------- |
+| 1   | Update `name` only                   | `200`    |
+| 2   | Deactivate (`status: "INACTIVE"`)    | `200` — verified live |
+| 3   | Reactivate (`status: "ACTIVE"`)      | `200`    |
+| 4   | Rename to another calendar's existing `name` | `409` |
+| 5   | Nonexistent `id`                     | `404`    |
+| 6   | As `EMPLOYEE`/`MANAGER` token         | `403`    |
+| 7   | No token                             | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                     | Expected |
+| -------------------------------- | -------- |
+| `status` outside the enum        | `400`    |
+| Empty body `{}`                  | `200`, no-op update (no fields to change) — not separately verified live in this pass |
+| Tampered/expired JWT             | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                      |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deactivating a calendar that is still assigned to one or more Branches | Succeeds; existing `Branch.holidayCalendarId` references are **untouched** — verified live. Only *future* assignment attempts (via `POST`/`PATCH /branches`) are blocked. |
+| Reactivating a calendar                                            | Immediately assignable again — the positive-allowlist check only looks at current `status`, not history                                                       |
+| Renaming to the exact same `name` the record already has          | `200`, no conflict — the duplicate check excludes the record's own `id` (`existing.id !== id`)                                                                |
+
+## 13. Security Testing
+
+- **Authorization**: confirm neither `MANAGER` nor `EMPLOYEE` can update
+  a holiday calendar — same `ADMIN`-only scoping as create/delete
+  (ADR-HC06).
+- **Mass assignment**: only `name`/`status` are read from the body — Zod
+  strips anything else (e.g. an attempted `id` or `createdAt` in the body
+  is ignored).
+
+## 14. Database Impact
+
+- **Tables affected**: `HolidayCalendar` (update), `AuditLog` (insert).
+- **Transactions**: the `HolidayCalendar` update and the `AuditLog`
+  insert happen inside one `prisma.$transaction`.
+- **Cascade behavior**: none — deactivating never touches `Branch` or
+  `Holiday` rows.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/holiday-calendars/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('holidayCalendar:update')
+    ↓ (403 if not granted)
+validateMiddleware(updateHolidayCalendarSchema)
+    ↓ (400 if invalid)
+holidayCalendar.controller.update → holidayCalendar.service.updateHolidayCalendar(id, data, actor)
+    ├─ holidayCalendarRepository.findById(id) → not found → 404
+    ├─ (if name changing) holidayCalendarRepository.findByName(...) → conflict (different id) → 409
+    └─ prisma.$transaction:
+         ├─ holidayCalendarRepository.update(id, data, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', beforeData, afterData, ... }, tx)
+    ↓
+200 { holidayCalendar }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup, optional uniqueness pre-check, one update, one
+audit-log insert — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why no separate activate/deactivate endpoint?** Consistent with
+  Branch/Department/Designation's single-PATCH pattern already
+  established in this API — status is just another field, not a distinct
+  resource action.
+- **Q: What actually happens to Branches already linked to a calendar
+  when it's deactivated?** Nothing — `docs/domain-holiday-calendar.md`
+  is explicit that deactivation never modifies or nulls existing
+  `Branch.holidayCalendarId` references, only blocks *future* assignment.
+  Verified live.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/holiday-calendars/$HOLIDAY_CALENDAR_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"INACTIVE"}'
+```
+
+## 19. Postman Collection Notes
+
+Run a deactivate/reactivate pair back-to-back to confirm both transitions
+work, then re-run `POST /branches` with `{{holidayCalendarId}}` while
+inactive to confirm the `400` from the assignability check.
+
+## 20. Testing Checklist
+
+- ✅ Field-only update, status-only update, both together
+- ✅ Deactivate → existing Branch links untouched (verified live)
+- ✅ Deactivate → future assignment rejected with `400` (verified live)
+- ✅ `409` on rename collision
+- ✅ `403` as `EMPLOYEE`/`MANAGER`, `401` with no token
+- ✅ `AuditLog` row created with correct before/after snapshots
+
+---
+
+---
+
+# 38. `DELETE /holiday-calendars/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Holiday Calendar Domain (2026-09-13, feature/19-holiday-calendar-domain)
+Endpoint:           Hard-delete a Holiday Calendar
+Description:        Permanently removes a Holiday Calendar row - only when zero Branch records reference it
+Method:             DELETE
+URL:                /api/v1/holiday-calendars/:id
+API Version:        v1
+Module:             modules/holidayCalendars
+Authentication:     Yes (Bearer access token)
+Authorization:      `holidayCalendar:delete` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: covers the genuine data-entry-mistake case (a
+  calendar created in error, never assigned to any Branch) — the only
+  hard-delete path; a referenced calendar must be deactivated instead,
+  same pattern as Branch/Department/Designation's own delete guards.
+- **Business problem solved**: cleanup without leaving orphaned rows for
+  calendars that were never actually used.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                  |
+| -------------------------------------- | -------- | --------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `holidayCalendar:delete` permission   |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                   |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The Holiday Calendar record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check, the record's existence, and the
+zero-Branch-reference check described below.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Holiday calendar deleted successfully"
+}
+```
+
+Verified live for a calendar with zero Branch references and zero
+Holiday entries.
+
+## 9. Error Responses
+
+| Status | Reason                                      | Response (`message`)                                                                          | When                                                                       |
+| ------ | ---------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token           | Same as every other protected endpoint                                                            | `authMiddleware` failure                                                       |
+| `403`  | Caller lacks `holidayCalendar:delete`           | `"You do not have permission to perform this action"`                                              | `EMPLOYEE`/`MANAGER` token                                                     |
+| `404`  | No such holiday calendar                       | `"Holiday calendar not found"`                                                                     | Invalid/nonexistent `id`                                                        |
+| `409`  | Holiday calendar is referenced by one or more Branches | `"This holiday calendar has Branch records referencing it and cannot be deleted - deactivate it instead"` | Verified live                                                                   |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                | Expected |
+| --- | ------------------------------------------------------ | -------- |
+| 1   | Delete a calendar with zero Branch references            | `200` — verified live |
+| 2   | Delete a calendar with an active Branch reference        | `409` — verified live |
+| 3   | Nonexistent `id`                                        | `404`    |
+| 4   | As `EMPLOYEE`/`MANAGER` token                            | `403`    |
+| 5   | No token                                                | `401`    |
+
+## 11. Negative Testing
+
+| Scenario              | Expected |
+| ------------------------ | -------- |
+| Malformed (non-UUID) `id` | `404`    |
+| Tampered/expired JWT      | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                                 | Expected Behavior                                                                                                                                                                       |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Calendar has Holiday entries but zero Branch references                     | Deletes successfully; every `Holiday` row belonging to it cascade-deletes automatically at the database level (`onDelete: Cascade`) — no explicit `deleteMany` in the service, no orphaned rows. |
+| Concurrent delete requests for the same `id`                                 | One succeeds, the other sees `404` — not independently verified under true concurrency (same caveat as Branch's/Designation's equivalent case).                                          |
+
+## 13. Security Testing
+
+- **Authorization**: confirm neither `MANAGER` nor `EMPLOYEE` can delete
+  a holiday calendar — same `ADMIN`-only scoping as create/update.
+- **Idempotency under retry**: a retried `DELETE` gets a safe `404` on
+  the second attempt.
+
+## 14. Database Impact
+
+- **Tables affected**: `HolidayCalendar` (delete), `Holiday` (cascade
+  delete at the DB level, not an explicit application-level query),
+  `AuditLog` (insert).
+- **DB-level backstop**: `Branch.holidayCalendarId`'s `onDelete:
+  Restrict` refuses the delete at the database level even if this
+  service-layer check were somehow bypassed.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/holiday-calendars/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('holidayCalendar:delete')
+    ↓ (403 if not granted)
+holidayCalendar.controller.remove → holidayCalendar.service.deleteHolidayCalendar(id, actor)
+    ├─ holidayCalendarRepository.findById(id) → not found → 404
+    ├─ holidayCalendarRepository.countBranchesForHolidayCalendar(id) → count > 0 → 409
+    └─ prisma.$transaction:
+         ├─ holidayCalendarRepository.remove(id, tx)   [Holiday rows cascade at the DB level]
+         └─ auditLogRepository.create({ action: 'DELETE', beforeData, afterData: null, ... }, tx)
+    ↓
+200 { message: "Holiday calendar deleted successfully" }
+```
+
+## 16. Performance Notes
+
+One indexed existence lookup, one `Branch` count query, one delete
+(cascading to any `Holiday` rows at the database level), one audit-log
+insert.
+
+## 17. Interview Notes
+
+- **Q: Why does deleting a calendar not also require zero Holiday
+  entries, the way it requires zero Branch references?** Because Holiday
+  entries have no independent identity meaningful outside their parent
+  calendar (mirroring Employee → EmployeeDocument) — the schema's
+  `onDelete: Cascade` on `Holiday.holidayCalendarId` makes their removal
+  an automatic, database-level side effect of deleting the calendar
+  itself, not a separate business rule to enforce in the service layer.
+  Branch references are different: `Branch.holidayCalendarId`'s
+  `onDelete: Restrict` means a referenced calendar's deletion must be
+  explicitly blocked, not silently cascaded, since a Branch losing its
+  holiday calendar out from under it would be a real, unintended data
+  change.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/holiday-calendars/$HOLIDAY_CALENDAR_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this **last** for any `{{holidayCalendarId}}` with zero Branch
+references; for a referenced calendar, expect and assert on the `409`,
+not a `200`.
+
+## 20. Testing Checklist
+
+- ✅ Delete with zero Branch references → `200` (verified live)
+- ✅ Delete with an active Branch reference → `409` (verified live)
+- ✅ `403` as `EMPLOYEE`/`MANAGER`, `401` with no token
+- ✅ `404` for nonexistent `id`
+- ✅ Holiday entries cascade-delete automatically, no orphaned rows
+- ✅ `AuditLog` row created for the deletion
+
+---
+
+---
+
+# 39. `POST /holiday-calendars/:id/holidays`
+
+## 1. Endpoint Information
+
+```
+Feature:            Holiday Calendar Domain (2026-09-13, feature/19-holiday-calendar-domain)
+Endpoint:           Add a Holiday entry to a calendar
+Description:        Adds a dated Holiday entry to an existing Holiday Calendar
+Method:             POST
+URL:                /api/v1/holiday-calendars/:id/holidays
+API Version:        v1
+Module:             modules/holidayCalendars
+Authentication:     Yes (Bearer access token)
+Authorization:      `holidayCalendar:update` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: this is how a calendar's actual dated holidays get
+  populated — the calendar itself (endpoint 34) is just a named,
+  otherwise-empty container.
+- **Business problem solved**: lets an admin build up a reusable,
+  year-agnostic set of dates (ADR-HC02) — e.g. "Independence Day, August
+  15" — rather than modeling a holiday as a one-off, per-year object.
+- **Expected callers**: `ADMIN` only. Note this nested route is gated by
+  the **parent** calendar's `holidayCalendar:update` permission, not a
+  separate `holiday:create` permission — the same reuse-the-parent's-
+  write-permission shape already used by `POST
+  /employees/:id/documents` (gated by `employee:update:any`, not a
+  standalone `document:create`).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                  |
+| -------------------------------------- | -------- | --------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `holidayCalendar:update` permission   |
+| `Content-Type: application/json`      | **Yes**  |                                                             |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                   |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The parent Holiday Calendar's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "date": "2026-08-15",
+  "name": "Independence Day",
+  "isOptional": false
+}
+```
+
+| Field        | Type    | Required | Description                                                    |
+| ------------- | ------- | -------- | ------------------------------------------------------------------ |
+| `date`      | string (date) | **Yes** | Coerced to a `Date` (`z.coerce.date()`) — must be unique within this calendar |
+| `name`      | string  | **Yes**  | Trimmed, non-empty                                                  |
+| `isOptional` | boolean | No       | Defaults to `false` when omitted                                    |
+
+## 7. Validation Rules
+
+- `date`: required, `z.coerce.date()` — accepts any string `Date`
+  itself parses (e.g. `"2026-08-15"`, or a full ISO datetime).
+- `name`: required, `.trim().min(1, 'Holiday name is required')`.
+- `isOptional`: optional boolean, `.default(false)`.
+- **Parent existence**: the target `HolidayCalendar` must exist, else
+  `404 "Holiday calendar not found"` — checked before the insert is
+  attempted.
+- **Per-calendar date uniqueness**: enforced by the compound unique
+  constraint `@@unique([holidayCalendarId, date])` — a duplicate `date`
+  within the *same* calendar returns `409`; the identical `date` in a
+  *different* calendar is unaffected (the constraint is scoped per
+  calendar, not global).
+- Holiday entries are deliberately minimal by design
+  (`docs/domain-holiday-calendar.md §4`) — no region/state-level
+  sub-scoping field exists; model that as a separate calendar instead.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "holiday": {
+    "id": "a9b8c7d6-e5f4-4a3b-8c1d-0e9f8a7b6c5d",
+    "holidayCalendarId": "f1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "date": "2026-08-15T00:00:00.000Z",
+    "name": "Independence Day",
+    "isOptional": false,
+    "createdAt": "2026-09-13T10:15:02.118Z",
+    "updatedAt": "2026-09-13T10:15:02.118Z"
+  }
+}
+```
+
+Verified live. Note `date` is echoed back as a **full ISO datetime
+string** (`"2026-08-15T00:00:00.000Z"`), even though only a date
+(`"2026-08-15"`) was sent — Prisma stores the column as `DateTime`, and
+`z.coerce.date()` parses a bare date string to UTC midnight.
+
+## 9. Error Responses
+
+| Status | Reason                                      | Response (`message`)                                              | When                                                                       |
+| ------ | ---------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `400`  | Validation failed                             | `"name: Holiday name is required"` or an unparseable `date`             | Missing/empty `name`, missing or unparseable `date`                            |
+| `401`  | Missing/invalid/expired access token           | Same as every other protected endpoint                                | `authMiddleware` failure                                                       |
+| `403`  | Caller lacks `holidayCalendar:update`           | `"You do not have permission to perform this action"`                  | `EMPLOYEE`/`MANAGER` token                                                     |
+| `404`  | No such holiday calendar                       | `"Holiday calendar not found"`                                        | Invalid/nonexistent `id`                                                        |
+| `409`  | Duplicate `date` within this calendar           | `"A holiday already exists on this date in this calendar"`             | Verified live: adding the same `date` twice to the same calendar returns `409` on the 2nd |
+
+## 10. Postman Test Cases
+
+| #   | Case                                              | Expected |
+| --- | ---------------------------------------------------- | -------- |
+| 1   | Valid add, all fields                                | `201` — verified live |
+| 2   | Valid add, `isOptional` omitted                      | `201`, `isOptional: false` |
+| 3   | Duplicate `date` in the same calendar                | `409` — verified live |
+| 4   | Same `date` added to a *different* calendar           | `201` — no cross-calendar conflict |
+| 5   | Empty/whitespace `name`                              | `400`    |
+| 6   | Nonexistent parent calendar `id`                     | `404`    |
+| 7   | As `EMPLOYEE`/`MANAGER` token                         | `403`    |
+| 8   | No token                                             | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Malformed JSON body                | `400` from Express's own JSON body-parser, before this route's handler runs |
+| Tampered/expired JWT               | `401`                                                                       |
+| `date` as an unparseable string (e.g. `"not-a-date"`) | `400` — `z.coerce.date()` rejects it                          |
+| `name` as a number/array           | `400` — Zod's `.string()` rejects non-string types                          |
+| `isOptional` as a non-boolean (e.g. `"yes"`)         | `400` — Zod's `.boolean()` rejects non-boolean types           |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                                                     |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Concurrent adds with the same `date` in the same calendar        | One succeeds, the other gets `409` — the compound unique index (`holidayCalendarId`, `date`) is the real guarantee, translated from Prisma's `P2002`                                    |
+| Sending a `date` with a non-midnight time component (e.g. `"2026-08-15T10:00:00Z"`) alongside an existing bare-date (`"2026-08-15"`) entry | The uniqueness constraint compares the exact stored `DateTime` value, not just the calendar-date component — these would **not** collide, since they parse to two different `DateTime` values. A known nuance from reading the schema/validation code, not a demonstrated bug and not exercised live in this pass (every live test used bare date strings only). |
+| Adding a holiday to a calendar that is `INACTIVE`                | Succeeds — `status` only gates *Branch assignment* of the calendar (ADR-HC03), never whether holidays can be managed within it.                                                        |
+
+## 13. Security Testing
+
+- **Authorization**: confirm neither `MANAGER` nor `EMPLOYEE` can add a
+  holiday — same `ADMIN`-only scoping as the parent calendar's own
+  mutations, via the identical `holidayCalendar:update` permission.
+- **Mass assignment**: only `date`/`name`/`isOptional` are read from the
+  body — Zod strips anything else (e.g. an attempted `id` or
+  `holidayCalendarId` in the body is ignored; the path parameter is
+  always the source of truth for `holidayCalendarId`).
+
+## 14. Database Impact
+
+- **Tables affected**: `Holiday` (insert), `AuditLog` (insert).
+- **Transactions**: the `Holiday` insert and the `AuditLog` insert happen
+  inside one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/holiday-calendars/:id/holidays
+    ↓
+authMiddleware
+    ↓
+requirePermission('holidayCalendar:update')
+    ↓ (403 if not granted)
+validateMiddleware(createHolidaySchema)
+    ↓ (400 if invalid)
+holidayCalendar.controller.addHoliday → holidayCalendar.service.addHoliday(holidayCalendarId, data, actor)
+    ├─ holidayCalendarRepository.findById(holidayCalendarId) → not found → 404
+    └─ prisma.$transaction:
+         ├─ holidayRepository.create({ ...data, holidayCalendarId }, tx)   [P2002 on duplicate date → 409]
+         └─ auditLogRepository.create({ action: 'CREATE', entityType: 'Holiday', afterData, ... }, tx)
+    ↓
+201 { holiday }
+```
+
+## 16. Performance Notes
+
+One indexed existence lookup (parent calendar) plus one insert (relying
+on the compound unique index for conflict detection, no separate
+pre-check query) plus one audit-log insert — no notable performance
+concerns; holiday counts per calendar are expected to stay small (roughly
+one calendar year's worth of dates).
+
+## 17. Interview Notes
+
+- **Q: Why does adding a Holiday reuse `holidayCalendar:update` instead
+  of a dedicated permission?** Consistency with the Employee/
+  EmployeeDocument precedent — a child entity's CRUD is gated by its
+  parent's own mutation permission rather than growing a new, narrowly-
+  scoped permission per child action. It also matches this domain's own
+  reality: managing a calendar's holiday entries *is* "updating the
+  calendar," conceptually, even though the two live in separate tables.
+- **Q: Why is `date` a full `DateTime` column instead of a `DATE`-only
+  type?** Prisma/Postgres modeling convenience — no domain requirement
+  calls for storing a time-of-day, and the compound unique constraint
+  still does its job as long as every caller consistently sends bare
+  date strings (which coerce to UTC midnight). See Edge Cases above for
+  the theoretical (unexercised) sharp edge this creates.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/holiday-calendars/$HOLIDAY_CALENDAR_ID/holidays \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"date":"2026-08-15","name":"Independence Day"}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `holiday.id` as `{{holidayId}}` — used by endpoints 41
+and 42. Requires `{{holidayCalendarId}}` from `POST /holiday-calendars`
+(endpoint 34).
+
+## 20. Testing Checklist
+
+- ✅ Valid add (with and without `isOptional`) → `201`
+- ✅ `date` echoed back as a full ISO datetime string (verified live)
+- ✅ Duplicate `date` in the same calendar → `409` (verified live)
+- ✅ Same `date` in a different calendar → `201`, no conflict
+- ✅ `403` as `EMPLOYEE`/`MANAGER`, `404` for nonexistent calendar, `401` with no token
+- ✅ `AuditLog` row created, `entityType: 'Holiday'`
+
+---
+
+---
+
+# 40. `GET /holiday-calendars/:id/holidays`
+
+## 1. Endpoint Information
+
+```
+Feature:            Holiday Calendar Domain (2026-09-13, feature/19-holiday-calendar-domain)
+Endpoint:           List a Holiday Calendar's Holiday entries
+Description:        Returns every Holiday entry belonging to a calendar, ordered by date ascending
+Method:             GET
+URL:                /api/v1/holiday-calendars/:id/holidays
+API Version:        v1
+Module:             modules/holidayCalendars
+Authentication:     Yes (Bearer access token)
+Authorization:      `holidayCalendar:read` permission (granted to every role)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: this is the only way to see a calendar's actual
+  dated holidays — `GET /holiday-calendars/:id` (endpoint 36)
+  deliberately never embeds them.
+- **Business problem solved**: lets any authenticated user review a
+  calendar's contents, e.g. before assigning it to a Branch.
+- **Expected callers**: every role — same broad `holidayCalendar:read`
+  grant as the parent calendar's own `GET` endpoints.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                |
+| -------------------------------------- | -------- | ------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `holidayCalendar:read` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                   |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The parent Holiday Calendar's id |
+
+## 5. Query Parameters
+
+None — no pagination/search/filter/sort on this list, the same honestly
+acknowledged gap as `GET /employees/:id/documents`; a calendar's holiday
+count is expected to stay small (roughly a year's worth of dates).
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body/query to validate. Only the permission check and the parent
+calendar's existence.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "holidays": [
+    {
+      "id": "a9b8c7d6-e5f4-4a3b-8c1d-0e9f8a7b6c5d",
+      "holidayCalendarId": "f1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "date": "2026-08-15T00:00:00.000Z",
+      "name": "Independence Day",
+      "isOptional": false,
+      "createdAt": "2026-09-13T10:15:02.118Z",
+      "updatedAt": "2026-09-13T10:15:02.118Z"
+    }
+  ]
+}
+```
+
+Verified live. `holidays` is ordered by `date` **ascending**
+(`orderBy: { date: 'asc' }`) — the opposite convention from `GET
+/employees/:id/documents`'s newest-first ordering, since chronological
+order is what's actually useful for a holiday list.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                 | When                                     |
+| ------ | ------------------------------------ | -------------------------------------------------------- | ------------------------------------------- |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                  |
+| `403`  | Caller lacks `holidayCalendar:read`  | `"You do not have permission to perform this action"`   | Not expected in practice                  |
+| `404`  | No such holiday calendar            | `"Holiday calendar not found"`                          | Invalid/nonexistent `id`                  |
+
+## 10. Postman Test Cases
+
+| #   | Case                             | Expected |
+| --- | ----------------------------------- | -------- |
+| 1   | Calendar with holidays              | `200`, ordered by date ascending — verified live |
+| 2   | Calendar with zero holidays         | `200`, `{ "holidays": [] }` |
+| 3   | Nonexistent calendar `id`           | `404`    |
+| 4   | As `EMPLOYEE` token                 | `200` — verified live |
+| 5   | No token                            | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                   | Expected |
+| ----------------------------- | -------- |
+| Malformed (non-UUID) `id`     | `404`    |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                             | Expected Behavior                                                            |
+| --------------------------------------- | --------------------------------------------------------------------------------- |
+| Calendar with zero Holiday entries       | `200`, `{ "holidays": [] }` — not an error                                        |
+| Two Holiday entries with the same `date` | Impossible in practice — the compound unique constraint prevents this at the database level; not a state this endpoint needs to handle |
+
+## 13. Security Testing
+
+No BOLA concern — `Holiday`/`HolidayCalendar` have no ownership
+dimension; every grant of `holidayCalendar:read` sees identical data
+regardless of who's asking.
+
+## 14. Database Impact
+
+Read-only — `HolidayCalendar.findUnique` (existence check) followed by
+`Holiday.findMany` ordered by `date asc`, indexed on `holidayCalendarId`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/holiday-calendars/:id/holidays
+    ↓
+authMiddleware
+    ↓
+requirePermission('holidayCalendar:read')
+    ↓ (403 if not granted)
+holidayCalendar.controller.listHolidays → holidayCalendar.service.listHolidays(holidayCalendarId)
+    ├─ holidayCalendarRepository.findById(holidayCalendarId) → not found → 404
+    └─ holidayRepository.findAllByCalendarId(holidayCalendarId)   [orderBy: { date: 'asc' }]
+    ↓
+200 { holidays: [...] }
+```
+
+## 16. Performance Notes
+
+One indexed existence lookup plus one indexed, ordered `findMany` — fine
+at this feature's expected small per-calendar holiday counts; pagination
+is a natural future addition if that ever changes, not built now (same
+honest-gap framing as `GET /employees/:id/documents`).
+
+## 17. Interview Notes
+
+- **Q: Why order by `date` ascending here but `createdAt` descending on
+  `GET /employees/:id/documents`?** They answer different questions — a
+  document list is naturally "what did we most recently add," while a
+  holiday list is naturally "what's the calendar order of these dates,"
+  independent of the order they happened to be entered in.
+
+## 18. cURL Examples
+
+```bash
+curl -i http://localhost:3000/api/v1/holiday-calendars/$HOLIDAY_CALENDAR_ID/holidays \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run after `POST /holiday-calendars/:id/holidays` to confirm the newly
+added entry appears in the correct chronological position.
+
+## 20. Testing Checklist
+
+- ✅ `200` as `ADMIN` and `EMPLOYEE` alike (verified live)
+- ✅ Ordered by `date` ascending (verified live)
+- ✅ Empty array (not an error) when no holidays exist
+- ✅ `404` for nonexistent calendar
+- ✅ `401` with no token
+
+---
+
+---
+
+# 41. `PATCH /holiday-calendars/:id/holidays/:holidayId`
+
+## 1. Endpoint Information
+
+```
+Feature:            Holiday Calendar Domain (2026-09-13, feature/19-holiday-calendar-domain)
+Endpoint:           Update a Holiday entry
+Method:             PATCH
+URL:                /api/v1/holiday-calendars/:id/holidays/:holidayId
+API Version:        v1
+Module:             modules/holidayCalendars
+Authentication:     Yes (Bearer access token)
+Authorization:      `holidayCalendar:update` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: corrects a mistyped holiday name, adjusts its date,
+  or flips its `isOptional` flag without deleting and re-adding it.
+- **Expected callers**: `ADMIN` only — same reused
+  `holidayCalendar:update` permission as adding/removing entries
+  (endpoints 39 and 42).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                  |
+| -------------------------------------- | -------- | --------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `holidayCalendar:update` permission   |
+| `Content-Type: application/json`      | **Yes**  |                                                             |
+
+## 4. Path Parameters
+
+| Name        | Type          | Required | Description                   |
+| ------------ | ------------- | -------- | -------------------------------- |
+| `id`        | string (UUID) | **Yes**  | The parent Holiday Calendar's id |
+| `holidayId` | string (UUID) | **Yes**  | The Holiday entry's id           |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{ "name": "Christmas" }
+```
+
+| Field        | Type    | Required | Description                                    |
+| ------------- | ------- | -------- | -------------------------------------------------- |
+| `date`      | string (date) | No | Coerced to a `Date`; must remain unique within this calendar |
+| `name`      | string  | No       | Trimmed, non-empty when provided                    |
+| `isOptional` | boolean | No       | No default applied on update — omit to leave unchanged |
+
+All fields are independently optional (partial update) — send only the
+field(s) being changed.
+
+## 7. Validation Rules
+
+Same field-level rules as `POST .../holidays` (endpoint 39), all made
+optional. Unlike `createHolidaySchema`, `isOptional` here has **no**
+`.default(false)` — omitting it leaves the existing value untouched,
+whereas omitting it at creation time sets it to `false`.
+
+- **Parent existence**: the `HolidayCalendar` at `:id` must exist, else
+  `404 "Holiday calendar not found"`.
+- **Holiday existence, scoped to the parent**: the lookup is always
+  `(holidayId, holidayCalendarId)` together
+  (`holidayRepository.findById(id, holidayCalendarId)`) — a `holidayId`
+  that exists but belongs to a *different* calendar is treated
+  identically to a nonexistent one: `404 "Holiday not found"`. Same
+  scoped-lookup convention as `DELETE
+  /employees/:id/documents/:documentId`.
+- **Date uniqueness on change**: changing `date` to one already used by
+  another entry in the *same* calendar returns `409`, identical message
+  to creation.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "holiday": {
+    "id": "a9b8c7d6-e5f4-4a3b-8c1d-0e9f8a7b6c5d",
+    "holidayCalendarId": "f1a2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "date": "2026-12-25T00:00:00.000Z",
+    "name": "Christmas",
+    "isOptional": false,
+    "createdAt": "2026-09-13T10:16:40.902Z",
+    "updatedAt": "2026-09-13T10:17:05.331Z"
+  }
+}
+```
+
+Verified live for a `name`-only edit (`"Christms"` → `"Christmas"`).
+
+## 9. Error Responses
+
+| Status | Reason                                                   | Response (`message`)                                              | When                                                                 |
+| ------ | -------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `400`  | Validation failed                                        | e.g. `"name: Holiday name is required"`, or an unparseable `date`         | Empty/whitespace-only `name` if provided, unparseable `date`             |
+| `401`  | Missing/invalid/expired access token                     | Same as every other protected endpoint                                | `authMiddleware` failure                                                 |
+| `403`  | Caller lacks `holidayCalendar:update`                     | `"You do not have permission to perform this action"`                  | `EMPLOYEE`/`MANAGER` token                                               |
+| `404`  | No such holiday calendar                                 | `"Holiday calendar not found"`                                        | Invalid/nonexistent `id`                                                  |
+| `404`  | Nonexistent Holiday, or belongs to a different calendar   | `"Holiday not found"`                                                  | Invalid `holidayId`, or a real Holiday id under the wrong calendar        |
+| `409`  | New `date` collides with another entry in this calendar   | `"A holiday already exists on this date in this calendar"`             | Same message shape as `POST .../holidays`'s duplicate-date `409`          |
+
+## 10. Postman Test Cases
+
+| #   | Case                                            | Expected         |
+| --- | ---------------------------------------------------- | ---------------- |
+| 1   | Update `name` only                                    | `200` — verified live |
+| 2   | Update `date` to a free slot in the same calendar      | `200`    |
+| 3   | Update `date` to one already used in the same calendar | `409`    |
+| 4   | Flip `isOptional`                                     | `200`    |
+| 5   | Nonexistent `holidayId`                                | `404`    |
+| 6   | Valid `holidayId` under the wrong `id` (calendar)      | `404`, `"Holiday not found"` |
+| 7   | Nonexistent calendar `id`                              | `404`, `"Holiday calendar not found"` |
+| 8   | As `EMPLOYEE`/`MANAGER` token                          | `403`    |
+| 9   | No token                                              | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Malformed JSON body                | `400` from Express's own JSON body-parser, before this route's handler runs |
+| Tampered/expired JWT               | `401`                                                                       |
+| `date` as an unparseable string    | `400`                                                                        |
+| Empty body `{}`                    | `200`, no-op update — not separately verified live in this pass             |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                                                     |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Updating a Holiday's `date` to the same value it already has     | `200`, no conflict — the record collides only with *other* rows' `(holidayCalendarId, date)`, never with its own current value, since Prisma's update targets `where: { id }` directly, not a separate pre-check against itself |
+| Updating a Holiday in a calendar that is `INACTIVE`               | Succeeds — same reasoning as adding one (endpoint 39): `status` only gates Branch assignability, not holiday management                                                                |
+
+## 13. Security Testing
+
+- **Authorization**: confirm neither `MANAGER` nor `EMPLOYEE` can update
+  a Holiday entry.
+- **BOLA-adjacent**: confirm a `holidayId` belonging to a different
+  calendar cannot be edited by supplying that other calendar's `id` in
+  the path mismatched with this one's `holidayId` — correctly returns
+  `404`, not a cross-calendar edit.
+- **Mass assignment**: only `date`/`name`/`isOptional` are read from the
+  body — Zod strips anything else.
+
+## 14. Database Impact
+
+- **Tables affected**: `Holiday` (update), `AuditLog` (insert).
+- **Transactions**: the `Holiday` update and the `AuditLog` insert happen
+  inside one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/holiday-calendars/:id/holidays/:holidayId
+    ↓
+authMiddleware
+    ↓
+requirePermission('holidayCalendar:update')
+    ↓ (403 if not granted)
+validateMiddleware(updateHolidaySchema)
+    ↓ (400 if invalid)
+holidayCalendar.controller.updateHoliday → holidayCalendar.service.updateHoliday(holidayCalendarId, holidayId, data, actor)
+    ├─ holidayCalendarRepository.findById(holidayCalendarId) → not found → 404 "Holiday calendar not found"
+    ├─ holidayRepository.findById(holidayId, holidayCalendarId) → not found → 404 "Holiday not found"
+    └─ prisma.$transaction:
+         ├─ holidayRepository.update(holidayId, data, tx)   [P2002 on duplicate date → 409]
+         └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'Holiday', beforeData, afterData, ... }, tx)
+    ↓
+200 { holiday }
+```
+
+## 16. Performance Notes
+
+Two indexed lookups (calendar existence, scoped Holiday lookup) plus one
+update plus one audit-log insert — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why two different 404 messages ("Holiday calendar not found" vs
+  "Holiday not found") instead of one generic one?** Precision for
+  debugging/API consumers — the two failures mean genuinely different
+  things (a bad top-level id vs. a bad nested id), the identical
+  reasoning already applied to `DELETE
+  /employees/:id/documents/:documentId`'s two distinct 404s.
+- **Q: Why doesn't `isOptional` default to `false` on update the way it
+  does on create?** Because `undefined` on a `PATCH` means "don't touch
+  this field," not "set it to its default" — applying `.default(false)`
+  here would silently clear an existing `isOptional: true` entry every
+  time any *other* field was edited, which is never the intended
+  semantics of a partial update.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/holiday-calendars/$HOLIDAY_CALENDAR_ID/holidays/$HOLIDAY_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Christmas"}'
+```
+
+## 19. Postman Collection Notes
+
+Requires both `{{holidayCalendarId}}` and `{{holidayId}}` saved from
+endpoint 34 and endpoint 39 respectively.
+
+## 20. Testing Checklist
+
+- ✅ `name`-only edit → `200` (verified live)
+- ✅ `date` change to a free slot → `200`
+- ✅ `date` change colliding with another entry → `409`
+- ✅ `404` for nonexistent `holidayId`, and for a `holidayId` under the wrong calendar
+- ✅ `404` for nonexistent calendar `id`
+- ✅ `403` as `EMPLOYEE`/`MANAGER`, `401` with no token
+- ✅ `AuditLog` row created with correct before/after snapshots
+
+---
+
+---
+
+# 42. `DELETE /holiday-calendars/:id/holidays/:holidayId`
+
+## 1. Endpoint Information
+
+```
+Feature:            Holiday Calendar Domain (2026-09-13, feature/19-holiday-calendar-domain)
+Endpoint:           Remove a Holiday entry
+Description:        Permanently removes a single Holiday entry from a calendar
+Method:             DELETE
+URL:                /api/v1/holiday-calendars/:id/holidays/:holidayId
+API Version:        v1
+Module:             modules/holidayCalendars
+Authentication:     Yes (Bearer access token)
+Authorization:      `holidayCalendar:update` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: removes an incorrectly-added or no-longer-observed
+  holiday from a calendar.
+- **Business problem solved**: unlike the calendar itself (endpoint 38),
+  a Holiday entry has **no reference restriction** — no other domain
+  holds a direct reference to a specific `Holiday` row by id (consumers
+  resolve "is date X a holiday" by date via
+  `isDateHolidayInCalendar`, never by `Holiday.id`), so removal is always
+  unconditional.
+- **Expected callers**: `ADMIN` only, same reused `holidayCalendar:update`
+  permission as endpoints 39 and 41.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                  |
+| -------------------------------------- | -------- | --------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `holidayCalendar:update` permission   |
+
+## 4. Path Parameters
+
+| Name        | Type          | Required | Description                   |
+| ------------ | ------------- | -------- | -------------------------------- |
+| `id`        | string (UUID) | **Yes**  | The parent Holiday Calendar's id |
+| `holidayId` | string (UUID) | **Yes**  | The Holiday entry's id           |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body to validate — only the calendar and Holiday existence checks
+described in the Request Lifecycle below. Same scoped-lookup convention
+as `PATCH` (endpoint 41): a `holidayId` that exists but belongs to a
+*different* calendar is treated identically to a nonexistent one
+(`404`).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Holiday deleted successfully"
+}
+```
+
+Verified live. Deliberately doesn't echo the deleted entry — nothing
+further the caller needs, same convention as `DELETE
+/employees/:id/documents/:documentId`.
+
+## 9. Error Responses
+
+| Status | Reason                                                   | Response (`message`)                                  | When                                                                 |
+| ------ | -------------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token                     | Same as every other protected endpoint                | `authMiddleware` failure                                             |
+| `403`  | Caller lacks `holidayCalendar:update`                     | `"You do not have permission to perform this action"` | `EMPLOYEE`/`MANAGER` token                                            |
+| `404`  | No such holiday calendar                                 | `"Holiday calendar not found"`                        | Invalid/nonexistent `id`                                              |
+| `404`  | Nonexistent Holiday, or belongs to a different calendar   | `"Holiday not found"`                                  | Invalid `holidayId`, or a real Holiday id under the wrong calendar    |
+
+## 10. Postman Test Cases
+
+| #   | Case                               | Expected         |
+| --- | ----------------------------------- | ---------------- |
+| 1   | Valid delete                        | `200` — verified live |
+| 2   | Delete the same `holidayId` again   | `404`, not `409` |
+| 3   | Nonexistent `holidayId`             | `404`            |
+| 4   | Valid `holidayId` under the wrong calendar `id` | `404`  |
+| 5   | Nonexistent calendar `id`           | `404`            |
+| 6   | As `EMPLOYEE`/`MANAGER` token        | `403`            |
+| 7   | No token                            | `401`            |
+
+## 11. Negative Testing
+
+Same category as `DELETE /employees/:id/documents/:documentId`: malformed
+non-UUID ids → `404`; tampered JWT → `401`; wrong method → `404`.
+
+## 12. Edge Cases
+
+| Scenario                                                            | Expected Behavior                                                                                                                                             |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /holiday-calendars/:id/holidays` immediately after deleting one  | The deleted entry no longer appears — hard delete, not soft (the `AuditLog`'s `beforeData` already preserves its historical metadata) — verified live.        |
+| Deleting the last remaining Holiday in a calendar                    | Succeeds; the calendar itself is untouched and can still be listed/fetched — an empty holiday set is a valid state, not an error.                              |
+| Deleting a Holiday whose calendar is later deleted too               | If both are removed in the intended order (holiday, then calendar), no issue; if the calendar is hard-deleted directly while this Holiday still exists, it cascades automatically at the DB level (`onDelete: Cascade`) regardless — no reference restriction either way. |
+
+## 13. Security Testing
+
+- **Authorization**: confirm neither `MANAGER` nor `EMPLOYEE` can delete
+  a Holiday entry.
+- **Idempotency under retry**: a retried `DELETE` after a timeout gets a
+  safe `404` on the second attempt.
+- **Mass assignment**: N/A — no request body.
+
+## 14. Database Impact
+
+- **Tables affected**: `Holiday` (hard delete), `AuditLog` (insert).
+- **Transactions**: the `Holiday` delete and the `AuditLog` insert commit
+  together inside one `prisma.$transaction`. Unlike the calendar's own
+  delete (endpoint 38), there is no reference-count check to run first —
+  removal is always unconditional.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/holiday-calendars/:id/holidays/:holidayId
+    ↓
+authMiddleware
+    ↓
+requirePermission('holidayCalendar:update')
+    ↓ (403 if not granted)
+holidayCalendar.controller.removeHoliday → holidayCalendar.service.removeHoliday(holidayCalendarId, holidayId, actor)
+    ├─ holidayCalendarRepository.findById(holidayCalendarId) → not found → 404 "Holiday calendar not found"
+    ├─ holidayRepository.findById(holidayId, holidayCalendarId) → not found → 404 "Holiday not found"
+    └─ prisma.$transaction:
+         ├─ holidayRepository.remove(holidayId, tx)
+         └─ auditLogRepository.create({ action: 'DELETE', entityType: 'Holiday', beforeData, afterData: null, ... }, tx)
+    ↓
+200 { message: "Holiday deleted successfully" }
+```
+
+## 16. Performance Notes
+
+Two indexed lookups plus one delete plus one audit-log insert — no
+notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why is a Holiday entry freely deletable with zero reference
+  checks, when the parent calendar requires zero Branch references
+  first?** Because nothing in the system references a *specific*
+  `Holiday` row by id — the one reusable query this domain exposes,
+  `isDateHolidayInCalendar(holidayCalendarId, date)`, resolves "is this
+  date a holiday" by re-querying the date each time, not by holding onto
+  a `Holiday.id` anywhere. There is structurally nothing that could be
+  left dangling by removing one, unlike a Branch's
+  `holidayCalendarId` pointing at a calendar that no longer exists.
+- **Q: Why is `Holiday` a hard delete when the parent `HolidayCalendar`
+  uses a `status` field for its own lifecycle?** The two entities have
+  different lifecycle needs — a calendar is a long-lived, named container
+  that organizations expect to retire-and-keep-history for (hence
+  `status`), while an individual Holiday entry being wrong (typo'd name,
+  wrong date) is a correction, not a business event worth preserving a
+  historical trace of beyond what `AuditLog`'s `beforeData` already
+  captures — the same reasoning already applied to
+  `EmployeeDocument`'s hard delete.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/holiday-calendars/$HOLIDAY_CALENDAR_ID/holidays/$HOLIDAY_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this **after** `POST /holiday-calendars/:id/holidays` in any test
+sequence — save the returned `holiday.id` as `{{holidayId}}` beforehand.
+
+## 20. Testing Checklist
+
+- ✅ Valid delete → `200` (verified live)
+- ✅ Second delete on the same `holidayId` → `404`, not `409`
+- ✅ `GET /holiday-calendars/:id/holidays` no longer lists the deleted entry (verified live)
+- ✅ `404` for nonexistent `holidayId`, a `holidayId` under the wrong calendar, and a nonexistent calendar `id`
+- ✅ `403` as `EMPLOYEE`/`MANAGER`, `401` with no token
+- ✅ `AuditLog` row created for the deletion, `entityType: 'Holiday'`
+- ✅ No reference-count check performed — deletion always unconditional
