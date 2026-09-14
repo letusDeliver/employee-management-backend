@@ -10,6 +10,7 @@ import branchRouter from '../modules/branches/branch.routes.js';
 import departmentRouter from '../modules/departments/department.routes.js';
 import designationRouter from '../modules/designations/designation.routes.js';
 import holidayCalendarRouter from '../modules/holidayCalendars/holidayCalendar.routes.js';
+import shiftRouter from '../modules/shifts/shift.routes.js';
 
 const router = Router();
 
@@ -20,6 +21,7 @@ router.use('/branches', branchRouter);
 router.use('/departments', departmentRouter);
 router.use('/designations', designationRouter);
 router.use('/holiday-calendars', holidayCalendarRouter);
+router.use('/shifts', shiftRouter);
 
 router.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });

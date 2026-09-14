@@ -1312,3 +1312,81 @@ background agent given the expected size, then verified). `backend/README.md`
 updated to match.
 
 Deliberately **backend-only**, same as every prior domain.)_
+
+_(Shift Domain — 2026-09-15, on branch `feature/20-shift-domain` (based on
+`feature/19-holiday-calendar-domain`). Sixth domain from the HRMS/ERP
+Business Architecture Review (`docs/domain-shift.md`), and the second
+domain of HRMS Phase 2. Structurally the simplest domain since
+Designation - a single flat aggregate (`Shift`), no parent-child shape, no
+reversed FK direction - but the first to introduce a genuinely new field
+type: `startTime`/`endTime` as `"HH:mm"` strings rather than `DateTime`,
+a deliberate choice (not in the domain doc, made here) since Postgres/
+Prisma have no first-class time-only type in this stack and a `DateTime`
+would force an arbitrary date component onto what's semantically
+time-of-day only.
+
+`Employee.shiftId` is nullable (ADR-SH02), mirroring `branchId`'s optional
+pattern rather than `departmentId`/`designationId`/`employmentType`'s
+mandatory one - not every employee necessarily operates under a
+fixed-hours expectation. `onDelete: Restrict`, same "never hard-deleted
+while referenced" invariant as every governed-master-data FK.
+
+Resolved the one open item this domain's own sign-off left open
+(permission scoping, now ADR-SH05) identically to every prior domain:
+`ADMIN`-only mutations (`shift:create/update/delete`), `shift:read` for
+all roles.
+
+Implemented ADR-SH03's overnight-shift semantics as a single exported
+pure function, `shiftService.isOvernightShift({ startTime, endTime })`,
+comparing the two zero-padded `"HH:mm"` strings directly (lexicographic
+order agrees with chronological order for this format, so no date
+parsing is needed) - the "encoded once, here" primitive §4 asks for, not
+a full day-attribution resolver, since no consumer (Attendance) exists
+yet. Same scoping discipline as Holiday Calendar's `isDateHolidayInCalendar`
+(ADR-HC04): build the primitive a future consumer will need, not the
+orchestration around it that only that consumer can actually specify.
+
+New module `src/modules/shifts/` - repository, validation (24-hour
+`"HH:mm"` regex on `startTime`/`endTime`, `workingDays` as a non-empty
+array of a dedicated `Weekday` enum, mirrored 1:1 against the Prisma
+enum), service, controller, routes, docs - same flat single-aggregate
+shape as `designations/`. Migration was purely additive (new `ShiftStatus`/
+`Weekday` enums, new `Shift` table, new nullable `Employee.shiftId` +
+index) - no expand/backfill/contract needed since the field is optional.
+
+`employee.validation.js`/`employee.service.js` extended the same way as
+every prior optional-FK axis: `shiftId` added to both employee schemas
+(`.optional()` on create, `.nullable().optional()` on update for explicit
+unassignment), `assertShiftAssignable` called only when a `shiftId` is
+actually provided (unconditional call, unlike `departmentId`/
+`designationId`, since this field can legitimately be absent),
+`buildEmployeeWhere` gained a plain `shiftId` filter, `shift` added to
+`RELATION_SORT_FIELDS` (sorts by the linked Shift's `name`, same one-hop
+nested-orderBy shape as `department`/`designation`), and the FK-violation
+handler extended to recognize a `shiftId` constraint name.
+
+New `shift.service.test.js` (7 tests: create + duplicate-name rejection,
+list/search/pagination, deactivation blocks future assignment but
+preserves existing links, `assertShiftAssignable` rejects a nonexistent
+id, Employee creation both without a `shiftId` (confirms genuinely
+optional) and with a valid one plus a nonexistent-id rejection,
+delete-blocked-while-referenced then successful after unassignment, and
+`isOvernightShift` correctness for both a midnight-crossing and a
+same-day shift). All 37 tests across all six domains pass together.
+
+Verified live end-to-end against the running server: shift creation
+(day and overnight), duplicate-name 409, invalid-time-format 400,
+empty-`workingDays` 400, EMPLOYEE-role permission checks (read allowed,
+create forbidden with 403), Employee creation with a real `shiftId`,
+delete-blocked-409 while referenced, and successful delete after
+unassigning via `PATCH /employees/:id` with `{"shiftId": null}`. All
+live-verification fixtures cleaned up afterward.
+
+`docs/domain-shift.md` (ADR-SH05 added and implemented, ADR-SH01-03
+implementation confirmed, confidence 85%→90%), `docs/adr-index.md`,
+`docs/deferred-decisions-register.md` updated. `handbook/API_ENDPOINTS.md`
+gained new endpoint docs for `/shifts` plus updates to the Employee
+section for `shiftId` (delegated to a background agent given the
+expected size, then verified). `backend/README.md` updated to match.
+
+Deliberately **backend-only**, same as every prior domain.)_

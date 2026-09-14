@@ -70,10 +70,11 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the two most load-
 ## Shift — [[domain-shift]]
 | ADR | Summary | Status |
 |---|---|---|
-| SH01 | Shift as an independent, Employee-level aggregate (not Branch/Department-scoped) | Accepted |
-| SH02 | Nullable `shiftId`, single current value | Accepted |
-| SH03 | Overnight (midnight-crossing) shift semantics decided now, not deferred | Accepted |
+| SH01 | Shift as an independent, Employee-level aggregate (not Branch/Department-scoped) | Accepted; Implemented (2026-09-15) |
+| SH02 | Nullable `shiftId`, single current value | Accepted; Implemented (2026-09-15) |
+| SH03 | Overnight (midnight-crossing) shift semantics decided now, not deferred | Accepted; Implemented (2026-09-15) — `shiftService.isOvernightShift()`, the single reusable primitive, comparing zero-padded "HH:mm" strings |
 | SH04 | Rotation/rostering explicitly deferred | Deferred |
+| SH05 | Permission scoping | Accepted; Implemented (2026-09-15) — `ADMIN`-only mutations, read for all roles |
 
 ## Attendance — [[domain-attendance]]
 | ADR | Summary | Status |

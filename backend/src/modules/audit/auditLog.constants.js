@@ -13,4 +13,5 @@ export const AUDIT_ENTITY_TYPES = Object.freeze({
   DESIGNATION: 'Designation',
   HOLIDAY_CALENDAR: 'HolidayCalendar',
   HOLIDAY: 'Holiday',
+  SHIFT: 'Shift',
 });

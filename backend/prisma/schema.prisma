@@ -120,6 +120,13 @@ model Employee {
   // before attempting a delete, so this is a defense-in-depth backstop, not
   // the only guard.
   branch        Branch?            @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  // Nullable (docs/domain-shift.md ADR-SH02) - mirrors branchId's optional
+  // pattern, not departmentId/designationId's mandatory one: not every
+  // employee necessarily operates under a fixed-hours expectation. Restrict,
+  // not SetNull, for the same "never hard-deleted while referenced" reason
+  // as branchId/departmentId/designationId above.
+  shiftId       String?
+  shift         Shift?             @relation(fields: [shiftId], references: [id], onDelete: Restrict)
   deletedAt     DateTime?
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
@@ -137,6 +144,7 @@ model Employee {
   @@index([branchId])
   @@index([departmentId])
   @@index([designationId])
+  @@index([shiftId])
 }
 
 // See docs/domain-branch.md for the full business-architecture sign-off.
@@ -264,6 +272,49 @@ model Holiday {
   // service layer.
   @@unique([holidayCalendarId, date])
   @@index([holidayCalendarId])
+}
+
+// See docs/domain-shift.md for the full business-architecture sign-off.
+// Uses a status field, not deletedAt (mirrors Branch/Department/Designation/
+// HolidayCalendar) - deactivation blocks future assignment to new Employees
+// but never retroactively touches existing Employee.shiftId references.
+enum ShiftStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// The seven weekdays a Shift's workingDays array is drawn from (ADR-SH01 §4:
+// "a non-empty subset of the seven weekdays"). A dedicated enum, not a
+// String[], so Postgres/Prisma reject an invalid day at the type level.
+enum Weekday {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+// Independent, Employee-level aggregate (ADR-SH01) - no relationship to
+// Branch/Department/Designation/HolidayCalendar, a deliberate continuation
+// of the orthogonal-axis philosophy (docs/domain-shift.md §3). startTime/
+// endTime are "HH:mm" strings, not DateTime - Postgres/Prisma have no
+// first-class time-only type in this stack, and a DateTime would force an
+// arbitrary date component onto what's semantically time-of-day only.
+// Overnight shifts (ADR-SH03: endTime < startTime crosses midnight) are
+// decided by comparing these strings, once, in the service layer - never
+// reimplemented by a future consumer.
+model Shift {
+  id          String      @id @default(uuid())
+  name        String      @unique
+  startTime   String
+  endTime     String
+  workingDays Weekday[]
+  status      ShiftStatus @default(ACTIVE)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  employees   Employee[]
 }
 
 model EmployeeDocument {

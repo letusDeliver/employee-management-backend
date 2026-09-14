@@ -5,6 +5,7 @@ import { AUDIT_ACTIONS, AUDIT_ENTITY_TYPES } from '../audit/auditLog.constants.j
 import branchService from '../branches/branch.service.js';
 import departmentService from '../departments/department.service.js';
 import designationService from '../designations/designation.service.js';
+import shiftService from '../shifts/shift.service.js';
 import ConflictError from '../../errors/ConflictError.js';
 import NotFoundError from '../../errors/NotFoundError.js';
 import ForbiddenError from '../../errors/ForbiddenError.js';
@@ -44,7 +45,9 @@ const rethrowForeignKeyViolationAsBadRequest = (error) => {
         ? 'departmentId'
         : constraintName.includes('designationId')
           ? 'designationId'
-          : 'userId';
+          : constraintName.includes('shiftId')
+            ? 'shiftId'
+            : 'userId';
 
   throw new BadRequestError(`${field}: references a record that does not exist`);
 };
@@ -60,6 +63,12 @@ const createEmployee = async (data, actor) => {
 
   if (data.branchId) {
     await branchService.assertBranchAssignable(data.branchId);
+  }
+
+  // Same reasoning as branchId - shiftId is also optional (docs/domain-shift.md
+  // ADR-SH02).
+  if (data.shiftId) {
+    await shiftService.assertShiftAssignable(data.shiftId);
   }
 
   // Unconditional, unlike branchId - departmentId is mandatory
@@ -119,7 +128,14 @@ const getEmployeeById = async (id, requester) => {
   return employee;
 };
 
-const buildEmployeeWhere = ({ search, departmentId, designationId, employmentType, managerId }) => {
+const buildEmployeeWhere = ({
+  search,
+  departmentId,
+  designationId,
+  employmentType,
+  managerId,
+  shiftId,
+}) => {
   const where = {};
 
   if (search) {
@@ -149,14 +165,19 @@ const buildEmployeeWhere = ({ search, departmentId, designationId, employmentTyp
     where.managerId = managerId;
   }
 
+  if (shiftId) {
+    where.shiftId = shiftId;
+  }
+
   return where;
 };
 
-// 'department'/'designation' are relations now, not scalar columns
-// (docs/domain-department.md, docs/domain-designation.md) - sorting by
-// either means sorting by the linked record's name (a one-hop nested
-// orderBy), not a direct column comparison like every other sortBy value.
-const RELATION_SORT_FIELDS = new Set(['department', 'designation']);
+// 'department'/'designation'/'shift' are relations now, not scalar columns
+// (docs/domain-department.md, docs/domain-designation.md, docs/domain-shift.md)
+// - sorting by any of them means sorting by the linked record's name (a
+// one-hop nested orderBy), not a direct column comparison like every other
+// sortBy value.
+const RELATION_SORT_FIELDS = new Set(['department', 'designation', 'shift']);
 
 const buildEmployeeOrderBy = (sortBy, order) =>
   RELATION_SORT_FIELDS.has(sortBy) ? { [sortBy]: { name: order } } : { [sortBy]: order };
@@ -198,6 +219,12 @@ const updateEmployee = async (id, data, actor) => {
   // as-is" (already validated when it was originally assigned).
   if (data.branchId) {
     await branchService.assertBranchAssignable(data.branchId);
+  }
+
+  // Same reasoning as branchId above - shiftId is nullable, `null` clears
+  // it (no check needed), `undefined` leaves it as-is.
+  if (data.shiftId) {
+    await shiftService.assertShiftAssignable(data.shiftId);
   }
 
   // departmentId is never nullable (unlike branchId) - the schema itself

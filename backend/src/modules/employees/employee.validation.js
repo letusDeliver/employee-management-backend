@@ -44,6 +44,11 @@ export const createEmployeeSchema = z
       .meta({ example: '2024-01-15' }),
     managerId: z.string().uuid().optional().meta({ example: null }),
     branchId: z.string().uuid().optional().meta({ example: null }),
+    // Nullable/optional, same treatment as branchId - docs/domain-shift.md
+    // ADR-SH02: not every employee necessarily operates under a fixed-hours
+    // expectation. Validated for existence+ACTIVE status in the service
+    // (shiftService.assertShiftAssignable) only when actually provided.
+    shiftId: z.string().uuid().optional().meta({ example: null }),
   })
   .meta({ id: 'CreateEmployeeRequest' });
 
@@ -58,6 +63,7 @@ export const updateEmployeeSchema = createEmployeeSchema
     userId: z.string().uuid().nullable().optional().meta({ example: null }),
     managerId: z.string().uuid().nullable().optional().meta({ example: null }),
     branchId: z.string().uuid().nullable().optional().meta({ example: null }),
+    shiftId: z.string().uuid().nullable().optional().meta({ example: null }),
   })
   .meta({ id: 'UpdateEmployeeRequest' });
 
@@ -68,6 +74,7 @@ const SORTABLE_FIELDS = [
   'salary',
   'dateOfJoining',
   'createdAt',
+  'shift',
 ];
 
 export const listEmployeesQuerySchema = z
@@ -87,6 +94,7 @@ export const listEmployeesQuerySchema = z
     designationId: z.string().uuid().optional().meta({ example: null }),
     employmentType: z.enum(EMPLOYMENT_TYPES).optional().meta({ example: null }),
     managerId: z.string().uuid().optional().meta({ example: null }),
+    shiftId: z.string().uuid().optional().meta({ example: null }),
     sortBy: z.enum(SORTABLE_FIELDS).default('createdAt'),
     order: z.enum(['asc', 'desc']).default('desc'),
   })

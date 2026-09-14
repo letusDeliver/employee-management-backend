@@ -120,7 +120,7 @@ All routes are mounted under `/api/v1`.
 | `GET`    | `/auth/me`                             | Access token (Bearer)                                  | Return the current authenticated user                                                                                                                                                                                 |
 | `GET`    | `/users`                               | Access token, `user:list` permission                   | List registered users — paginated (`page`/`limit`), searchable (`search`, across `name`/`email`), filterable (`role`), sortable (`sortBy`/`order`)                                                                    |
 | `POST`   | `/employees`                           | Access token, `employee:create` permission             | Create an Employee (HR) record                                                                                                                                                                                        |
-| `GET`    | `/employees`                           | Access token, `employee:read:any` permission           | List non-deleted Employee records — paginated (`page`/`limit`), searchable (`search`, across the linked Department's name + linked Designation's name + linked User name/email), filterable (`departmentId`/`designationId`/`employmentType`/`managerId`), sortable (`sortBy`/`order`) |
+| `GET`    | `/employees`                           | Access token, `employee:read:any` permission           | List non-deleted Employee records — paginated (`page`/`limit`), searchable (`search`, across the linked Department's name + linked Designation's name + linked User name/email), filterable (`departmentId`/`designationId`/`employmentType`/`managerId`/`shiftId`), sortable (`sortBy`/`order`) |
 | `GET`    | `/employees/:id`                       | Access token, `employee:read:any` or `:own` permission | Get one Employee record (own record allowed for `EMPLOYEE`)                                                                                                                                                           |
 | `PATCH`  | `/employees/:id`                       | Access token, `employee:update:any` permission         | Partially update an Employee record                                                                                                                                                                                   |
 | `DELETE` | `/employees/:id`                       | Access token, `employee:delete:any` permission         | Soft-delete an Employee record                                                                                                                                                                                        |
@@ -153,6 +153,11 @@ All routes are mounted under `/api/v1`.
 | `GET`    | `/holiday-calendars/:id/holidays`      | Access token, `holidayCalendar:read` permission (every role) | List a Holiday Calendar's Holiday entries, ordered by date                                                                                                                                                           |
 | `PATCH`  | `/holiday-calendars/:id/holidays/:holidayId` | Access token, `holidayCalendar:update` permission (ADMIN only) | Update a Holiday entry                                                                                                                                                                                          |
 | `DELETE` | `/holiday-calendars/:id/holidays/:holidayId` | Access token, `holidayCalendar:update` permission (ADMIN only) | Remove a Holiday entry (no reference restriction)                                                                                                                                                               |
+| `POST`   | `/shifts`                              | Access token, `shift:create` permission (ADMIN only)    | Create a Shift (recurring working-hours/working-days pattern)                                                                                                                                                          |
+| `GET`    | `/shifts`                              | Access token, `shift:read` permission (every role)      | List Shift records — paginated, searchable (`name`), filterable (`status`), sortable                                                                                                                                  |
+| `GET`    | `/shifts/:id`                          | Access token, `shift:read` permission (every role)      | Get one Shift record                                                                                                                                                                                                   |
+| `PATCH`  | `/shifts/:id`                          | Access token, `shift:update` permission (ADMIN only)    | Update a Shift, including activating/deactivating it                                                                                                                                                                   |
+| `DELETE` | `/shifts/:id`                          | Access token, `shift:delete` permission (ADMIN only)    | Hard-delete a Shift — only when zero Employee records reference it                                                                                                                                                     |
 
 `POST`/`PATCH /employees` also accept an optional `branchId`, validated
 against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
@@ -161,6 +166,13 @@ against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
 (2026-09-13, `docs/domain-holiday-calendar.md` ADR-HC03), validated the
 same way — must exist and be `ACTIVE`. Absence means no holidays are
 applied for that branch, never an error.
+
+`POST`/`PATCH /employees` also accept an optional `shiftId` (2026-09-15,
+`docs/domain-shift.md` ADR-SH02), validated the same way — must exist and
+be `ACTIVE`. Absence means no fixed-hours expectation for that employee,
+never an error. Shift's `startTime`/`endTime` are 24-hour `"HH:mm"`
+strings; `endTime < startTime` is a valid, deliberately-supported
+overnight (midnight-crossing) shift, not an error (ADR-SH03).
 
 **Breaking change (2026-09-13):** Employee's free-text `department`
 (`String`) field was removed and replaced by a **mandatory**

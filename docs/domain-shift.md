@@ -73,7 +73,7 @@ Shift defines an employee's **expected recurring working pattern** — start/end
 
 ## 8. Open Questions
 
-1. Permission scoping for Shift management — same unresolved pattern as prior domains.
+1. ~~Permission scoping for Shift management — same unresolved pattern as prior domains.~~ **Resolved (2026-09-15) — see ADR-SH05.**
 2. Whether a default/fallback Shift should exist for employees with no assignment, or whether "no shift = no fixed-hours expectation" (current decision) is sufficient — recommend the latter unless Attendance's own design surfaces a reason otherwise.
 
 ## 9. Deferred Decisions
@@ -127,12 +127,21 @@ Consequences: Attendance must consume this interpretation rather than defining i
 Status: Deferred
 Summary: No verified requirement for rotating schedules; single static shift per employee is today's scope.
 
+**ADR-SH05 — Permission Scoping**
+Status: Accepted; Implemented (2026-09-15)
+Summary: `ADMIN`-only mutations (`shift:create/update/delete`), `shift:read` granted to every role — the same default every prior domain in this review has resolved to (Branch ADR-B07, Department ADR-D08, Designation ADR-DS06, Holiday Calendar ADR-HC06). No verified requirement surfaced to diverge from it here.
+
 ## Final Sign-off
 
-**Implementation readiness:** Ready. No structural blockers.
+**Implementation readiness:** Implemented (2026-09-15). No structural blockers.
 
-**Confidence score: 85%**
+**Confidence score: 90%**
 
-**Remaining blockers:** None structural. Confirm permission scoping alongside other open items.
+**Implementation notes:**
+- `startTime`/`endTime` implemented as `"HH:mm"` strings (24-hour, regex-validated at the Zod boundary), not `DateTime` — Postgres/Prisma have no first-class time-only type in this stack, and a `DateTime` would force an arbitrary date component onto a value that is semantically time-of-day only. This is an implementation detail, not a divergence from this document's own recommendation (§4 names the fields, not their storage type).
+- The overnight-shift interpretation rule (ADR-SH03) is implemented as a single exported pure function, `shiftService.isOvernightShift({ startTime, endTime })`, comparing the two zero-padded `"HH:mm"` strings directly (lexicographic order agrees with chronological order for this format). This is the "encoded once, here" primitive §4 asks for — scoped the same way Holiday Calendar's `isDateHolidayInCalendar` was (ADR-HC04): the primitive only, not a full day-attribution resolver, since no consumer (Attendance) exists yet.
+- `Employee.shiftId` is nullable with `onDelete: Restrict` (ADR-SH02, §4's "never hard-deleted while referenced" invariant), mirroring `branchId`'s optional-FK treatment rather than `departmentId`/`designationId`'s mandatory one.
+
+**Remaining blockers:** None.
 
 **Recommended next domain:** Attendance — the direct consumer of both Holiday Calendar and Shift, and the point where their combined data actually produces a business outcome (present/absent/late/overtime).

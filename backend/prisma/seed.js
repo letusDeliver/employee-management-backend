@@ -163,6 +163,34 @@ const PERMISSIONS = [
     scope: null,
     description: 'Hard-delete a holiday calendar with zero Branch references',
   },
+  {
+    key: 'shift:create',
+    resource: 'shift',
+    action: 'create',
+    scope: null,
+    description: 'Create a shift',
+  },
+  {
+    key: 'shift:read',
+    resource: 'shift',
+    action: 'read',
+    scope: null,
+    description: 'Read shift records',
+  },
+  {
+    key: 'shift:update',
+    resource: 'shift',
+    action: 'update',
+    scope: null,
+    description: 'Update a shift, including activating/deactivating it',
+  },
+  {
+    key: 'shift:delete',
+    resource: 'shift',
+    action: 'delete',
+    scope: null,
+    description: 'Hard-delete a shift with zero Employee references',
+  },
 ];
 
 const ROLE_PERMISSIONS = {
@@ -188,6 +216,10 @@ const ROLE_PERMISSIONS = {
     'holidayCalendar:read',
     'holidayCalendar:update',
     'holidayCalendar:delete',
+    'shift:create',
+    'shift:read',
+    'shift:update',
+    'shift:delete',
   ],
   MANAGER: [
     'employee:create',
@@ -198,6 +230,7 @@ const ROLE_PERMISSIONS = {
     'department:read',
     'designation:read',
     'holidayCalendar:read',
+    'shift:read',
   ],
   EMPLOYEE: [
     'employee:read:own',
@@ -205,6 +238,7 @@ const ROLE_PERMISSIONS = {
     'department:read',
     'designation:read',
     'holidayCalendar:read',
+    'shift:read',
   ],
 };
 
@@ -243,7 +277,7 @@ const seedRolesAndGrants = async () => {
 const main = async () => {
   await seedPermissions();
   await seedRolesAndGrants();
-  console.log('Seed complete: 3 system roles, 22 permissions, role-permission grants.');
+  console.log('Seed complete: 3 system roles, 26 permissions, role-permission grants.');
 };
 
 main()

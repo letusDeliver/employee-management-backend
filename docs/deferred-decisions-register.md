@@ -63,7 +63,7 @@ Every decision explicitly deferred across every domain in this review, in one pl
 | Timezone-aware shift interpretation | Depends on Branch's still-deferred `timezone` field. |
 | Break-time deduction/lateness grace period | Belongs to Attendance's calculation rules. |
 | Shift-change history | Consistent with every other axis; additive later. |
-| Permission scoping | Open. |
+| Permission scoping | **Resolved (2026-09-15)** — `ADMIN`-only mutations, read for all roles (ADR-SH05). |
 
 ## Attendance
 | Deferred Item | Reason |
@@ -141,9 +141,9 @@ These are not domain-specific deferrals but the same missing capability surfacin
 
 | Recurring Gap | Domains Affected |
 |---|---|
-| Permission scoping beyond `ADMIN`-only | Shift, Leave, Payroll, Recruitment, Training, Asset Management, Exit Management. Branch (ADR-B07), Department (ADR-D08), Designation (ADR-DS06), and Holiday Calendar (ADR-HC06) have all now resolved this as `ADMIN`-only mutations / read-for-all (2026-09-13) — the same resolution is the likely default for the rest unless a real requirement diverges. |
+| Permission scoping beyond `ADMIN`-only | Leave, Payroll, Recruitment, Training, Asset Management, Exit Management. Branch (ADR-B07), Department (ADR-D08), Designation (ADR-DS06), Holiday Calendar (ADR-HC06), and Shift (ADR-SH05) have all now resolved this as `ADMIN`-only mutations / read-for-all (2026-09-13 through 2026-09-15) — the same resolution is the likely default for the rest unless a real requirement diverges. |
 | No approval-workflow infrastructure project-wide | Attendance (regularization), Leave (multi-level approval), Asset Management (asset requests) all independently deferred the same underlying capability. |
 | No notification infrastructure project-wide | Training (renewal reminders) is the only domain to name this explicitly, but it would also affect Leave (approval notifications) and Exit Management (clearance reminders) once built. |
-| AuditLog extension to new entity types | Attendance/Leave/Payroll assume it's used but don't re-litigate whether it should be. Branch (ADR-B08), Department (ADR-D09), Designation, and Holiday Calendar (both entities, `HolidayCalendar` and `Holiday`) have all resolved this (2026-09-13) — confirms the generic `AuditLog` model extends cleanly with no schema change, as predicted, across four independent domains now. |
+| AuditLog extension to new entity types | Attendance/Leave/Payroll assume it's used but don't re-litigate whether it should be. Branch (ADR-B08), Department (ADR-D09), Designation, Holiday Calendar (both entities, `HolidayCalendar` and `Holiday`), and Shift have all resolved this (2026-09-13 through 2026-09-15) — confirms the generic `AuditLog` model extends cleanly with no schema change, as predicted, across five independent domains now. |
 
 See [[future-roadmap]] for how these recurring gaps should be sequenced relative to the domain-specific open items above.

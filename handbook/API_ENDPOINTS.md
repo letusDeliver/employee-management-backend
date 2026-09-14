@@ -277,6 +277,11 @@ in Postman's cookie jar once register/login/refresh sets it.
 | 40  | Holiday Calendars | `GET`    | `/holiday-calendars/:id/holidays`                 | Access token          | `holidayCalendar:read`                         | Protected          |
 | 41  | Holiday Calendars | `PATCH`  | `/holiday-calendars/:id/holidays/:holidayId`      | Access token          | `holidayCalendar:update`                       | Protected          |
 | 42  | Holiday Calendars | `DELETE` | `/holiday-calendars/:id/holidays/:holidayId`      | Access token          | `holidayCalendar:update`                       | Protected          |
+| 43  | Shifts    | `POST`   | `/shifts`                              | Access token              | `shift:create`                                 | Protected          |
+| 44  | Shifts    | `GET`    | `/shifts`                              | Access token              | `shift:read`                                   | Protected          |
+| 45  | Shifts    | `GET`    | `/shifts/:id`                          | Access token              | `shift:read`                                   | Protected          |
+| 46  | Shifts    | `PATCH`  | `/shifts/:id`                          | Access token              | `shift:update`                                 | Protected          |
+| 47  | Shifts    | `DELETE` | `/shifts/:id`                          | Access token              | `shift:delete`                                 | Protected          |
 
 **As of the Branch domain (2026-09-13)**, `Employee` create/update also
 accept an optional `branchId` — see endpoints 9 and 12 above, whose
@@ -346,6 +351,29 @@ are updated in place, not duplicated here). Mutations require
 `holidayCalendar:read` is granted to every role, the same broad
 reference-data reasoning already applied to `branch:read`/
 `department:read`/`designation:read`.
+
+**As of the Shift domain (2026-09-15)**: a sixth master-data domain, and,
+like Designation, a single **flat aggregate** with no nested child (unlike
+Holiday Calendar's Holiday) — `Shift` (`id`, `name` — unique, case-
+insensitive, no `code` field, same shape as Holiday Calendar's `name` —
+`startTime`/`endTime` as `"HH:mm"` strings, `workingDays` — a non-empty
+array of `Weekday` enum values — `status`, timestamps). See endpoints
+43-47 below for `POST`/`GET`/`GET`/`PATCH`/`DELETE /shifts`. `Employee`
+gained a new **optional** field, `shiftId` (UUID, nullable, references
+`Shift.id`, `onDelete: Restrict`) — mirroring `branchId`'s optional
+treatment rather than `departmentId`/`designationId`'s mandatory one, since
+not every employee necessarily operates under a fixed-hours expectation
+(`docs/domain-shift.md` §3, ADR-SH02) — see endpoints 9, 10, and 12 above
+(their Request Body/Query Parameters/Validation Rules/Successful Response
+sections are updated in place, not duplicated here). A Shift can never be
+hard-deleted while referenced by any Employee (`409`, the same "deactivate
+it instead" pattern already used by Branch/Department/Designation/Holiday
+Calendar's own delete guards — see endpoint 47); deactivating a Shift never
+touches existing `Employee.shiftId` references, only blocks *future*
+assignment. Mutations require `shift:create`/`update`/`delete` (`ADMIN`
+only, as seeded, ADR-SH05); `shift:read` is granted to every role, the same
+broad reference-data reasoning already applied to `branch:read`/
+`department:read`/`designation:read`/`holidayCalendar:read`.
 
 **As of Feature 9**, authorization is permission-based, not role-based —
 `ADMIN`/`MANAGER`/`EMPLOYEE` are just role _names_ that happen to be
@@ -2335,7 +2363,8 @@ None.
   "salary": 75000,
   "dateOfJoining": "2024-01-15",
   "managerId": null,
-  "branchId": null
+  "branchId": null,
+  "shiftId": null
 }
 ```
 
@@ -2349,15 +2378,16 @@ None.
 | `dateOfJoining` | string (ISO date) | Yes      | Coerced to a `Date`. Cannot be in the future.                                                                                                                   |
 | `managerId`     | string (UUID)     | No       | Must reference an existing `Employee.id`. Cannot equal the created record's own id (checked in the service, since the id doesn't exist yet at validation time). |
 | `branchId`      | string (UUID)     | No       | **Added by the Branch domain (2026-09-13).** Must reference an existing Branch whose `status` is `ACTIVE` — checked via `branchService.assertBranchAssignable`, a synchronous cross-module read, not just a raw FK-exists check (see endpoint 19's domain). Rejects with `400 branchId: references a record that does not exist` or `400 branchId: this branch is not active and cannot be assigned`. Verified live. |
+| `shiftId`       | string (UUID)     | No       | **Added by the Shift domain (2026-09-15).** Optional, same nullable/optional treatment as `branchId` — not every employee necessarily operates under a fixed-hours expectation (`docs/domain-shift.md` ADR-SH02). Must reference an existing Shift whose `status` is `ACTIVE` — checked via `shiftService.assertShiftAssignable`, the same synchronous-read shape as `branchId`'s check (see endpoint 43's domain). Rejects with `400 shiftId: references a record that does not exist` or `400 shiftId: this shift is not active and cannot be assigned`. Verified live. |
 
 ## 7. Validation Rules
 
 Enforced by `src/modules/employees/employee.validation.js`'s
 `createEmployeeSchema` (Zod), via `validateMiddleware`.
 
-- `userId`/`managerId`/`departmentId`/`designationId`/`branchId`: if
-  present, must be syntactically valid UUIDs (Zod's `.uuid()`).
-  `departmentId` and `designationId` are the only two of these five that
+- `userId`/`managerId`/`departmentId`/`designationId`/`branchId`/`shiftId`:
+  if present, must be syntactically valid UUIDs (Zod's `.uuid()`).
+  `departmentId` and `designationId` are the only two of these six that
   are **required**, not optional — an entirely missing `departmentId` or
   `designationId` produces
   `"departmentId: Invalid input: expected string, received undefined"` or
@@ -2372,6 +2402,14 @@ Enforced by `src/modules/employees/employee.validation.js`'s
   trimming/uniqueness rule now lives on `Designation.name` instead (see
   endpoint 29), since `jobTitle` is no longer a free-text field on
   Employee at all.
+- `shiftId`: **Added by the Shift domain (2026-09-15).** Optional — unlike
+  `departmentId`/`designationId`, there is no "always required" history to
+  preserve here; mirrors `branchId`'s own optional treatment instead.
+  Existence + `ACTIVE`-status is checked via
+  `shiftService.assertShiftAssignable` (business-rule validation, not
+  Zod) only when a `shiftId` is actually provided — see the field table
+  above and endpoint 43's domain. Verified live: a nonexistent `shiftId`
+  and an `INACTIVE` `shiftId` both produce their respective `400`s.
 - `employmentType`: **Added by the Employment Type domain (2026-09-13).**
   `z.enum(['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERN'])` — the closed
   list is hard-coded in `employee.validation.js`'s own `EMPLOYMENT_TYPES`
@@ -2426,6 +2464,7 @@ Enforced by `src/modules/employees/employee.validation.js`'s
     "dateOfJoining": "2024-01-15T00:00:00.000Z",
     "managerId": null,
     "branchId": null,
+    "shiftId": null,
     "deletedAt": null,
     "createdAt": "2026-07-05T04:52:52.814Z",
     "updatedAt": "2026-07-05T04:52:52.814Z"
@@ -2440,6 +2479,7 @@ Enforced by `src/modules/employees/employee.validation.js`'s
 | `employee.salary`    | **Returned as a string**, not a number — Prisma's `Decimal` type serializes to a string in JSON to avoid floating-point precision loss. Expect this in every response that includes `salary`. |
 | `employee.deletedAt` | `null` for a live record — see `DELETE /employees/:id` for the soft-delete value.                                                                                                             |
 | `employee.managerId` | `null` unless supplied.                                                                                                                                                                       |
+| `employee.shiftId`   | `null` unless supplied. **Added by the Shift domain (2026-09-15).**                                                                                                                           |
 
 ## 9. Error Responses
 
@@ -2450,12 +2490,13 @@ Enforced by `src/modules/employees/employee.validation.js`'s
 | `400`  | Salary over the sanity ceiling                       | `"salary: Salary seems unreasonably high"`                                                 | `salary > 100,000,000`                                                                                                                       |
 | `400`  | `departmentId` doesn't exist or is inactive          | `"departmentId: references a record that does not exist"` / `"departmentId: this department is not active and cannot be assigned"` | Verified live for both                                                                                                                       |
 | `400`  | `designationId` doesn't exist or is inactive         | `"designationId: references a record that does not exist"` / `"designationId: this designation is not active and cannot be assigned"` | Verified live for both — same shape as `departmentId`'s equivalent check                                                                     |
+| `400`  | `shiftId` doesn't exist or is inactive                | `"shiftId: references a record that does not exist"` / `"shiftId: this shift is not active and cannot be assigned"` | **Added by the Shift domain (2026-09-15).** Verified live for both — same shape as `departmentId`'s/`designationId`'s equivalent check |
 | `400`  | `employmentType` missing or not one of the 4 allowed values | `"employmentType: Invalid option: expected one of "FULL_TIME"\|"PART_TIME"\|"CONTRACT"\|"INTERN""` | **Added by the Employment Type domain (2026-09-13).** Identical message for both "missing" and "invalid" (e.g. `"FREELANCER"`) — Zod's enum validation doesn't distinguish the two. Verified live for both. |
 | `400`  | Future `dateOfJoining`                               | `"dateOfJoining: Date of joining cannot be in the future"`                                 | Date is after "now"                                                                                                                         |
-| `400`  | Invalid UUID for `userId`/`managerId`/`departmentId`/`designationId`/`branchId` | Zod's default UUID-format message                              | Malformed UUID string supplied                                                                                                              |
+| `400`  | Invalid UUID for `userId`/`managerId`/`departmentId`/`designationId`/`branchId`/`shiftId` | Zod's default UUID-format message                              | Malformed UUID string supplied                                                                                                              |
 | `400`  | Malformed JSON body                                  | `"Invalid JSON in request body"`                                                           | Same as every other JSON-body endpoint                                                                                                      |
 | `401`  | No/invalid/expired access token                      | Same as every other protected endpoint                                                     | `authMiddleware` failure                                                                                                                    |
-| `400`  | `userId`/`managerId`/`branchId`/`departmentId`/`designationId` references a nonexistent record | `"userId: references a record that does not exist"` (or `managerId:`/`branchId:`/`departmentId:`/`designationId:`) | The referenced record doesn't exist — a Prisma FK-violation (`P2003`), translated in the service rather than left as a raw `500`, or (for `branchId`/`departmentId`/`designationId`) rejected earlier by the assignability check before the DB is even touched |
+| `400`  | `userId`/`managerId`/`branchId`/`departmentId`/`designationId`/`shiftId` references a nonexistent record | `"userId: references a record that does not exist"` (or `managerId:`/`branchId:`/`departmentId:`/`designationId:`/`shiftId:`) | The referenced record doesn't exist — a Prisma FK-violation (`P2003`), translated in the service rather than left as a raw `500`, or (for `branchId`/`departmentId`/`designationId`/`shiftId`) rejected earlier by the assignability check before the DB is even touched |
 | `403`  | Roles don't grant `employee:create`                  | `"You do not have permission to perform this action"`                                      | Authenticated as plain `EMPLOYEE`                                                                                                           |
 | `409`  | `userId` already has an Employee record              | `"This user already has an employee record"`                                               | Duplicate `userId` (only counts non-deleted records), via pre-check or the DB's own partial-unique-index constraint                         |
 
@@ -2478,6 +2519,9 @@ Enforced by `src/modules/employees/employee.validation.js`'s
 | 13  | Inactive `designationId` | `{..., "designationId": "<id of an INACTIVE designation>"}`                                                             | `400` — verified live               |
 | 14  | Missing `employmentType` | Same as test 1, minus `employmentType`                                                                                 | `400` — verified live               |
 | 15  | Invalid `employmentType` | `{..., "employmentType": "FREELANCER"}`                                                                                | `400` — same message as test 14, verified live |
+| 16  | Nonexistent `shiftId`    | `{..., "shiftId": "00000000-0000-0000-0000-000000000000"}`                                                             | `400`, not `500` — verified live. **Added by the Shift domain (2026-09-15).** |
+| 17  | Inactive `shiftId`       | `{..., "shiftId": "<id of an INACTIVE shift>"}`                                                                        | `400` — verified live. **Added by the Shift domain (2026-09-15).** |
+| 18  | Valid `shiftId`, omitted entirely | Same as test 2 (no `shiftId`)                                                                                 | `201`, `employee.shiftId: null` — verified live. **Added by the Shift domain (2026-09-15).** |
 
 ## 11. Negative Testing
 
@@ -2498,6 +2542,7 @@ Enforced by `src/modules/employees/employee.validation.js`'s
 | `userId` referencing a `User` that doesn't exist                                                  | `400`, `"userId: references a record that does not exist"` — **found and fixed while writing this doc**: this originally leaked a raw `500` with the Prisma error text, since nothing caught the `P2003` foreign-key-violation code. Now translated in `employee.service.js`.                                                                                                                                                                                                                                                                                                                                                        |
 | `managerId` referencing a non-existent `Employee`                                                 | Same fix, same message shape with `managerId` instead                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Creating an employee, then re-creating one for the same `userId` after the first was soft-deleted | `201` — succeeds. **This required a real fix during Feature 9's own development**: the database's unique constraint on `Employee.userId` was originally a plain (non-partial) unique index, which blocked reuse forever — contradicting the soft-delete design, and caught by testing this exact scenario, not by code review. Fixed with a hand-written partial unique index (`WHERE "deletedAt" IS NULL`), since Prisma's schema DSL has no syntax for partial unique constraints. Verified live: soft-deleting frees the `userId` for a brand-new record, while a genuinely-still-active duplicate still correctly returns `409`. |
+| `shiftId` omitted entirely                                                                        | Stored as `null` — "no fixed-hours expectation," never an error, same positive-allowlist framing as `branchId`'s own omission (ADR-SH02). **Added by the Shift domain (2026-09-15).** Verified live. |
 
 ## 13. Security Testing
 
@@ -2521,7 +2566,8 @@ Enforced by `src/modules/employees/employee.validation.js`'s
 ## 14. Database Impact
 
 - **Tables affected**: `Employee` (insert), `AuditLog` (insert, as of
-  Feature 11).
+  Feature 11), plus a read of `Shift` when `shiftId` is provided (the
+  assignability check — **added by the Shift domain, 2026-09-15**).
 - **Rows inserted**: exactly 1 `Employee` row and exactly 1 `AuditLog`
   row (`action: 'CREATE'`), on success.
 - **Transactions**: **as of Feature 11**, the `Employee` insert and the
@@ -2551,6 +2597,7 @@ employee.controller.create (asyncHandler-wrapped)
     ↓
 employee.service.createEmployee(data, { id: req.user.id, ipAddress: req.ip })
     ├─ userId provided? → employeeRepository.findByUserId → exists? → 409
+    ├─ shiftId provided? → shiftService.assertShiftAssignable(shiftId) → 400 if missing/inactive
     └─ prisma.$transaction:
          ├─ employeeRepository.create(data, tx)
          └─ auditLogRepository.create({ action: 'CREATE', ... }, tx)
@@ -2610,19 +2657,31 @@ curl -i -X POST http://localhost:3000/api/v1/employees \
   -d '{"departmentId":"'"$DEPARTMENT_ID"'","designationId":"'"$DESIGNATION_ID"'","employmentType":"FULL_TIME","salary":75000,"dateOfJoining":"2024-01-15"}'
 ```
 
+```bash
+# With an optional shiftId (added by the Shift domain, 2026-09-15)
+curl -i -X POST http://localhost:3000/api/v1/employees \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"departmentId":"'"$DEPARTMENT_ID"'","designationId":"'"$DESIGNATION_ID"'","employmentType":"FULL_TIME","salary":75000,"dateOfJoining":"2024-01-15","shiftId":"'"$SHIFT_ID"'"}'
+```
+
 ## 19. Postman Collection Notes
 
 Requires `{{accessToken}}` to resolve to `employee:create` (`ADMIN`/
 `MANAGER`). Save the returned `employee.id` to a collection variable
-(e.g. `{{employeeId}}`) — every other Employee endpoint needs it.
+(e.g. `{{employeeId}}`) — every other Employee endpoint needs it. Save
+`{{shiftId}}` from `POST /shifts` (endpoint 43) beforehand if exercising
+the assignment cases.
 
 ## 20. Testing Checklist
 
 - ✅ Success with and without `userId`
 - ✅ `409` on duplicate (still-active) `userId`
 - ✅ `201` re-creating for a `userId` whose prior Employee record was soft-deleted
-- ✅ `400` (not `500`) on nonexistent `userId`/`managerId`/`branchId`/`departmentId`/`designationId`
-- ✅ `400` on inactive `departmentId`/`branchId`/`designationId`, missing fields, negative salary, future date
+- ✅ `400` (not `500`) on nonexistent `userId`/`managerId`/`branchId`/`departmentId`/`designationId`/`shiftId`
+- ✅ `400` on inactive `departmentId`/`branchId`/`designationId`/`shiftId`, missing fields, negative salary, future date
+- ✅ Valid create with an `ACTIVE` `shiftId` → `201`, field echoed back (verified live). **Added by the Shift domain (2026-09-15).**
+- ✅ `shiftId` omitted → stored/returned as `null`
 - ✅ `400` on missing or invalid `employmentType` (e.g. `"FREELANCER"`) — identical message for both, verified live
 - ✅ `403` as `EMPLOYEE`, `401` with no token
 - ✅ `salary` returned as a string, not a number
@@ -2684,12 +2743,15 @@ None.
 | `designationId` | string | _(none)_   | No       | Valid UUID                                                       | **Changed by the Designation domain (2026-09-13) — was a case-insensitive exact-match `jobTitle: string` filter.** Now an exact UUID FK match, the identical transformation `department` → `departmentId` already went through. Invalid UUID format → `400`. |
 | `employmentType` | string | _(none)_  | No       | `FULL_TIME`, `PART_TIME`, `CONTRACT`, `INTERN`                    | **Added by the Employment Type domain (2026-09-13).** Exact-match filter on the plain scalar column — unlike `departmentId`/`designationId` there is no FK/relation involved at all, since `employmentType` isn't a foreign key. Any value outside the 4-item whitelist → `400` (Zod enum rejection), same enum-validation shape as `POST`/`PATCH`'s body field. |
 | `managerId`  | string | _(none)_    | No       | Valid UUID                                                       | Exact match. Invalid UUID format → `400`.                                                                                                                                    |
-| `sortBy`     | string | `createdAt` | No       | `department`, `designation`, `employmentType`, `salary`, `dateOfJoining`, `createdAt` | Whitelisted — any other value → `400`, never passed through to Prisma's `orderBy` directly. `department` sorts by the linked Department's `name`, and `designation` sorts by the linked Designation's `name`, each via a nested one-hop `orderBy` (a relation sort, not a column sort). **`employmentType` (added by the Employment Type domain, 2026-09-13) is a plain scalar sort** — `orderBy: { employmentType: order }` directly, no nested relation object, since it isn't a foreign key — the same shape as `salary`/`dateOfJoining`/`createdAt`, not the relation-sort shape `department`/`designation` use. The query-string values stayed `department`/`designation` for API stability even though the underlying fields are now `departmentId`/`designationId`. |
+| `shiftId`    | string | _(none)_    | No       | Valid UUID                                                       | **Added by the Shift domain (2026-09-15).** Exact UUID FK match, the identical filter shape as `departmentId`/`designationId`. Invalid UUID format → `400`.                  |
+| `sortBy`     | string | `createdAt` | No       | `department`, `designation`, `employmentType`, `salary`, `dateOfJoining`, `createdAt`, `shift` | Whitelisted — any other value → `400`, never passed through to Prisma's `orderBy` directly. `department` sorts by the linked Department's `name`, and `designation` sorts by the linked Designation's `name`, each via a nested one-hop `orderBy` (a relation sort, not a column sort). **`employmentType` (added by the Employment Type domain, 2026-09-13) is a plain scalar sort** — `orderBy: { employmentType: order }` directly, no nested relation object, since it isn't a foreign key — the same shape as `salary`/`dateOfJoining`/`createdAt`, not the relation-sort shape `department`/`designation` use. **`shift` (added by the Shift domain, 2026-09-15) sorts by the linked Shift's `name`** — the same one-hop nested relation-sort shape as `department`/`designation`, not the plain-scalar shape `employmentType` uses. The query-string values stayed `department`/`designation`/`shift` for API stability even though the underlying fields are `departmentId`/`designationId`/`shiftId`. |
 | `order`      | string | `desc`      | No       | `asc`, `desc`                                                    | Any other value → `400`.                                                                                                                                                     |
 
-All filters (`departmentId`, `designationId`, `employmentType`, `managerId`)
-combine with **AND**; `search` contributes one **OR** block across its four
-fields, itself ANDed with whatever filters are also present.
+All filters (`departmentId`, `designationId`, `employmentType`, `managerId`,
+`shiftId`) combine with **AND**; `search` contributes one **OR** block
+across its four fields, itself ANDed with whatever filters are also
+present. `shiftId` is **not** one of the fields `search` matches against
+— it's an exact-match filter only, same as `managerId`.
 
 ## 6. Request Body
 
@@ -2720,6 +2782,7 @@ schema before the service ever sees it; nothing reaches Prisma unvalidated.
       "dateOfJoining": "2024-03-01T00:00:00.000Z",
       "managerId": null,
       "branchId": null,
+      "shiftId": null,
       "deletedAt": null,
       "createdAt": "2026-07-05T05:58:39.416Z",
       "updatedAt": "2026-07-05T05:58:39.416Z"
@@ -2746,7 +2809,7 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 | Status | Reason                                | Response (`message`)                                  | When                                      |
 | ------ | ------------------------------------- | ----------------------------------------------------- | ----------------------------------------- |
 | `400`  | `page`/`limit` out of bounds          | Zod's bounds-violation message                        | `page < 1`, `limit < 1`, or `limit > 100` |
-| `400`  | Invalid `managerId`/`departmentId`/`designationId` | Zod's UUID-format message                | Malformed UUID supplied                   |
+| `400`  | Invalid `managerId`/`departmentId`/`designationId`/`shiftId` | Zod's UUID-format message                | Malformed UUID supplied                   |
 | `400`  | Invalid `employmentType` filter value | Zod's enum message listing the 4 allowed values — same shape as `POST`/`PATCH`'s body-field error | **Added by the Employment Type domain (2026-09-13).** Any value outside `FULL_TIME`/`PART_TIME`/`CONTRACT`/`INTERN` |
 | `400`  | Invalid `sortBy`                      | Zod's enum message listing the allowed values         | Any value outside the whitelist           |
 | `400`  | Invalid `order`                       | Zod's enum message                                    | Any value other than `asc`/`desc`         |
@@ -2774,6 +2837,9 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 | 15  | Exact filter by `employmentType`      | `?employmentType=INTERN`               | `200`, only rows with that exact `employmentType`             |
 | 16  | Sort by `employmentType`, ascending vs. descending | `?sortBy=employmentType&order=asc` / `...desc` | `200`, a plain scalar sort — orders reversed between the two calls |
 | 17  | Invalid `employmentType` filter value | `?employmentType=FREELANCER`           | `400`                                                        |
+| 18  | Exact filter by `shiftId`             | `?shiftId=<a real Shift id>`           | `200`, only rows with that exact `shiftId`. **Added by the Shift domain (2026-09-15).** |
+| 19  | Sort by `shift` (relation), ascending vs. descending | `?sortBy=shift&order=asc` / `...desc` | `200`, a nested relation sort by the linked Shift's `name` — orders reversed between the two calls. **Added by the Shift domain (2026-09-15).** |
+| 20  | Invalid `shiftId` filter value        | `?shiftId=not-a-uuid`                  | `400`. **Added by the Shift domain (2026-09-15).** |
 
 ## 11. Negative Testing
 
@@ -2797,7 +2863,8 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 | Multiple rows sharing the identical `sortBy` value (e.g. same `salary`) | The unconditional `id ASC` secondary sort breaks the tie deterministically — repeating the exact same request always returns the same order, verified live |
 | All employees soft-deleted                                              | `200`, `{ "employees": [], "pagination": { "total": 0, ... } }` — soft-deleted rows are invisible to this endpoint, by design                              |
 | An `Employee` with `userId: null` and an active `search` term           | Only ever matches via its linked Department's `name` or its linked Designation's `name` — the `user.name`/`user.email` branches simply never match a null relation, no error |
-| An `Employee` matched via `sortBy=department`/`sortBy=designation` when two employees share the same Department/Designation | Same deterministic `id ASC` tiebreaker applies — nested relation sorts get the same tie-break guarantee as column sorts, verified live |
+| An `Employee` matched via `sortBy=department`/`sortBy=designation`/`sortBy=shift` when two employees share the same Department/Designation/Shift | Same deterministic `id ASC` tiebreaker applies — nested relation sorts get the same tie-break guarantee as column sorts, verified live. `sortBy=shift` **added by the Shift domain (2026-09-15).** |
+| `shiftId` filter combined with an `Employee` whose `shiftId` is `null` | Never matches a `?shiftId=<uuid>` filter — a `null` FK column can't equal any concrete UUID, same reasoning as `managerId`'s equivalent case. **Added by the Shift domain (2026-09-15).** |
 | `sortBy=employmentType`, where only 4 distinct values exist across potentially many rows | Every row ties with several others on the primary sort key — the unconditional `id ASC` secondary sort does most of the actual ordering work here, more visibly than for higher-cardinality columns like `salary`, but the behavior itself is identical, not a special case |
 
 ## 13. Security Testing
@@ -2826,9 +2893,14 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
   the linked Department's `name`, and whenever `sortBy=department`),
   `Designation` (read, via relation join — whenever `search` is present,
   since it matches against the linked Designation's `name`, and whenever
-  `sortBy=designation`). `employmentType` (added by the Employment Type
+  `sortBy=designation`), `Shift` (read, via relation join — only whenever
+  `sortBy=shift`; unlike Department/Designation, `search` never matches
+  against the linked Shift's `name` — **added by the Shift domain,
+  2026-09-15**). `employmentType` (added by the Employment Type
   domain, 2026-09-13) never triggers an extra join — it's a plain column
-  on `Employee` itself, not a relation.
+  on `Employee` itself, not a relation. `shiftId` (added by the Shift
+  domain, 2026-09-15), like `departmentId`/`designationId`/`managerId`,
+  is an exact FK-column filter and never triggers a join by itself.
 - **Rows affected**: none inserted/updated/deleted.
 - **Queries per request**: two, run concurrently via `Promise.all` — one
   `findMany` (the page of results) and one `count` (the total across all
@@ -2838,7 +2910,7 @@ this one. `pagination.totalPages` is `Math.ceil(total / limit)`.
 ## 15. Request Lifecycle
 
 ```
-GET /api/v1/employees?search=...&departmentId=...&designationId=...&employmentType=...&sortBy=...&order=...&page=...&limit=...
+GET /api/v1/employees?search=...&departmentId=...&designationId=...&employmentType=...&shiftId=...&sortBy=...&order=...&page=...&limit=...
     ↓
 authMiddleware
     ↓
@@ -2847,7 +2919,7 @@ requirePermission('employee:read:any')
 validateMiddleware(listEmployeesQuerySchema, 'query')
     ↓ (400 on Zod failure; result lands on req.validatedQuery, not req.query)
 employee.controller.list → employee.service.listEmployees(req.validatedQuery)
-    ├─ buildEmployeeWhere({ search, departmentId, designationId, employmentType, managerId })
+    ├─ buildEmployeeWhere({ search, departmentId, designationId, employmentType, managerId, shiftId })
     └─ Promise.all([
          employeeRepository.findAll({ where, orderBy: [{[sortBy]: order}, {id: 'asc'}], skip, take }),
          employeeRepository.count(where),
@@ -2871,17 +2943,18 @@ employee.controller.list → employee.service.listEmployees(req.validatedQuery)
   — a sequential scan on all four tables at this data size; a future
   `pg_trgm` trigram index is the documented upgrade path if this table
   grows large enough for it to matter (not needed today).
-- `departmentId` and `designationId` are both **exact, indexed** matches
-  (`@@index([departmentId])`, `@@index([designationId])`, added by the
-  Department and Designation domains respectively) — no unindexed exact-
-  match filter remains on Employee after the Designation migration.
-  `Employee.userId` and `Employee.managerId` already have indexes from
-  Feature 9.
-- `sortBy=department`/`sortBy=designation` are each a nested one-hop
-  relation sort (`orderBy: { department: { name: order } }` /
-  `orderBy: { designation: { name: order } }`) rather than a direct
-  column sort — one extra join, not a separate query; no measurable
-  difference at current scale.
+- `departmentId`, `designationId`, and (**added by the Shift domain,
+  2026-09-15**) `shiftId` are all **exact, indexed** matches
+  (`@@index([departmentId])`, `@@index([designationId])`,
+  `@@index([shiftId])`) — no unindexed exact-match filter remains on
+  Employee after the Shift migration. `Employee.userId` and
+  `Employee.managerId` already have indexes from Feature 9.
+- `sortBy=department`/`sortBy=designation`/`sortBy=shift` are each a
+  nested one-hop relation sort (`orderBy: { department: { name: order } }`,
+  `orderBy: { designation: { name: order } }`, `orderBy: { shift: { name:
+  order } }`) rather than a direct column sort — one extra join, not a
+  separate query; no measurable difference at current scale. `sortBy=shift`
+  **added by the Shift domain (2026-09-15)**.
 - **`employmentType` (added by the Employment Type domain, 2026-09-13) is
   a plain scalar filter/sort** — `where.employmentType = employmentType` /
   `orderBy: { employmentType: order }` directly on `Employee`, no join at
@@ -2952,6 +3025,10 @@ curl -i "http://localhost:3000/api/v1/employees?designationId=$DESIGNATION_ID&so
 # Exact filter by employmentType, and a plain scalar sort by employmentType
 curl -i "http://localhost:3000/api/v1/employees?employmentType=INTERN&sortBy=employmentType&order=asc" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Exact filter by shiftId, and a relation sort by shift name (added by the Shift domain, 2026-09-15)
+curl -i "http://localhost:3000/api/v1/employees?shiftId=$SHIFT_ID&sortBy=shift&order=asc" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 ## 19. Postman Collection Notes
@@ -2966,13 +3043,13 @@ saved request.
 
 - ✅ `200` as `ADMIN`/`MANAGER`, `403` as `EMPLOYEE`, `401` with no token
 - ✅ Pagination: default page/limit, explicit page/limit, out-of-range page
-- ✅ `400` on `page < 1`, `limit < 1`, `limit > 100`, invalid `sortBy`/`order`/`managerId`/`departmentId`/`designationId`/`employmentType`
+- ✅ `400` on `page < 1`, `limit < 1`, `limit > 100`, invalid `sortBy`/`order`/`managerId`/`departmentId`/`designationId`/`employmentType`/`shiftId`
 - ✅ Empty `search=` behaves identically to no `search`
-- ✅ `search` matches the linked Department's name, the linked Designation's name, and the linked `User`'s name/email
-- ✅ `departmentId` exact filter; `designationId` exact filter; `employmentType` exact filter (plain scalar, no relation)
+- ✅ `search` matches the linked Department's name, the linked Designation's name, and the linked `User`'s name/email (never the linked Shift's name)
+- ✅ `departmentId` exact filter; `designationId` exact filter; `employmentType` exact filter (plain scalar, no relation); `shiftId` exact filter (indexed FK match). **`shiftId` added by the Shift domain (2026-09-15).**
 - ✅ Sort order actually reverses between `asc`/`desc`, including
-  `sortBy=department`'s and `sortBy=designation`'s relation sorts and
-  `sortBy=employmentType`'s plain scalar sort;
+  `sortBy=department`'s, `sortBy=designation`'s, and `sortBy=shift`'s
+  relation sorts and `sortBy=employmentType`'s plain scalar sort;
   repeated identical calls return identical ordering (stability)
 - ✅ Empty array (not an error) when no rows match or all are soft-deleted
 - ✅ No sensitive data leaked beyond intended fields
@@ -3057,6 +3134,7 @@ same `404`. This is the two-layer authorization design in action:
     "dateOfJoining": "2024-01-15T00:00:00.000Z",
     "managerId": null,
     "branchId": null,
+    "shiftId": null,
     "deletedAt": null,
     "createdAt": "2026-07-05T04:52:52.814Z",
     "updatedAt": "2026-07-05T04:52:52.814Z"
@@ -3253,11 +3331,12 @@ the fields you want to change.
 }
 ```
 
-**`userId`/`managerId`/`branchId` additionally accept explicit `null`**
-(widened beyond `createEmployeeSchema`'s own `.optional()`-only rule for
-these three fields) — this is the only way to *clear* an existing link.
-Omitting the key entirely means "leave it as-is"; sending `null` means
-"unset it":
+**`userId`/`managerId`/`branchId`/`shiftId` additionally accept explicit
+`null`** (widened beyond `createEmployeeSchema`'s own `.optional()`-only
+rule for these four fields — `shiftId` **added by the Shift domain,
+2026-09-15**, the identical widening `branchId` already went through) —
+this is the only way to *clear* an existing link. Omitting the key
+entirely means "leave it as-is"; sending `null` means "unset it":
 
 ```json
 { "userId": null }
@@ -3265,7 +3344,7 @@ Omitting the key entirely means "leave it as-is"; sending `null` means
 
 **`departmentId`, `designationId`, and (as of the Employment Type domain,
 2026-09-13) `employmentType` are the exceptions — none of the three
-accepts `null`.** Unlike `userId`/`managerId`/`branchId`, Department and
+accepts `null`.** Unlike `userId`/`managerId`/`branchId`/`shiftId`, Department and
 Designation are both mandatory (docs/domain-department.md ADR-D07,
 docs/domain-designation.md ADR-DS07), and Employment Type is mandatory for
 a different reason — it's not an FK at all, it's a closed enum with no
@@ -3302,6 +3381,12 @@ the service:
   `ACTIVE`) — added by the Branch domain (2026-09-13), verified live.
   Setting `branchId: null` (clearing it) skips this check entirely, since
   there's nothing to validate.
+- **`shiftId`, when being set to a non-null value, is re-validated
+  against the same assignability check as creation** (must exist and be
+  `ACTIVE`, via `shiftService.assertShiftAssignable`) — added by the
+  Shift domain (2026-09-15), the identical shape as `branchId`'s own
+  re-validation, verified live. Setting `shiftId: null` (clearing it)
+  skips this check entirely, since there's nothing to validate.
 - **`designationId`, when present, is re-validated against the same
   assignability check as creation** (must exist and be `ACTIVE`) — added
   by the Designation domain (2026-09-13), same shape as `departmentId`'s
@@ -3335,6 +3420,7 @@ the service:
     "dateOfJoining": "2024-01-15T00:00:00.000Z",
     "managerId": null,
     "branchId": null,
+    "shiftId": null,
     "deletedAt": null,
     "createdAt": "2026-07-05T04:52:52.814Z",
     "updatedAt": "2026-07-05T05:10:00.000Z"
@@ -3354,6 +3440,7 @@ Only `updatedAt` changes automatically among the timestamp fields.
 | `400`  | `employmentType: null`                   | `"employmentType: Invalid option: expected one of "FULL_TIME"\|"PART_TIME"\|"CONTRACT"\|"INTERN""` | **Added by the Employment Type domain (2026-09-13).** employmentType is mandatory — same reasoning as `departmentId`/`designationId`, cannot be cleared; identical message to a missing/invalid value, since Zod's enum validation doesn't distinguish any of the three cases. Verified live. |
 | `400`  | New `departmentId` doesn't exist or is inactive | Same messages as `POST /employees`               | Re-validated on every change, not just at creation                     |
 | `400`  | New `designationId` doesn't exist or is inactive | Same messages as `POST /employees`              | Re-validated on every change, not just at creation                     |
+| `400`  | New `shiftId` doesn't exist or is inactive | Same messages as `POST /employees`              | **Added by the Shift domain (2026-09-15).** Re-validated on every non-null change, not just at creation — same shape as `branchId`'s equivalent |
 | `400`  | New `employmentType` not one of the 4 allowed values | Same message as `POST /employees`           | **Added by the Employment Type domain (2026-09-13).** Re-validated on every change, not just at creation — but purely a Zod enum check, no service-layer existence/status check (it isn't an FK) |
 | `400`  | Invalid field value(s)                   | Same per-field messages as `POST /employees`          | e.g. negative salary, future date, malformed UUID                      |
 | `401`  | No/invalid/expired access token          | Same as every other protected endpoint                | `authMiddleware` failure                                               |
@@ -3376,6 +3463,9 @@ Only `updatedAt` changes automatically among the timestamp fields.
 | 10  | Conversion, `INTERN` → `FULL_TIME` | `{"employmentType":"FULL_TIME"}` (on a record currently `INTERN`) | `200`, `employee.employmentType: "FULL_TIME"` |
 | 11  | `employmentType: null`             | `{"employmentType":null}`                       | `400` — mandatory, cannot be cleared, verified live |
 | 12  | Invalid `employmentType`           | `{"employmentType":"FREELANCER"}`               | `400` — same message as test 11         |
+| 13  | Assign a valid, `ACTIVE` `shiftId` | `{"shiftId":"<a real, active Shift id>"}`       | `200` — verified live. **Added by the Shift domain (2026-09-15).** |
+| 14  | Nonexistent/inactive `shiftId`     | `{"shiftId":"<bad or inactive id>"}`            | `400` — verified live. **Added by the Shift domain (2026-09-15).** |
+| 15  | Unassign via `{"shiftId": null}`   | `{"shiftId":null}`                              | `200`, `employee.shiftId` becomes `null` — verified live. **Added by the Shift domain (2026-09-15).** |
 
 ## 11. Negative Testing
 
@@ -3392,6 +3482,8 @@ behave identically, applied to whichever fields are sent.
 | Setting `managerId` to a _different_, valid Employee's `id` | `200` — no cycle-detection beyond the direct self-reference check (a longer manager cycle, e.g. A→B→A, is **not** currently detected — a known, undemonstrated gap)         |
 | Sending `{"userId": null}` (or `managerId`) to clear an existing link | `200` — the column is set to `NULL`. Verified live: linked a real `Employee` to a `User`, sent `{"userId": null}`, confirmed the response and a fresh `GET` both show `userId: null`. Omitting the key instead of sending `null` leaves the previous value untouched — the two are not equivalent. |
 | Converting `employmentType` (e.g. `INTERN` → `FULL_TIME`) | `200` — treated as an ordinary scalar field change, no special-cased "conversion" endpoint or business rule. **Added by the Employment Type domain (2026-09-13)**: verified live, including that the resulting `AuditLog` `UPDATE` row's `beforeData`/`afterData` both correctly reflect the old/new `employmentType` value. |
+| Sending `{"shiftId": null}` to clear an existing assignment | `200` — the column is set to `NULL`, identical mechanics to `branchId`'s own clear-via-null case (§6/§12 above). **Added by the Shift domain (2026-09-15)**: verified live. Omitting the key instead leaves the previous value untouched. |
+| Deactivating a `Shift` that is still assigned to an Employee via `PATCH /shifts/:id` | This Employee's `shiftId` link is **untouched** — verified live; deactivation only blocks *future* assignment of that shift to any employee, mirroring Branch's/Holiday Calendar's own deactivation semantics. **Added by the Shift domain (2026-09-15).** |
 
 ## 13. Security Testing
 
@@ -3420,6 +3512,10 @@ behave identically, applied to whichever fields are sent.
   every other Employee field change (`AUDIT_ENTITY_TYPES.EMPLOYEE`,
   `action: 'UPDATE'`, full before/after `Employee` state) — verified live.
   No Employee-field audit gap exists for `employmentType`.
+- **`shiftId` assignment adds a read of `Shift`** when set to a non-null
+  value (the assignability check — added by the Shift domain,
+  2026-09-15), the identical pattern as `branchId`'s equivalent check. No
+  extra read when clearing via `shiftId: null`.
 
 ## 15. Request Lifecycle
 
@@ -3470,6 +3566,18 @@ curl -i -X PATCH http://localhost:3000/api/v1/employees/$EMPLOYEE_ID \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d '{"employmentType":"FULL_TIME"}'
+
+# Assign a shift (added by the Shift domain, 2026-09-15)
+curl -i -X PATCH http://localhost:3000/api/v1/employees/$EMPLOYEE_ID \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"shiftId":"'"$SHIFT_ID"'"}'
+
+# Unassign it again via explicit null (added by the Shift domain, 2026-09-15)
+curl -i -X PATCH http://localhost:3000/api/v1/employees/$EMPLOYEE_ID \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{"shiftId":null}'
 ```
 
 ## 19. Postman Collection Notes
@@ -3491,6 +3599,8 @@ endpoints.
 - ✅ `403` as `EMPLOYEE`, `401` with no token
 - ✅ Only `updatedAt` changes among timestamps
 - ✅ `employmentType` change produces a normal `AuditLog` `UPDATE` row (full before/after state) — verified live
+- ✅ New `shiftId` re-validated for existence + `ACTIVE` status (verified live). **Added by the Shift domain (2026-09-15).**
+- ✅ `shiftId: null` clears an existing assignment (verified live); deactivating an assigned `Shift` leaves the Employee link untouched
 - ✅ No sensitive data leaked
 
 ---
@@ -9289,3 +9399,942 @@ sequence — save the returned `holiday.id` as `{{holidayId}}` beforehand.
 - ✅ `403` as `EMPLOYEE`/`MANAGER`, `401` with no token
 - ✅ `AuditLog` row created for the deletion, `entityType: 'Holiday'`
 - ✅ No reference-count check performed — deletion always unconditional
+
+---
+
+---
+
+# 43. `POST /shifts`
+
+## 1. Endpoint Information
+
+```
+Feature:            Shift Domain (2026-09-15, feature/20-shift-domain)
+Endpoint:           Create Shift
+Description:        Creates a new named recurring working-pattern (start/end time + working days)
+Method:             POST
+URL:                /api/v1/shifts
+API Version:        v1
+Module:             modules/shifts
+Authentication:     Yes (Bearer access token)
+Authorization:      `shift:create` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: closes the gap `docs/domain-shift.md` names — the
+  future Attendance domain cannot determine "was this person late," "did
+  they work overtime," or "was their absence on a working day" without a
+  baseline expectation of when an employee is supposed to work. Without
+  Shift, that expectation would need to be hard-coded or duplicated
+  inside Attendance itself.
+- **Business problem solved**: lets an organization define recurring
+  working patterns ("Day Shift 9-6", "Night Shift 10pm-7am") as real,
+  referenceable data, distinct from Holiday Calendar's dated, occasional
+  exceptions.
+- **Expected callers**: `ADMIN` only — the same tighter-than-`employee:*`
+  scoping already applied to Branch/Department/Designation/Holiday
+  Calendar (ADR-SH05, resolved identically to ADR-B07/D08/DS06/HC06).
+
+## 3. Request Headers
+
+| Header                                 | Required | Notes                                             |
+| --------------------------------------- | -------- | ---------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `shift:create` permission     |
+| `Content-Type: application/json`      | **Yes**  |                                                     |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "name": "Day Shift 9-6",
+  "startTime": "09:00",
+  "endTime": "18:00",
+  "workingDays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"]
+}
+```
+
+| Field         | Type            | Required | Description                                             |
+| ------------- | --------------- | -------- | -------------------------------------------------------- |
+| `name`        | string          | **Yes**  | Trimmed, non-empty, **unique case-insensitively** across all shifts (`"Day Shift 9-6"` and `"day shift 9-6"` conflict) |
+| `startTime`   | string          | **Yes**  | 24-hour `"HH:mm"` format, validated by `/^([01]\d\|2[0-3]):[0-5]\d$/`, e.g. `"09:00"` |
+| `endTime`     | string          | **Yes**  | Same `"HH:mm"` format as `startTime`, e.g. `"18:00"`. **May be earlier than `startTime`** — see §7/§12, an overnight shift is valid, not an error |
+| `workingDays` | array of string | **Yes**  | A non-empty subset of the seven `Weekday` enum values: `MONDAY`, `TUESDAY`, `WEDNESDAY`, `THURSDAY`, `FRIDAY`, `SATURDAY`, `SUNDAY` |
+
+## 7. Validation Rules
+
+- `name`: required, `.trim().min(1)` — a whitespace-only value fails with
+  `"Shift name is required"`.
+- `startTime`/`endTime`: required, each matched against
+  `/^([01]\d|2[0-3]):[0-5]\d$/` (24-hour `"HH:mm"` only) — any other shape
+  (`"9:00"`, `"25:00"`, `"09:60"`, a full ISO datetime) fails with
+  `'Must be a 24-hour "HH:mm" time, e.g. "09:00"'`.
+- `workingDays`: required array, `.min(1)` — an empty array fails with
+  `"workingDays must be a non-empty subset of the seven weekdays"`. Each
+  entry must be one of the seven `Weekday` enum values; any other string
+  fails Zod's enum check.
+- `status` is **not** accepted at creation — every new shift starts
+  `ACTIVE`; status can only be changed afterward via `PATCH /shifts/:id`.
+- **`endTime < startTime` is deliberately accepted, not rejected** — this
+  is the documented overnight-shift interpretation (`docs/domain-shift.md`
+  §4, ADR-SH03): a shift crossing midnight (e.g. `"22:00"`-`"07:00"`)
+  belongs to the calendar day it starts on. There is no validation-layer
+  rejection of this case; it's a business-rule interpretation applied by
+  `shiftService.isOvernightShift`, not a Zod refinement.
+- **Case-insensitive uniqueness on `name`** — the same convention already
+  used by Department/Designation/Holiday Calendar. Verified live: creating
+  `"day shift 9-6"` after `"Day Shift 9-6"` already exists returns `409`,
+  not `201`.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "shift": {
+    "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+    "name": "Day Shift 9-6",
+    "startTime": "09:00",
+    "endTime": "18:00",
+    "workingDays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    "status": "ACTIVE",
+    "createdAt": "2026-09-15T09:12:04.221Z",
+    "updatedAt": "2026-09-15T09:12:04.221Z"
+  }
+}
+```
+
+Verified live against the real dev server.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                                                                 |
+| ------ | ------------------------------------ | ------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `400`  | Validation failed                   | e.g. `"name: Shift name is required"`, `'startTime: Must be a 24-hour "HH:mm" time, e.g. "09:00"'`, `"workingDays: workingDays must be a non-empty subset of the seven weekdays"` | Empty/whitespace-only `name`, malformed `startTime`/`endTime`, empty/invalid `workingDays` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                | `authMiddleware` failure                                              |
+| `403`  | Caller lacks `shift:create`         | `"You do not have permission to perform this action"` | `EMPLOYEE` token — verified live                                       |
+| `409`  | Duplicate `name` (case-insensitive) | `"A shift with this name already exists"`             | Verified live: `"day shift 9-6"` after `"Day Shift 9-6"` exists → `409` |
+
+## 10. Postman Test Cases
+
+| #   | Case                              | Expected |
+| --- | ---------------------------------- | -------- |
+| 1   | Valid create, day shift            | `201`    |
+| 2   | Valid create, overnight shift (`startTime` > `endTime`) | `201` — verified live |
+| 3   | Duplicate `name`, different case  | `409` — verified live |
+| 4   | Empty/whitespace `name`            | `400`    |
+| 5   | Malformed `startTime`/`endTime` (e.g. `"9:00"`, `"25:00"`) | `400`    |
+| 6   | Empty `workingDays` array          | `400`    |
+| 7   | `workingDays` entry outside the enum (e.g. `"FUNDAY"`) | `400`    |
+| 8   | As `MANAGER`/`EMPLOYEE` token       | `403` — verified live for `EMPLOYEE` |
+| 9   | No token                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Malformed JSON body                | `400` from Express's own JSON body-parser                                  |
+| Tampered/expired JWT               | `401`                                                                       |
+| `name`/`startTime`/`endTime` as a number/array | `400` — Zod's `.string()` rejects non-string types             |
+| `workingDays` as a string instead of an array | `400` — Zod's `.array()` rejects non-array types                |
+| Extremely long `name`              | Not separately bounded by an explicit max-length rule today — a known, undemonstrated gap, same class as `Branch.name`/`Designation.name`/`HolidayCalendar.name` |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Concurrent creates with the same name (any case)                | One succeeds, the other gets `409` via the DB's own unique constraint on the exact-case `name` column (the case-insensitive pre-check can be beaten by a race the same way Branch's/Department's/Designation's can) |
+| `endTime` earlier than `startTime` (e.g. `"22:00"`-`"07:00"`)    | `201` — accepted as an overnight shift, not an error (ADR-SH03). `shiftService.isOvernightShift({ startTime, endTime })` returns `true` for this shift, though that primitive isn't exposed by this endpoint's own response — it's consumed internally/by future Attendance code. |
+| `startTime === endTime`                                          | `201` — accepted; not separately rejected as a zero-length shift, a known, undemonstrated gap |
+| `workingDays` containing a duplicate entry (e.g. `["MONDAY", "MONDAY"]`) | `201` — accepted as-is; no de-duplication is performed |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot create a shift — verified
+  live, same `ADMIN`-only scoping as Branch/Department/Designation/
+  Holiday Calendar.
+- **Mass assignment**: only `name`/`startTime`/`endTime`/`workingDays` are
+  read from the body — an attempted `status: "ACTIVE"` or `id` is
+  silently ignored, not applied.
+
+## 14. Database Impact
+
+- **Tables affected**: `Shift` (insert), `AuditLog` (insert).
+- **Transactions**: the `Shift` insert and the `AuditLog` insert happen
+  inside one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/shifts
+    ↓
+authMiddleware
+    ↓
+requirePermission('shift:create')
+    ↓ (403 if not granted)
+validateMiddleware(createShiftSchema)
+    ↓ (400 if invalid)
+shift.controller.create → shift.service.createShift(data, actor)
+    ├─ shiftRepository.findByName(name) [case-insensitive] → existing → 409
+    └─ prisma.$transaction:
+         ├─ shiftRepository.create(data, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', afterData, ... }, tx)
+    ↓ (catch) Prisma P2002 → 409 (race-condition fallback)
+201 { shift }
+```
+
+## 16. Performance Notes
+
+One case-insensitive `name` lookup plus one insert plus one audit-log
+insert — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why is the overnight-shift interpretation decided now, while most
+  other future-facing concerns in this review are deferred?** Because it's
+  a small, cheap-to-decide-now detail baked into fields already being
+  designed (`startTime`/`endTime`), while getting the day-boundary
+  semantics wrong would corrupt Attendance's future day-attribution logic
+  in a way that's expensive to retroactively fix (`docs/domain-shift.md`
+  §7). Rotation/rostering, by contrast, is a genuinely bigger, separate
+  feature deferred safely (ADR-SH04).
+- **Q: Why are `startTime`/`endTime` plain `"HH:mm"` strings instead of a
+  `DateTime`?** Postgres/Prisma have no first-class time-only type in this
+  stack, and a `DateTime` would force an arbitrary date component onto a
+  value that's semantically time-of-day only. Zero-padded `"HH:mm"`
+  strings sort lexicographically the same as chronologically, which is
+  what `shiftService.isOvernightShift` relies on.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/shifts \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Day Shift 9-6","startTime":"09:00","endTime":"18:00","workingDays":["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY"]}'
+```
+
+```bash
+# An overnight shift - endTime earlier than startTime is valid (ADR-SH03)
+curl -i -X POST http://localhost:3000/api/v1/shifts \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Night Shift 10pm-7am","startTime":"22:00","endTime":"07:00","workingDays":["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY"]}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `shift.id` as `{{shiftId}}` — used by every other Shift
+endpoint and by `POST`/`PATCH /employees`'s `shiftId` field.
+
+## 20. Testing Checklist
+
+- ✅ Valid create (day shift and overnight shift) → `201`
+- ✅ Duplicate `name`, case-insensitive → `409` (verified live)
+- ✅ Empty/whitespace `name`, malformed `startTime`/`endTime`, empty `workingDays` → `400`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 44. `GET /shifts`
+
+## 1. Endpoint Information
+
+```
+Feature:            Shift Domain (2026-09-15, feature/20-shift-domain)
+Endpoint:           List Shift records
+Method:             GET
+URL:                /api/v1/shifts
+API Version:        v1
+Module:             modules/shifts
+Authentication:     Yes (Bearer access token)
+Authorization:      `shift:read` permission (granted to ADMIN, MANAGER, EMPLOYEE)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Browse/search shifts — for admin management screens and for populating a
+shift picker when creating/updating an Employee (optional field there,
+unlike Department's/Designation's mandatory pickers).
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                          |
+| -------------------------------------- | -------- | -------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `shift:read` permission |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name      | Type    | Required | Default     | Description                              |
+| ----------- | ------- | -------- | ------------- | ------------------------------------------- |
+| `page`    | integer | No       | `1`         | 1-indexed page number                     |
+| `limit`   | integer | No       | `10` (max 100) | Page size                                |
+| `search`  | string  | No       | —           | Matches `name` (case-insensitive)          |
+| `status`  | enum    | No       | —           | `ACTIVE` or `INACTIVE`                    |
+| `sortBy`  | enum    | No       | `createdAt` | `name`, `startTime`, `endTime`, `status`, `createdAt` |
+| `order`   | enum    | No       | `desc`      | `asc` or `desc`                           |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same shape as `GET /designations`'s `listDesignationsQuerySchema` (both
+mirror `GET /branches`'s `listBranchesQuerySchema`) — the one difference
+is Shift's `sortBy` allowlist includes `startTime`/`endTime` instead of
+`code`, since Shift has no `code` field.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "shifts": [
+    {
+      "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+      "name": "Day Shift 9-6",
+      "startTime": "09:00",
+      "endTime": "18:00",
+      "workingDays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+      "status": "ACTIVE",
+      "createdAt": "2026-09-15T09:12:04.221Z",
+      "updatedAt": "2026-09-15T09:12:04.221Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                  | When                                       |
+| ------ | ------------------------------------ | ---------------------------------------------------------- | --------------------------------------------- |
+| `400`  | A query parameter failed validation | e.g. `"limit: Too big: expected number to be <=100"`      | Out-of-bounds `limit`, invalid `sortBy`/`status` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                   |
+| `403`  | Caller lacks `shift:read`            | `"You do not have permission to perform this action"`   | Not expected in practice — every seeded role has this grant |
+
+## 10. Postman Test Cases
+
+| #   | Case                          | Expected |
+| --- | -------------------------------- | -------- |
+| 1   | Default pagination              | `200`, up to 10 results |
+| 2   | `search` matches an existing shift | `200`, filtered results |
+| 3   | `status=INACTIVE` filter         | `200`, only inactive shifts |
+| 4   | `sortBy=startTime&order=asc`     | `200`, earliest start time first |
+| 5   | `limit=101`                     | `400`    |
+| 6   | As any authenticated role (ADMIN/MANAGER/EMPLOYEE) | `200` — verified live for both ADMIN and EMPLOYEE |
+| 7   | No token                        | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                   |
+| ----------------------------------- | -------------------------------------------------------------- |
+| `sortBy` value outside the allowlist (e.g. `?sortBy=code`) | `400` — `code` isn't a Shift field, unlike Branch/Department/Designation |
+| `status` value outside the enum    | `400`                                                          |
+| Tampered/expired JWT               | `401`                                                          |
+
+## 12. Edge Cases
+
+| Scenario                             | Expected Behavior                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `page` beyond the last page             | `200` with an empty `shifts` array, not an error                                                     |
+| Two shifts with identical `createdAt` | Deterministic ordering via the unconditional secondary `id ASC` tiebreaker                              |
+
+## 13. Security Testing
+
+`shift:read` is broad, like `branch:read`/`department:read`/
+`designation:read`/`holidayCalendar:read` — no `:own` scope exists or is
+needed, since Shift has no ownership dimension.
+
+## 14. Database Impact
+
+Read-only — `Shift.findMany` + `Shift.count`, run in parallel via
+`Promise.all`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/shifts
+    ↓
+authMiddleware
+    ↓
+requirePermission('shift:read')
+    ↓ (403 if not granted)
+validateMiddleware(listShiftsQuerySchema, 'query')
+    ↓ (400 if invalid)
+shift.controller.list → shift.service.listShifts(query)
+    └─ Promise.all([shiftRepository.findAll(...), shiftRepository.count(...)])
+    ↓
+200 { shifts, pagination }
+```
+
+## 16. Performance Notes
+
+Shift counts are expected to be modest (tens, not thousands) — pagination
+exists for API consistency, not a demonstrated scale problem.
+
+## 17. Interview Notes
+
+- **Q: Why does `search` here only match `name`, unlike Branch's/
+  Department's/Designation's `name`+`code` search?** Shift has no `code`
+  field at all — the same divergence Holiday Calendar already established
+  (no field exists to justify a use case for one, `docs/domain-shift.md`
+  never names one either).
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/shifts?search=day&status=ACTIVE" \
+  -H "Authorization: Bearer $ANY_ROLE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run after `POST /shifts` to confirm the created shift is discoverable via
+`search`.
+
+## 20. Testing Checklist
+
+- ✅ Default pagination, explicit `page`/`limit`
+- ✅ `search` across `name`
+- ✅ `status` filter
+- ✅ Sort both directions with deterministic tiebreaker
+- ✅ `200` for ADMIN and EMPLOYEE tokens alike (verified live)
+- ✅ `400` on out-of-bounds `limit`
+
+---
+
+---
+
+# 45. `GET /shifts/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Shift Domain (2026-09-15, feature/20-shift-domain)
+Endpoint:           Get one Shift record
+Method:             GET
+URL:                /api/v1/shifts/:id
+API Version:        v1
+Module:             modules/shifts
+Authentication:     Yes (Bearer access token)
+Authorization:      `shift:read` permission (granted to every role)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Fetch a single shift's current details, e.g. to populate an edit form or
+resolve an Employee's `shiftId` to a display name/time range.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                          |
+| -------------------------------------- | -------- | -------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `shift:read` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Shift record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check and the record's existence.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "shift": {
+    "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+    "name": "Day Shift 9-6",
+    "startTime": "09:00",
+    "endTime": "18:00",
+    "workingDays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    "status": "ACTIVE",
+    "createdAt": "2026-09-15T09:12:04.221Z",
+    "updatedAt": "2026-09-15T09:12:04.221Z"
+  }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                              |
+| ------ | ------------------------------------ | ---------------------------------------------------------- | ------------------------------------ |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure           |
+| `403`  | Caller lacks `shift:read`            | `"You do not have permission to perform this action"`   | Not expected in practice           |
+| `404`  | No such shift                        | `"Shift not found"`                                      | Invalid/nonexistent `id`           |
+
+## 10. Postman Test Cases
+
+| #   | Case             | Expected |
+| --- | ------------------ | -------- |
+| 1   | Existing `id`      | `200`    |
+| 2   | Nonexistent `id`   | `404`    |
+| 3   | No token           | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                   | Expected |
+| ----------------------------- | -------- |
+| Malformed (non-UUID) `id`     | `404`    |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+None beyond the standard existence check — Shift has no soft-delete
+concept.
+
+## 13. Security Testing
+
+No BOLA concern — no ownership dimension.
+
+## 14. Database Impact
+
+Read-only — single indexed `Shift.findUnique`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/shifts/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('shift:read')
+    ↓ (403 if not granted)
+shift.controller.getById → shift.service.getShiftById(id)
+    └─ shiftRepository.findById(id) → not found → 404
+    ↓
+200 { shift }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup by primary key.
+
+## 17. Interview Notes
+
+Structurally identical to `GET /designations/:id` and `GET /branches/:id`
+— same reasoning applies.
+
+## 18. cURL Examples
+
+```bash
+curl -s http://localhost:3000/api/v1/shifts/$SHIFT_ID \
+  -H "Authorization: Bearer $ANY_ROLE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Uses `{{shiftId}}` saved from `POST /shifts`.
+
+## 20. Testing Checklist
+
+- ✅ Valid `id` → `200`
+- ✅ Nonexistent `id` → `404`
+- ✅ `401` with no token
+
+---
+
+---
+
+# 46. `PATCH /shifts/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Shift Domain (2026-09-15, feature/20-shift-domain)
+Endpoint:           Update a Shift, including activating/deactivating it
+Method:             PATCH
+URL:                /api/v1/shifts/:id
+API Version:        v1
+Module:             modules/shifts
+Authentication:     Yes (Bearer access token)
+Authorization:      `shift:update` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Correct a shift's time boundaries/working days, or retire a shift from
+future assignment without losing history — same shape as Branch's/
+Department's/Designation's equivalent.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                              |
+| -------------------------------------- | -------- | ------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `shift:update` permission     |
+| `Content-Type: application/json`      | **Yes**  |                                                         |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Shift record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{ "status": "INACTIVE" }
+```
+
+| Field         | Type            | Required | Description                                    |
+| ------------- | --------------- | -------- | -------------------------------------------------- |
+| `name`        | string          | No       | Trimmed, non-empty when provided                    |
+| `startTime`   | string          | No       | `"HH:mm"`, same format rule as creation             |
+| `endTime`     | string          | No       | `"HH:mm"`, same format rule as creation             |
+| `workingDays` | array of string | No       | Non-empty subset of the seven weekdays when provided |
+| `status`      | enum            | No       | `ACTIVE` or `INACTIVE`                              |
+
+## 7. Validation Rules
+
+Same trimming/format rules as creation, applied only to whichever fields
+are present; `name` uniqueness re-checked case-insensitively on rename;
+`status` restricted to the `ShiftStatus` enum. Unlike `departmentId`/
+`designationId`/`employmentType` on Employee, every field here is a plain
+`.optional()` (none is nullable) — there is no "clear it" path for
+`startTime`/`endTime`/`workingDays`, since a Shift always needs a
+complete time/working-day definition to remain meaningful.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "shift": {
+    "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+    "name": "Day Shift 9-6",
+    "startTime": "09:00",
+    "endTime": "18:00",
+    "workingDays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    "status": "INACTIVE",
+    "createdAt": "2026-09-15T09:12:04.221Z",
+    "updatedAt": "2026-09-15T09:20:47.930Z"
+  }
+}
+```
+
+Verified live, including the `status` transition shown above.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                                       |
+| ------ | ------------------------------------ | ---------------------------------------------------------- | ---------------------------------------------- |
+| `400`  | Validation failed                   | e.g. `"name: Shift name is required"`, malformed `startTime`/`endTime`, invalid `status` | Empty/whitespace-only `name`, bad time format, invalid `workingDays`/`status` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                    |
+| `403`  | Caller lacks `shift:update`          | `"You do not have permission to perform this action"`   | Verified live for `EMPLOYEE`                |
+| `404`  | No such shift                        | `"Shift not found"`                                      | Invalid/nonexistent `id`                    |
+| `409`  | Duplicate `name`                    | `"A shift with this name already exists"`                | Renaming to a name already used, case-insensitive |
+
+## 10. Postman Test Cases
+
+| #   | Case                              | Expected |
+| --- | ------------------------------------ | -------- |
+| 1   | Update `name` only                   | `200`    |
+| 2   | Update `startTime`/`endTime`/`workingDays` | `200`    |
+| 3   | Deactivate (`status: "INACTIVE"`)    | `200` — verified live |
+| 4   | Reactivate (`status: "ACTIVE"`)      | `200`    |
+| 5   | Rename to another shift's existing `name`, any case | `409` |
+| 6   | Nonexistent `id`                     | `404`    |
+| 7   | As `EMPLOYEE`/`MANAGER` token         | `403`    |
+| 8   | No token                             | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                     | Expected |
+| -------------------------------- | -------- |
+| `status` outside the enum        | `400`    |
+| Malformed `startTime`/`endTime`  | `400`    |
+| Empty `workingDays` array        | `400`    |
+| Empty body `{}`                  | `200`, no-op update              |
+| Tampered/expired JWT             | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                       |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Deactivating a shift with active Employee assignments        | Succeeds; existing `Employee.shiftId` references are **untouched** — verified live. Only *future* assignment attempts are blocked. |
+| Reactivating a shift                                          | Immediately assignable again                                                                                              |
+| Changing `startTime`/`endTime`/`workingDays` on a shift already assigned to employees | Succeeds; per `docs/domain-shift.md` §4, this affects only *future* Attendance calculations, never retroactively re-interprets already-recorded attendance (Attendance doesn't exist yet, so there's nothing to retroactively affect today) |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot update a shift — verified
+  live.
+- **Mass assignment**: only `name`/`startTime`/`endTime`/`workingDays`/
+  `status` are read from the body.
+
+## 14. Database Impact
+
+- **Tables affected**: `Shift` (update), `AuditLog` (insert), inside one `prisma.$transaction`.
+- **Cascade behavior**: none — deactivating never touches `Employee` rows.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/shifts/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('shift:update')
+    ↓ (403 if not granted)
+validateMiddleware(updateShiftSchema)
+    ↓ (400 if invalid)
+shift.controller.update → shift.service.updateShift(id, data, actor)
+    ├─ shiftRepository.findById(id) → not found → 404
+    ├─ (if name changing) shiftRepository.findByName(name) → conflict (different id) → 409
+    └─ prisma.$transaction:
+         ├─ shiftRepository.update(id, data, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', beforeData, afterData, ... }, tx)
+    ↓ (catch) Prisma P2002 → 409 (race-condition fallback)
+200 { shift }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup, optional uniqueness pre-check, one update, one
+audit-log insert.
+
+## 17. Interview Notes
+
+- **Q: Why is there no "clear it" (`null`) path for `startTime`/
+  `endTime`/`workingDays`, unlike `branchId`/`shiftId` on Employee?** A
+  Shift record with no time boundaries or working days wouldn't be a
+  meaningful Shift at all — unlike an Employee's *link* to a Shift (which
+  can legitimately be absent), the Shift's own definition has no
+  "unassigned" state to represent.
+- Structurally identical to `PATCH /designations/:id` — the one real
+  difference is the additional `startTime`/`endTime`/`workingDays` fields
+  and the overnight-shift acceptance rule already covered in `POST
+  /shifts` (endpoint 43).
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/shifts/$SHIFT_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"INACTIVE"}'
+```
+
+## 19. Postman Collection Notes
+
+Run a deactivate/reactivate pair back-to-back, then re-run
+`POST`/`PATCH /employees` with `{{shiftId}}` while inactive to confirm the
+`400` from the assignability check.
+
+## 20. Testing Checklist
+
+- ✅ Field-only update, status-only update, both together
+- ✅ Deactivate → existing Employee links untouched (verified live)
+- ✅ Deactivate → future assignment rejected with `400` (verified live)
+- ✅ `409` on rename collision, case-insensitive
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 47. `DELETE /shifts/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Shift Domain (2026-09-15, feature/20-shift-domain)
+Endpoint:           Hard-delete a Shift
+Description:        Permanently removes a Shift row - only when zero Employee records reference it
+Method:             DELETE
+URL:                /api/v1/shifts/:id
+API Version:        v1
+Module:             modules/shifts
+Authentication:     Yes (Bearer access token)
+Authorization:      `shift:delete` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Covers the genuine data-entry-mistake case (a shift created in error,
+never assigned to any Employee) — the only hard-delete path; a referenced
+shift must be deactivated instead.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                             |
+| -------------------------------------- | -------- | --------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `shift:delete` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Shift record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check, the record's existence, and the
+zero-reference check.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Shift deleted successfully"
+}
+```
+
+Verified live for a shift with zero Employee references.
+
+## 9. Error Responses
+
+| Status | Reason                                      | Response (`message`)                                                                | When                                                                 |
+| ------ | ---------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token           | Same as every other protected endpoint                                                  | `authMiddleware` failure                                                 |
+| `403`  | Caller lacks `shift:delete`                     | `"You do not have permission to perform this action"`                                    | Verified live for `EMPLOYEE`                                             |
+| `404`  | No such shift                                  | `"Shift not found"`                                                                       | Invalid/nonexistent `id`                                                  |
+| `409`  | Shift is referenced by one or more Employees   | `"This shift has Employee records referencing it and cannot be deleted - deactivate it instead"` | Verified live. Unlike Designation's equivalent, `shiftId` is **optional** on Employee, so this `409` is not guaranteed for every live Employee the way Designation's is. |
+
+## 10. Postman Test Cases
+
+| #   | Case                                          | Expected |
+| --- | ------------------------------------------------ | -------- |
+| 1   | Delete a shift with zero Employee references     | `200` — verified live |
+| 2   | Delete a shift with an active Employee reference | `409` — verified live |
+| 3   | Nonexistent `id`                                  | `404`    |
+| 4   | As `EMPLOYEE`/`MANAGER` token                      | `403`    |
+| 5   | No token                                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario              | Expected |
+| ------------------------ | -------- |
+| Malformed (non-UUID) `id` | `404`    |
+| Tampered/expired JWT      | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                                 | Expected Behavior                                                                                                                                                                       |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shift referenced **only** by a soft-deleted Employee (`deletedAt` set)      | Still `409` — the reference count includes soft-deleted Employee rows, same reasoning as Branch's/Department's/Designation's equivalent (`onDelete: Restrict` would refuse the delete at the DB level regardless). |
+| Concurrent delete requests for the same `id`                                 | One succeeds, the other sees `404` — not independently verified under true concurrency (same caveat as Branch's/Designation's equivalent case).                                          |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot delete a shift — verified
+  live.
+- **Idempotency under retry**: a retried `DELETE` gets a safe `404` on
+  the second attempt.
+
+## 14. Database Impact
+
+- **Tables affected**: `Shift` (delete), `AuditLog` (insert), inside
+  one `prisma.$transaction`.
+- **DB-level backstop**: `Employee.shiftId`'s `onDelete: Restrict`
+  refuses the delete at the database level even if this service-layer
+  check were somehow bypassed.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/shifts/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('shift:delete')
+    ↓ (403 if not granted)
+shift.controller.remove → shift.service.deleteShift(id, actor)
+    ├─ shiftRepository.findById(id) → not found → 404
+    ├─ shiftRepository.countEmployeesForShift(id) → count > 0 → 409
+    └─ prisma.$transaction:
+         ├─ shiftRepository.remove(id, tx)
+         └─ auditLogRepository.create({ action: 'DELETE', beforeData, afterData: null, ... }, tx)
+    ↓
+200 { message: "Shift deleted successfully" }
+```
+
+## 16. Performance Notes
+
+One indexed existence lookup, one `Employee` count query, one delete, one
+audit-log insert.
+
+## 17. Interview Notes
+
+- **Q: Since `shiftId` is optional on Employee, is this endpoint more
+  useful in practice than Designation's equivalent?** Yes — because
+  `shiftId` is nullable, an `ADMIN` can genuinely delete a shift that
+  employees might plausibly have once needed but never got assigned to,
+  not just a just-created never-assigned one. The `409` guard still
+  applies identically once any Employee actually references it.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/shifts/$SHIFT_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this **last** for any `{{shiftId}}` with zero Employee references;
+for a referenced shift, expect and assert on the `409`.
+
+## 20. Testing Checklist
+
+- ✅ Delete with zero references → `200` (verified live)
+- ✅ Delete with an active reference → `409` (verified live)
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `404` for nonexistent `id`

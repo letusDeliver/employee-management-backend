@@ -59,6 +59,7 @@ export const EmployeeSchema = z
     dateOfJoining: z.iso.datetime().meta({ example: '2024-01-15T00:00:00.000Z' }),
     managerId: z.uuid().nullable().meta({ example: null }),
     branchId: z.uuid().nullable().meta({ example: null }),
+    shiftId: z.uuid().nullable().meta({ example: null }),
     deletedAt: z.iso.datetime().nullable().meta({ example: null }),
     createdAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
     updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
@@ -120,6 +121,21 @@ export const HolidaySchema = z
     updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
   })
   .meta({ id: 'Holiday' });
+
+export const ShiftSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'a9b8c7d6-e5f4-4a3b-8c1d-0e9f8a7b6c5e' }),
+    name: z.string().meta({ example: 'Day Shift 9-6' }),
+    startTime: z.string().meta({ description: '24-hour "HH:mm"', example: '09:00' }),
+    endTime: z.string().meta({ description: '24-hour "HH:mm"', example: '18:00' }),
+    workingDays: z
+      .array(z.enum(['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY']))
+      .meta({ example: ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'] }),
+    status: z.enum(['ACTIVE', 'INACTIVE']).meta({ example: 'ACTIVE' }),
+    createdAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+  })
+  .meta({ id: 'Shift' });
 
 export const EmployeeDocumentSchema = z
   .object({
