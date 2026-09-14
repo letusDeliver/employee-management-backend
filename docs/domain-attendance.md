@@ -91,7 +91,7 @@ Every domain from Branch through Shift has followed the same lifecycle shape: cr
 | Biometric/geofenced device ingestion | No verified requirement, no existing hardware-integration infrastructure. |
 | Regularization approval workflow | No approval-workflow capability exists anywhere in this system yet; broader than Attendance alone. |
 | Effective-status caching/read-model | Only justified once a real, demonstrated performance problem exists. |
-| "On Leave" effective status | The Leave domain this branch depends on doesn't exist yet (2026-09-15) - the computed-status service resolves PRESENT/LATE/HALF_DAY/ABSENT/HOLIDAY/WEEK_OFF only. Named as a future extension point (§12), not a silent gap - adding it is additive once Leave exposes the query this domain's own §12 requires. |
+| ~~"On Leave" effective status~~ | **Resolved (2026-09-15)** — `docs/domain-leave.md` ADR-LV08 added the `ON_LEAVE` branch to `getEffectiveStatus()`, consuming `leaveService.hasApprovedLeaveOnDate()`. |
 | Overnight-shift lateness computation | Comparing a real check-in timestamp against an overnight shift's `startTime` is ambiguous once the calendar day rolls over (see `docs/domain-shift.md` ADR-SH03's own risk row). Implemented (2026-09-15): lateness is computed only for non-overnight shifts; an overnight-shift employee's presence is still tracked (PRESENT), just without a LATE distinction. |
 
 ## 10. Risks
@@ -133,7 +133,7 @@ Implementation note: enforced at the DB level via `@@unique([employeeId, date])`
 Status: Accepted; Implemented (2026-09-15) — partially, see note
 Summary: Attendance never receives writes from Leave; a coordinating service computes effective status by reading Attendance + Leave + Holiday Calendar + Shift together.
 Consequences: No cross-domain write pattern is introduced anywhere in this architecture. A future caching layer is the additive answer if performance ever demands it.
-Implementation note: `attendanceService.getEffectiveStatus()` implements the Holiday Calendar + Shift + AttendanceRecord legs in full (resolving `PRESENT`/`LATE`/`HALF_DAY`/`ABSENT`/`HOLIDAY`/`WEEK_OFF`). The Leave leg is not implemented — Leave doesn't exist yet — so an "On Leave" date currently resolves as `ABSENT`. This is the named, expected gap (§9), not a deviation from the ADR; Leave's own future design must add this leg without ever writing into Attendance.
+Implementation note: `attendanceService.getEffectiveStatus()` implements all four legs (resolving `PRESENT`/`LATE`/`HALF_DAY`/`ABSENT`/`HOLIDAY`/`WEEK_OFF`/`ON_LEAVE`). **Update (2026-09-15):** the Leave leg, originally deferred as a named gap, is now implemented — `docs/domain-leave.md` ADR-LV08 added `ON_LEAVE` to the resolution order (`HOLIDAY → WEEK_OFF → ON_LEAVE → ABSENT → HALF_DAY → LATE → PRESENT`), reading `leaveService.hasApprovedLeaveOnDate()`. Still a pure read; Attendance's schema and write paths were untouched, exactly as this ADR requires.
 
 **ADR-AT04 — Corrections Tracked via Generic AuditLog**
 Status: Accepted; Implemented (2026-09-15)
@@ -150,10 +150,10 @@ Summary: `attendance:checkin` (self-service, every role), `attendance:read:own`/
 
 ## Final Sign-off
 
-**Implementation readiness:** Implemented (2026-09-15), with the explicit understanding that Leave's design (next in sequence after Payroll's prerequisites, per the dependency graph) must honor ADR-AT03's read-only constraint and add the "On Leave" leg to `getEffectiveStatus()`.
+**Implementation readiness:** Implemented (2026-09-15); **fully implemented as of 2026-09-15** with Leave's ADR-LV08 closing the last named gap (the `ON_LEAVE` leg), honoring ADR-AT03's read-only constraint exactly as required.
 
-**Confidence score: 85%** — up from 82%, reflecting successful implementation of the raw-fact ledger, the coordinating service, and audit-logged corrections. Still not 90%+: the genuine open performance question (§7/§10) is unverified either way, and the not-yet-designed Leave domain that ADR-AT03's Leave leg depends on remains a real, named gap rather than a resolved one.
+**Confidence score: 88%** — up from 85%, reflecting the now-complete `getEffectiveStatus()` (all seven statuses resolved, including `ON_LEAVE`). Not higher: the genuine open performance question (§7/§10) remains unverified either way - the only structural item left unresolved in this domain.
 
-**Remaining blockers:** None structural. Confirm ADR-AT03's Leave leg is added (not routed around) when Leave is designed next; revisit caching only if a real performance problem emerges post-implementation.
+**Remaining blockers:** None. Revisit caching only if a real performance problem emerges post-implementation (§7).
 
 **Recommended next domain:** Leave — the domain whose design must directly honor the read-only reconciliation contract just established here.

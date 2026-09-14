@@ -162,10 +162,24 @@ All routes are mounted under `/api/v1`.
 | `PATCH`  | `/attendance/check-out`                | Access token, `attendance:checkin` permission (every role) | Self-service check-out for the caller's own Employee record (today, server time — no body)                                                                                                                         |
 | `POST`   | `/attendance`                          | Access token, `attendance:create:any` permission (ADMIN/MANAGER) | Administratively create an AttendanceRecord for any Employee                                                                                                                                                  |
 | `GET`    | `/attendance`                          | Access token, `attendance:read:any` permission (ADMIN/MANAGER) | List AttendanceRecords — paginated, filterable (`employeeId`, `dateFrom`/`dateTo`), sortable (no auto-scoped `:own` listing, same shape as `GET /employees`)                                                     |
-| `GET`    | `/attendance/effective-status`         | Access token, `attendance:read:any` or `:own` permission | Compute an Employee's effective daily status (`PRESENT`/`LATE`/`HALF_DAY`/`ABSENT`/`HOLIDAY`/`WEEK_OFF`) for one date — `employeeId` optional, defaults to caller's own                                          |
+| `GET`    | `/attendance/effective-status`         | Access token, `attendance:read:any` or `:own` permission | Compute an Employee's effective daily status (`PRESENT`/`LATE`/`HALF_DAY`/`ABSENT`/`HOLIDAY`/`WEEK_OFF`/`ON_LEAVE`) for one date — `employeeId` optional, defaults to caller's own                                          |
 | `GET`    | `/attendance/:id`                      | Access token, `attendance:read:any` or `:own` permission | Get one AttendanceRecord (own record allowed for `EMPLOYEE`)                                                                                                                                                       |
 | `PATCH`  | `/attendance/:id`                      | Access token, `attendance:update:any` permission (ADMIN/MANAGER) | Correct an AttendanceRecord's `checkIn`/`checkOut`/`isHalfDay`                                                                                                                                                |
 | `DELETE` | `/attendance/:id`                      | Access token, `attendance:delete:any` permission (ADMIN/MANAGER) | Delete an AttendanceRecord — no reference-count restriction, rare and audit-logged                                                                                                                            |
+| `POST`   | `/leave-types`                         | Access token, `leaveType:create` permission (ADMIN only) | Create a Leave Type (e.g. Annual, Sick, Casual)                                                                                                                                                                        |
+| `GET`    | `/leave-types`                         | Access token, `leaveType:read` permission (every role)  | List Leave Type records — paginated, searchable (`name`), filterable (`status`), sortable                                                                                                                             |
+| `GET`    | `/leave-types/:id`                     | Access token, `leaveType:read` permission (every role)  | Get one Leave Type record                                                                                                                                                                                              |
+| `PATCH`  | `/leave-types/:id`                     | Access token, `leaveType:update` permission (ADMIN only) | Update a Leave Type, including activating/deactivating it                                                                                                                                                              |
+| `DELETE` | `/leave-types/:id`                     | Access token, `leaveType:delete` permission (ADMIN only) | Hard-delete a Leave Type — only when zero LeaveRequest/LeaveBalance records reference it                                                                                                                               |
+| `POST`   | `/leave-requests`                      | Access token, `leaveRequest:create:own` permission (every role) | Apply for leave against the caller's own Employee record — rejects an overlapping Pending/Approved request                                                                                                     |
+| `GET`    | `/leave-requests`                      | Access token, `leaveRequest:read:any` or `:own` permission | List Leave Requests — auto-scoped to the caller's own `employeeId` without `:any` (diverges from `GET /attendance`'s any-only shape)                                                                             |
+| `GET`    | `/leave-requests/:id`                  | Access token, `leaveRequest:read:any` or `:own` permission | Get one Leave Request (own record allowed for `EMPLOYEE`)                                                                                                                                                         |
+| `PATCH`  | `/leave-requests/:id/approve`          | Access token, `leaveRequest:decide:any` (ADMIN) or `:decide:reports` (MANAGER, own reports only) | Approve a Pending request — computes holiday/week-off-excluded duration and deducts the balance                                                                             |
+| `PATCH`  | `/leave-requests/:id/reject`           | Access token, `leaveRequest:decide:any` or `:decide:reports` | Reject a Pending request — no balance change                                                                                                                                                                  |
+| `PATCH`  | `/leave-requests/:id/cancel`           | Access token, `leaveRequest:cancel:own` or `:cancel:any` (ADMIN) | Cancel a Pending or future-dated Approved request — restores the balance if it was Approved                                                                                                                   |
+| `GET`    | `/leave-balances`                      | Access token, `leaveBalance:read:any` or `:own` permission | List Leave Balances — same own-vs-any auto-scoping as `GET /leave-requests`; `remaining` is not stored, compute as `entitlement - consumed`                                                                     |
+| `GET`    | `/leave-balances/:id`                  | Access token, `leaveBalance:read:any` or `:own` permission | Get one Leave Balance                                                                                                                                                                                              |
+| `PATCH`  | `/leave-balances/:id`                  | Access token, `leaveBalance:adjust:any` permission (ADMIN only) | Manually adjust `entitlement`/`consumed` — the escape hatch for the strict no-negative-balance default, always audit-logged                                                                                  |
 
 `POST`/`PATCH /employees` also accept an optional `branchId`, validated
 against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
@@ -188,13 +202,35 @@ referenced mold every prior domain followed — `AttendanceRecord` is a
 raw-fact historical ledger (one per `(employeeId, date)`), never
 "deactivated," only ever corrected (tracked via `AuditLog`, not silently
 overwritten). `GET /attendance/effective-status` is the first coordinating
-read that cross-references two other domains (Holiday Calendar + Shift)
-to compute a value that is never persisted — it does not yet resolve an
-`ON_LEAVE` status, since the Leave domain that leg depends on doesn't
-exist yet (a named gap, not an oversight). Permission scoping mirrors
-`Employee`'s own/any split (self-service `attendance:checkin` plus
-`:read:own`/`:read:any`/`:create:any`/`:update:any`/`:delete:any`), not
-the ADMIN-only-mutation shape used by every master-data domain above.
+read that cross-references other domains (Holiday Calendar + Shift, and
+now Leave) to compute a value that is never persisted. Permission scoping
+mirrors `Employee`'s own/any split (self-service `attendance:checkin`
+plus `:read:own`/`:read:any`/`:create:any`/`:update:any`/`:delete:any`),
+not the ADMIN-only-mutation shape used by every master-data domain above.
+
+**New domain (2026-09-15):** Leave (`docs/domain-leave.md`) is this
+review's largest domain — three aggregates (`LeaveType`, `LeaveRequest`,
+`LeaveBalance`) and its first genuine multi-party approval workflow
+(`PENDING → APPROVED | REJECTED`, `APPROVED → CANCELLED` while
+future-dated). `LeaveType` follows the `ADMIN`-only-mutation pattern;
+`LeaveRequest`/`LeaveBalance` mirror `Employee`'s own/any split, the same
+divergence Attendance's own permission model already established.
+Approval authority is `ADMIN` (unconditional) or `MANAGER` (their own
+direct reports only, checked via `Employee.managerId`) — two distinct
+permissions (`leaveRequest:decide:any`/`:decide:reports`), not one shared
+key. Leave-day duration excludes holidays/week-offs (reusing Holiday
+Calendar's `isDateHolidayInCalendar` and Shift's `workingDays`, the same
+primitives Attendance already consumes) and is computed once at approval
+time. `LeaveBalance` entitlement is prorated by hire date in the hire
+year (full entitlement every year after), computed lazily on first need
+rather than via a scheduled grant job — this project has no scheduler
+infrastructure. `PATCH /leave-balances/:id` (ADMIN-only) is the audit-
+logged manual-override escape hatch for the strict no-negative-balance
+default. This domain also closes the gap Attendance's `GET
+/attendance/effective-status` named when it was first built:
+`leaveService.hasApprovedLeaveOnDate()` now feeds an `ON_LEAVE` branch
+into that endpoint's resolution order, a pure read with no write back
+into Attendance.
 
 **Breaking change (2026-09-13):** Employee's free-text `department`
 (`String`) field was removed and replaced by a **mandatory**

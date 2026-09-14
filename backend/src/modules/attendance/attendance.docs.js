@@ -113,7 +113,7 @@ registry.registerPath({
   tags: TAG,
   summary: "Compute an Employee's effective daily attendance status for one date",
   description:
-    "Requires 'attendance:read:any' or 'attendance:read:own'. The coordinating-service read (docs/domain-attendance.md §3/§5): cross-references Shift and Holiday Calendar with the raw AttendanceRecord to produce one of PRESENT/LATE/HALF_DAY/ABSENT/HOLIDAY/WEEK_OFF - never persisted (ADR-AT03). `employeeId` is optional and defaults to the caller's own Employee record; a caller without ':any' may only query their own. Does not resolve an 'On Leave' status - the Leave domain that would require doesn't exist yet.",
+    "Requires 'attendance:read:any' or 'attendance:read:own'. The coordinating-service read (docs/domain-attendance.md §3/§5): cross-references Shift, Holiday Calendar, and Leave with the raw AttendanceRecord to produce one of PRESENT/LATE/HALF_DAY/ABSENT/HOLIDAY/WEEK_OFF/ON_LEAVE - never persisted (ADR-AT03). `employeeId` is optional and defaults to the caller's own Employee record; a caller without ':any' may only query their own.",
   security: [{ [bearerAuth.name]: [] }],
   request: { query: effectiveStatusQuerySchema },
   responses: {

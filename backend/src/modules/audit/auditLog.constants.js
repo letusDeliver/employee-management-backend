@@ -15,4 +15,7 @@ export const AUDIT_ENTITY_TYPES = Object.freeze({
   HOLIDAY: 'Holiday',
   SHIFT: 'Shift',
   ATTENDANCE_RECORD: 'AttendanceRecord',
+  LEAVE_TYPE: 'LeaveType',
+  LEAVE_REQUEST: 'LeaveRequest',
+  LEAVE_BALANCE: 'LeaveBalance',
 });

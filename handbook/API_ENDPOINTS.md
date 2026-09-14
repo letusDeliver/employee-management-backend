@@ -290,6 +290,20 @@ in Postman's cookie jar once register/login/refresh sets it.
 | 53  | Attendance | `GET`    | `/attendance/:id`                      | Access token              | `attendance:read:any` OR `attendance:read:own` | Protected          |
 | 54  | Attendance | `PATCH`  | `/attendance/:id`                      | Access token              | `attendance:update:any`                        | Protected          |
 | 55  | Attendance | `DELETE` | `/attendance/:id`                      | Access token              | `attendance:delete:any`                        | Protected          |
+| 56  | Leave Types | `POST`   | `/leave-types`                        | Access token              | `leaveType:create`                             | Protected          |
+| 57  | Leave Types | `GET`    | `/leave-types`                        | Access token              | `leaveType:read`                               | Protected          |
+| 58  | Leave Types | `GET`    | `/leave-types/:id`                    | Access token              | `leaveType:read`                               | Protected          |
+| 59  | Leave Types | `PATCH`  | `/leave-types/:id`                    | Access token              | `leaveType:update`                             | Protected          |
+| 60  | Leave Types | `DELETE` | `/leave-types/:id`                    | Access token              | `leaveType:delete`                             | Protected          |
+| 61  | Leave Requests | `POST`   | `/leave-requests`                  | Access token              | `leaveRequest:create:own`                      | Protected          |
+| 62  | Leave Requests | `GET`    | `/leave-requests`                  | Access token              | `leaveRequest:read:any` OR `leaveRequest:read:own` | Protected      |
+| 63  | Leave Requests | `GET`    | `/leave-requests/:id`              | Access token              | `leaveRequest:read:any` OR `leaveRequest:read:own` | Protected      |
+| 64  | Leave Requests | `PATCH`  | `/leave-requests/:id/approve`      | Access token              | `leaveRequest:decide:any` OR `leaveRequest:decide:reports` | Protected |
+| 65  | Leave Requests | `PATCH`  | `/leave-requests/:id/reject`       | Access token              | `leaveRequest:decide:any` OR `leaveRequest:decide:reports` | Protected |
+| 66  | Leave Requests | `PATCH`  | `/leave-requests/:id/cancel`       | Access token              | `leaveRequest:cancel:own` OR `leaveRequest:cancel:any` | Protected  |
+| 67  | Leave Balances | `GET`    | `/leave-balances`                  | Access token              | `leaveBalance:read:any` OR `leaveBalance:read:own` | Protected      |
+| 68  | Leave Balances | `GET`    | `/leave-balances/:id`              | Access token              | `leaveBalance:read:any` OR `leaveBalance:read:own` | Protected      |
+| 69  | Leave Balances | `PATCH`  | `/leave-balances/:id`              | Access token              | `leaveBalance:adjust:any`                      | Protected          |
 
 **As of the Branch domain (2026-09-13)**, `Employee` create/update also
 accept an optional `branchId` — see endpoints 9 and 12 above, whose
@@ -439,6 +453,96 @@ audit-logged like every other mutation in this domain (ADR-AT04). `PATCH
 employee or date isn't a correction, it's a different record. No existing
 Employee endpoint's request/response shape changes as part of this
 domain — Attendance is entirely additive.
+
+**As of the Leave domain (2026-09-15)**: the largest domain in this
+review architecturally — three distinct aggregates rather than one
+(`docs/domain-leave.md` ADR-LV01), and the first domain with a genuine
+multi-party **approval workflow** rather than a simple create → update →
+archive lifecycle. `LeaveType` (`id`, `name` — unique, case-insensitive,
+no `code` field, same shape as Holiday Calendar's/Shift's `name` —
+`defaultAnnualEntitlement` as a positive whole-day `Int`, `status`,
+timestamps) is flat master data, structurally identical to Designation:
+`ADMIN`-only `create`/`update`/`delete`, `leaveType:read` granted to
+every role. See endpoints 56-60 below for its full CRUD surface.
+`LeaveRequest` (`id`, `employeeId`, `leaveTypeId`, `startDate`, `endDate`,
+`reason` — nullable, `status` — `PENDING`/`APPROVED`/`REJECTED`/
+`CANCELLED`, `durationDays` — nullable `Decimal`, set only once
+`APPROVED`, timestamps) is the workflow aggregate: every request is
+always created against the **caller's own** Employee record (endpoint
+61, `leaveRequest:create:own`) — unlike Attendance, there is **no**
+administrative on-behalf-of creation anywhere in this domain. A request
+moves `PENDING` → `APPROVED`/`REJECTED` (endpoints 64-65, decided by
+`ADMIN` unconditionally via `leaveRequest:decide:any`, or by a
+`MANAGER` scoped to their own direct reports only via
+`leaveRequest:decide:reports`, checked against `Employee.managerId`),
+and separately `PENDING`/future-dated-`APPROVED` → `CANCELLED` (endpoint
+66). The overlap invariant — no two `PENDING`/`APPROVED` requests for
+the same employee may share a date — is enforced in the service layer,
+not a database constraint (`docs/domain-leave.md` §4, ADR-LV01's own
+schema comment: a true exclusion constraint would need `btree_gist`,
+judged unnecessary complexity for a check this cheap to run in code).
+`GET /leave-requests`/`GET /leave-balances` (endpoints 62/67) **diverge
+from `GET /attendance`'s any-only shape**: a caller without the `:any`
+permission is auto-scoped to their own `employeeId` rather than refused
+list access outright — viewing your own leave history/balance is a core
+self-service need Attendance's equivalent list endpoint never had to
+solve. `LeaveBalance` (`id`, `employeeId`, `leaveTypeId`, `year`,
+`entitlement`/`consumed` as `Decimal`, timestamps, unique on
+`(employeeId, leaveTypeId, year)`) is Leave's own per-employee ledger,
+deliberately **stored, not computed-on-read** like Attendance's
+effective status — a real, justified divergence (ADR-LV03): this is
+intra-domain state, not a cross-domain reconciliation, so recomputing it
+from every historical request on every read would be pure waste.
+`LeaveBalance` rows are created **lazily**, on first need (a request
+approval, or an explicit `PATCH /leave-balances/:id` adjustment) — there
+is no scheduled annual-grant job, since this project has no
+scheduler/cron infrastructure. Its `entitlement` is prorated by hire
+date in the hire year (`leaveService.computeEntitlement`): zero before
+the hire year, the full `defaultAnnualEntitlement` after it, and a
+day-based fraction of it — `defaultAnnualEntitlement × (daysRemainingInHireYear
+/ totalDaysInHireYear)`, rounded to 2 decimals — during the hire year
+itself, producing genuinely fractional day counts (e.g. `9.04`) by
+design. **No employment-type-based adjustment exists** (e.g. no
+automatic reduction for `PART_TIME`/`INTERN`) — deliberately not built,
+since no verified proration formula exists and hard-coding one was
+explicitly warned against (`docs/domain-leave.md` §3). Approving a
+request (endpoint 64) computes a holiday/week-off-excluded duration by
+walking the requested date range once (`leaveService.computeLeaveDuration`,
+ADR-LV04) — excluding dates that are holidays per the employee's
+`Branch`'s `HolidayCalendar` and dates outside the employee's `Shift`'s
+`workingDays` (reusing the identical resolution primitives Attendance's
+`GET /attendance/effective-status` already consumes; an employee with no
+`Branch`/`Shift` assigned simply skips the corresponding exclusion leg) —
+then deducts that computed duration from `LeaveBalance.consumed`,
+rejecting the approval with `409` if it would drive the balance negative
+(`docs/domain-leave.md` §4/§10, ADR-LV05 — **strict no-negative-balance
+by default**; the only escape hatch is `PATCH /leave-balances/:id`,
+`leaveBalance:adjust:any`, `ADMIN`-only, always audit-logged, endpoint
+69). Cancelling a `PENDING` request has no balance effect; cancelling a
+future-dated `APPROVED` request restores the deducted `consumed` amount;
+an `APPROVED` request whose `startDate` has already elapsed cannot be
+cancelled retroactively (`400`) — a deliberate scope limit, the same
+category of problem Attendance's own sign-off already deferred as a
+"regularization workflow" (`docs/domain-attendance.md` §8). Permission
+scoping is the widest of any domain so far — 14 new keys across three
+different shapes (`leaveType:*` mirrors Designation's `ADMIN`-only-
+mutation/read-for-all pattern; `leaveRequest:*`/`leaveBalance:*` mirror
+`Employee`'s own/any split) — see the exact per-role grants in
+`prisma/seed.js`: `ADMIN` holds all 14 keys **except**
+`leaveRequest:decide:reports` (it uses the unconditional `decide:any`
+instead); `MANAGER` holds `leaveType:read`, `leaveRequest:create:own`/
+`read:own`/`read:any`/`cancel:own`/`decide:reports`, and
+`leaveBalance:read:own`/`read:any` — notably **not**
+`leaveRequest:cancel:any` or `leaveBalance:adjust:any`, both `ADMIN`-only
+escape hatches; `EMPLOYEE` holds `leaveType:read`,
+`leaveRequest:create:own`/`read:own`/`cancel:own`, and
+`leaveBalance:read:own`. Finally, this domain closes the `ON_LEAVE` gap
+`GET /attendance/effective-status` (endpoint 52) named as a documented,
+expected limitation: `leaveService.hasApprovedLeaveOnDate` is now
+consumed by that endpoint's resolution order, inserted between
+`WEEK_OFF` and `ABSENT` — see endpoint 52's own section below for the
+brief update, and ADR-LV08. See endpoints 56-69 for the full `/leave-
+types`, `/leave-requests`, `/leave-balances` surface.
 
 **As of Feature 9**, authorization is permission-based, not role-based —
 `ADMIN`/`MANAGER`/`EMPLOYEE` are just role _names_ that happen to be
@@ -11291,22 +11395,27 @@ Public/Protected:   Protected
      holiday on this date.
   2. `WEEK_OFF` — the date's weekday is not in the employee's assigned
      Shift's `workingDays`.
-  3. `ABSENT` — no `AttendanceRecord` exists for this employee/date (or
+  3. `ON_LEAVE` — an `APPROVED` `LeaveRequest` covers this date for this
+     employee.
+  4. `ABSENT` — no `AttendanceRecord` exists for this employee/date (or
      one exists but has no `checkIn`).
-  4. `HALF_DAY` — the record's `isHalfDay` flag is `true`.
-  5. `LATE` — a Shift is assigned, it is **not** an overnight shift, and
+  5. `HALF_DAY` — the record's `isHalfDay` flag is `true`.
+  6. `LATE` — a Shift is assigned, it is **not** an overnight shift, and
      the record's `checkIn` (as `HH:mm`) is later than the shift's
      `startTime`.
-  6. `PRESENT` — the fallback/default once none of the above apply.
-- **Documented gap — no `ON_LEAVE` status**: this endpoint does **not**
-  resolve an "On Leave" status. The Leave domain that would require
-  (an "approved leave for employee X on date Y" query) doesn't exist
-  anywhere in this codebase yet — a leave day currently computes as
-  `ABSENT`. This is a named future extension point
-  (`docs/domain-attendance.md` §9/§12, ADR-AT03's implementation note),
-  not a silent gap: Leave's own future design must add this leg without
-  ever writing into Attendance (§3's "read, don't write across
-  boundaries" discipline).
+  7. `PRESENT` — the fallback/default once none of the above apply.
+- **`ON_LEAVE` — closed as of the Leave domain (2026-09-15)**: this
+  endpoint previously had no way to distinguish a leave day from a plain
+  absence, a documented gap named when this service was first built
+  (`docs/domain-attendance.md` §9/§12, ADR-AT03's implementation note).
+  That gap is now closed: `attendanceService.getEffectiveStatus` calls
+  `leaveService.hasApprovedLeaveOnDate(employeeId, date)` — a pure read
+  of Leave's own `LeaveRequest` data (never a write into Attendance,
+  honoring the same "read, don't write across boundaries" discipline
+  §3 always required) — inserted into the resolution order between
+  `WEEK_OFF` and `ABSENT` (item 3 above). See `docs/domain-leave.md`
+  ADR-LV08 and the Leave domain's own section (endpoints 56-69) for the
+  full detail.
 - **Documented limitation — no `LATE` for overnight shifts**: lateness is
   only computed when the assigned shift is **not** overnight
   (`shiftService.isOvernightShift`, i.e. `endTime >= startTime`). An
@@ -11375,10 +11484,13 @@ None.
 }
 ```
 
-`record` is `null` for `HOLIDAY`, `WEEK_OFF`, and `ABSENT`-with-no-record
-cases — there is no underlying row to return. `status` is always one of
-`PRESENT`/`LATE`/`HALF_DAY`/`ABSENT`/`HOLIDAY`/`WEEK_OFF`. Verified live
-for each of these six cases (see `attendance.service.test.js`).
+`record` is `null` for `HOLIDAY`, `WEEK_OFF`, `ON_LEAVE`, and
+`ABSENT`-with-no-record cases — there is no underlying row to return.
+`status` is always one of
+`PRESENT`/`LATE`/`HALF_DAY`/`ABSENT`/`ON_LEAVE`/`HOLIDAY`/`WEEK_OFF`.
+Verified live for each of the original six cases (see
+`attendance.service.test.js`); `ON_LEAVE` is verified live separately in
+`leave.service.test.js`, the Leave domain's own suite.
 
 ## 9. Error Responses
 
@@ -11427,7 +11539,8 @@ for each of these six cases (see `attendance.service.test.js`).
 | Employee has no `shiftId`                                         | The `WEEK_OFF` and `LATE` legs are both skipped — presence/absence is still tracked, but with no lateness/overtime expectation, consistent with `docs/domain-shift.md`'s "no shift = no fixed-hours expectation" default |
 | Record exists with `isHalfDay: true` **and** a late `checkIn`      | `HALF_DAY` wins — it is checked before `LATE` in the resolution order (§2 above) |
 | Date is both a branch holiday **and** outside the shift's `workingDays` | `HOLIDAY` wins — checked first in the resolution order                                                                                 |
-| Leave domain's "on leave" case (not yet implemented)               | Currently resolves as `ABSENT` — a named, expected gap (`docs/domain-attendance.md` §9), not a bug                                       |
+| Date covered by an `APPROVED` `LeaveRequest`, employee also has no `AttendanceRecord` that day | `ON_LEAVE`, not `ABSENT` — verified live (`leave.service.test.js`); resolved **before** the `ABSENT` check (item 3 above) |
+| Date covered by an `APPROVED` `LeaveRequest` **and** is also a branch holiday or outside `workingDays` | `HOLIDAY`/`WEEK_OFF` still wins — both are checked before `ON_LEAVE` in the resolution order |
 
 ## 13. Security Testing
 
@@ -12157,3 +12270,2302 @@ case to separately assert on here.
 - ✅ `404` for nonexistent `id`
 - ✅ `AuditLog` row created
 - ✅ No `409`/reference-count path exists (confirmed by source inspection — nothing FKs onto `AttendanceRecord`)
+
+---
+
+---
+
+# 56. `POST /leave-types`
+
+## 1. Endpoint Information
+
+```
+Feature:            Leave Domain (2026-09-15, feature/22-leave-domain)
+Endpoint:           Create Leave Type
+Description:        Creates a new leave-type classification (e.g. Annual, Sick, Casual)
+Method:             POST
+URL:                /api/v1/leave-types
+API Version:        v1
+Module:             modules/leaveTypes
+Authentication:     Yes (Bearer access token)
+Authorization:      `leaveType:create` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: `docs/domain-leave.md` §2/§4 establishes `LeaveType`
+  as Leave's own master-data aggregate ("Annual Leave," "Sick Leave,"
+  "Casual Leave") — the same governed-master-data shape Branch/
+  Department/Designation/Holiday Calendar/Shift already established,
+  applied here to the base entitlement (`defaultAnnualEntitlement`)
+  every `LeaveBalance` is eventually prorated from.
+- **Business problem solved**: gives HR one governed place to define
+  which leave types exist and how many days each grants per year, rather
+  than a free-text or hard-coded list.
+- **Expected callers**: `ADMIN` only — the same `ADMIN`-only-mutation
+  scoping as Designation/Holiday Calendar/Shift (ADR-LV07), deliberately
+  tighter than `leaveRequest:*`/`leaveBalance:*`'s own/any split.
+
+## 3. Request Headers
+
+| Header                                 | Required | Notes                                             |
+| --------------------------------------- | -------- | ---------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `leaveType:create` permission     |
+| `Content-Type: application/json`      | **Yes**  |                                                     |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "name": "Annual Leave",
+  "defaultAnnualEntitlement": 18
+}
+```
+
+| Field                      | Type    | Required | Description                                                    |
+| --------------------------- | ------- | -------- | ------------------------------------------------------------------ |
+| `name`                     | string  | **Yes**  | Trimmed, non-empty, **unique case-insensitively** across all leave types |
+| `defaultAnnualEntitlement` | integer | **Yes**  | Positive whole number of days, max `365` (a sanity ceiling, not a real business rule — mirrors `Employee.salary`'s `MAX_SALARY` treatment) |
+
+## 7. Validation Rules
+
+- `name`: required, `.trim().min(1)` — a whitespace-only value fails with
+  `"name: Leave type name is required"`.
+- `defaultAnnualEntitlement`: required, integer, positive —
+  `"defaultAnnualEntitlement: defaultAnnualEntitlement must be a positive
+  whole number of days"` — and capped at `365` —
+  `"defaultAnnualEntitlement: defaultAnnualEntitlement seems unreasonably
+  high"`.
+- `status` is **not** accepted at creation — every new leave type starts
+  `ACTIVE`; status can only be changed afterward via
+  `PATCH /leave-types/:id`.
+- **Case-insensitive uniqueness on `name`**, same rule and reasoning as
+  Designation/Holiday Calendar: `"annual leave"` conflicts with an
+  existing `"Annual Leave"`.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "leaveType": {
+    "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "name": "Annual Leave",
+    "defaultAnnualEntitlement": 18,
+    "status": "ACTIVE",
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:00:00.000Z"
+  }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                                                                 |
+| ------ | ------------------------------------ | ------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `400`  | Validation failed                   | e.g. `"name: Leave type name is required"`, `"defaultAnnualEntitlement: defaultAnnualEntitlement must be a positive whole number of days"` | Empty/whitespace `name`, non-positive/non-integer/>365 `defaultAnnualEntitlement` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                | `authMiddleware` failure                                              |
+| `403`  | Caller lacks `leaveType:create`     | `"You do not have permission to perform this action"` | `MANAGER`/`EMPLOYEE` token                                             |
+| `409`  | Duplicate `name` (case-insensitive) | `"A leave type with this name already exists"`         | Verified live (`leaveType.service.test.js`): `"annual leave"` after `"Annual Leave"` exists → `409` |
+
+## 10. Postman Test Cases
+
+| #   | Case                              | Expected |
+| --- | ---------------------------------- | -------- |
+| 1   | Valid create                       | `201`    |
+| 2   | Duplicate `name`, different case  | `409` — verified live |
+| 3   | Empty/whitespace `name`            | `400`    |
+| 4   | `defaultAnnualEntitlement` = 0 or negative | `400` |
+| 5   | `defaultAnnualEntitlement` = 366   | `400`    |
+| 6   | As `MANAGER`/`EMPLOYEE` token       | `403`    |
+| 7   | No token                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Malformed JSON body                | `400` from Express's own JSON body-parser                                  |
+| Tampered/expired JWT               | `401`                                                                       |
+| `defaultAnnualEntitlement` as a non-integer (e.g. `18.5`) | `400` — Zod's `.int()` rejects it |
+| `name` as a number/array           | `400` — Zod's `.string()` rejects non-string types                          |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Concurrent creates with the same name (any case)                | One succeeds, the other gets `409` via the DB's own unique constraint on the exact-case `name` column, same race-safety shape as Designation/Branch |
+| `defaultAnnualEntitlement` = 365 (the max)                        | `201` — the ceiling is inclusive                                                                                                                      |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot create a leave type —
+  verified live, same `ADMIN`-only scoping as Designation.
+- **Mass assignment**: only `name`/`defaultAnnualEntitlement` are read
+  from the body.
+
+## 14. Database Impact
+
+- **Tables affected**: `LeaveType` (insert), `AuditLog` (insert).
+- **Transactions**: the `LeaveType` insert and the `AuditLog` insert
+  happen inside one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/leave-types
+    ↓
+authMiddleware
+    ↓
+requirePermission('leaveType:create')
+    ↓ (403 if not granted)
+validateMiddleware(createLeaveTypeSchema)
+    ↓ (400 if invalid)
+leaveType.controller.create → leaveType.service.createLeaveType(data, actor)
+    ├─ leaveTypeRepository.findByName(name) [case-insensitive] → existing → 409
+    └─ prisma.$transaction:
+         ├─ leaveTypeRepository.create(data, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', afterData, ... }, tx)
+    ↓ (catch) Prisma P2002 → 409
+201 { leaveType }
+```
+
+## 16. Performance Notes
+
+One case-insensitive lookup plus one insert plus one audit-log insert —
+no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why does `LeaveType` have no `code` field, unlike Designation?**
+  `docs/domain-leave.md` ADR-LV01's implementation note makes this
+  explicit: the same reasoning already applied to `HolidayCalendar` — the
+  domain's own sign-off never named a `code` as useful for leave types,
+  so it wasn't added speculatively.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/leave-types \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Annual Leave","defaultAnnualEntitlement":18}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `leaveType.id` as `{{leaveTypeId}}` — used by every
+other Leave Type endpoint and by `POST /leave-requests`'s `leaveTypeId`
+field.
+
+## 20. Testing Checklist
+
+- ✅ Valid create → `201`
+- ✅ Duplicate `name`, case-insensitive → `409` (verified live)
+- ✅ Empty/whitespace `name` → `400`
+- ✅ Out-of-range `defaultAnnualEntitlement` → `400`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 57. `GET /leave-types`
+
+## 1. Endpoint Information
+
+```
+Feature:            Leave Domain (2026-09-15, feature/22-leave-domain)
+Endpoint:           List Leave Type records
+Method:             GET
+URL:                /api/v1/leave-types
+API Version:        v1
+Module:             modules/leaveTypes
+Authentication:     Yes (Bearer access token)
+Authorization:      `leaveType:read` permission (granted to ADMIN, MANAGER, EMPLOYEE)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Browse/search leave types — for admin management screens and for
+populating a leave-type picker when an employee applies for leave
+(`POST /leave-requests`'s `leaveTypeId` field).
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                          |
+| -------------------------------------- | -------- | -------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `leaveType:read` permission |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name      | Type    | Required | Default     | Description                              |
+| ----------- | ------- | -------- | ------------- | ------------------------------------------- |
+| `page`    | integer | No       | `1`         | 1-indexed page number                     |
+| `limit`   | integer | No       | `10` (max 100) | Page size                                |
+| `search`  | string  | No       | —           | Matches `name` (case-insensitive)          |
+| `status`  | enum    | No       | —           | `ACTIVE` or `INACTIVE`                    |
+| `sortBy`  | enum    | No       | `createdAt` | `name`, `defaultAnnualEntitlement`, `status`, `createdAt` |
+| `order`   | enum    | No       | `desc`      | `asc` or `desc`                           |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same page/limit/search/status/sortBy/order shape as `GET /designations`'s
+`listDesignationsQuerySchema` (`listLeaveTypesQuerySchema`), minus a
+`code` field (Leave Type has none) and with `defaultAnnualEntitlement`
+added as a sortable field.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "leaveTypes": [
+    {
+      "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+      "name": "Annual Leave",
+      "defaultAnnualEntitlement": 18,
+      "status": "ACTIVE",
+      "createdAt": "2026-09-15T10:00:00.000Z",
+      "updatedAt": "2026-09-15T10:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                  | When                                       |
+| ------ | ------------------------------------ | ---------------------------------------------------------- | --------------------------------------------- |
+| `400`  | A query parameter failed validation | e.g. `"limit: Too big: expected number to be <=100"`      | Out-of-bounds `limit`, invalid `sortBy`/`status` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                   |
+| `403`  | Caller lacks `leaveType:read`       | `"You do not have permission to perform this action"`   | Not expected in practice — every seeded role has this grant |
+
+## 10. Postman Test Cases
+
+| #   | Case                          | Expected |
+| --- | -------------------------------- | -------- |
+| 1   | Default pagination              | `200`, up to 10 results |
+| 2   | `search` matches an existing leave type | `200`, filtered results |
+| 3   | `status=INACTIVE` filter         | `200`, only inactive leave types |
+| 4   | `sortBy=defaultAnnualEntitlement&order=asc` | `200`, ascending by entitlement |
+| 5   | `limit=101`                     | `400`    |
+| 6   | As any authenticated role (ADMIN/MANAGER/EMPLOYEE) | `200` — verified live |
+| 7   | No token                        | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                   |
+| ----------------------------------- | -------------------------------------------------------------- |
+| `sortBy` value outside the allowlist | `400`                                                          |
+| `status` value outside the enum    | `400`                                                          |
+| Tampered/expired JWT               | `401`                                                          |
+
+## 12. Edge Cases
+
+| Scenario                             | Expected Behavior                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `page` beyond the last page             | `200` with an empty `leaveTypes` array, not an error                                                     |
+| Two leave types with identical `createdAt` | Deterministic ordering via the unconditional secondary `id ASC` tiebreaker                              |
+
+## 13. Security Testing
+
+`leaveType:read` is broad, like `designation:read`/`shift:read` — no
+`:own` scope exists or is needed, since LeaveType has no ownership
+dimension.
+
+## 14. Database Impact
+
+Read-only — `LeaveType.findMany` + `LeaveType.count`, run in parallel via
+`Promise.all`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/leave-types
+    ↓
+authMiddleware
+    ↓
+requirePermission('leaveType:read')
+    ↓ (403 if not granted)
+validateMiddleware(listLeaveTypesQuerySchema, 'query')
+    ↓ (400 if invalid)
+leaveType.controller.list → leaveType.service.listLeaveTypes(query)
+    └─ Promise.all([leaveTypeRepository.findAll(...), leaveTypeRepository.count(...)])
+    ↓
+200 { leaveTypes, pagination }
+```
+
+## 16. Performance Notes
+
+Leave type counts are expected to be modest (a handful) — pagination
+exists for API consistency, not a demonstrated scale problem.
+
+## 17. Interview Notes
+
+Structurally identical to `GET /designations` (endpoint 30) and
+`GET /shifts` (endpoint 44) — same reasoning applies, minus the
+`code`-field search dimension.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/leave-types?search=Annual&status=ACTIVE" \
+  -H "Authorization: Bearer $ANY_ROLE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run after `POST /leave-types` to confirm the created leave type is
+discoverable via `search`.
+
+## 20. Testing Checklist
+
+- ✅ Default pagination, explicit `page`/`limit`
+- ✅ `search` on `name`
+- ✅ `status` filter
+- ✅ Sort both directions with deterministic tiebreaker
+- ✅ `200` for every role (verified live)
+- ✅ `400` on out-of-bounds `limit`
+
+---
+
+---
+
+# 58. `GET /leave-types/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Leave Domain (2026-09-15, feature/22-leave-domain)
+Endpoint:           Get one Leave Type record
+Method:             GET
+URL:                /api/v1/leave-types/:id
+API Version:        v1
+Module:             modules/leaveTypes
+Authentication:     Yes (Bearer access token)
+Authorization:      `leaveType:read` permission (granted to every role)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Fetch a single leave type's current details, e.g. to populate an edit
+form or resolve a `LeaveRequest`/`LeaveBalance`'s `leaveTypeId` to a
+display name.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                          |
+| -------------------------------------- | -------- | -------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `leaveType:read` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Leave Type record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check and the record's existence.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "leaveType": {
+    "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "name": "Annual Leave",
+    "defaultAnnualEntitlement": 18,
+    "status": "ACTIVE",
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:00:00.000Z"
+  }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                              |
+| ------ | ------------------------------------ | ---------------------------------------------------------- | ------------------------------------ |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure           |
+| `403`  | Caller lacks `leaveType:read`       | `"You do not have permission to perform this action"`   | Not expected in practice           |
+| `404`  | No such leave type                  | `"Leave type not found"`                                  | Invalid/nonexistent `id`           |
+
+## 10. Postman Test Cases
+
+| #   | Case             | Expected |
+| --- | ------------------ | -------- |
+| 1   | Existing `id`      | `200`    |
+| 2   | Nonexistent `id`   | `404`    |
+| 3   | No token           | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                   | Expected |
+| ----------------------------- | -------- |
+| Malformed (non-UUID) `id`     | `404`    |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+None beyond the standard existence check — Leave Type has no soft-delete
+concept.
+
+## 13. Security Testing
+
+No BOLA concern — no ownership dimension.
+
+## 14. Database Impact
+
+Read-only — single indexed `LeaveType.findUnique`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/leave-types/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('leaveType:read')
+    ↓ (403 if not granted)
+leaveType.controller.getById → leaveType.service.getLeaveTypeById(id)
+    └─ leaveTypeRepository.findById(id) → not found → 404
+    ↓
+200 { leaveType }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup by primary key.
+
+## 17. Interview Notes
+
+Structurally identical to `GET /designations/:id` (endpoint 31).
+
+## 18. cURL Examples
+
+```bash
+curl -s http://localhost:3000/api/v1/leave-types/$LEAVE_TYPE_ID \
+  -H "Authorization: Bearer $ANY_ROLE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Uses `{{leaveTypeId}}` saved from `POST /leave-types`.
+
+## 20. Testing Checklist
+
+- ✅ Valid `id` → `200`
+- ✅ Nonexistent `id` → `404`
+- ✅ `401` with no token
+
+---
+
+---
+
+# 59. `PATCH /leave-types/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Leave Domain (2026-09-15, feature/22-leave-domain)
+Endpoint:           Update a Leave Type, including activating/deactivating it
+Method:             PATCH
+URL:                /api/v1/leave-types/:id
+API Version:        v1
+Module:             modules/leaveTypes
+Authentication:     Yes (Bearer access token)
+Authorization:      `leaveType:update` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Correct a leave type's name/entitlement, or retire it from future
+assignment without losing history — same shape as Designation's/Shift's
+equivalent. Deactivating a leave type blocks future `LeaveRequest`
+creation against it (`leaveTypeService.assertLeaveTypeAssignable`) but
+never touches existing requests/balances.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                              |
+| -------------------------------------- | -------- | ------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `leaveType:update` permission     |
+| `Content-Type: application/json`      | **Yes**  |                                                         |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Leave Type record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{ "status": "INACTIVE" }
+```
+
+| Field                      | Type    | Required | Description                          |
+| --------------------------- | ------- | -------- | ----------------------------------------- |
+| `name`                     | string  | No       | Trimmed, non-empty when provided            |
+| `defaultAnnualEntitlement` | integer | No       | Positive whole number of days, max `365`    |
+| `status`                   | enum    | No       | `ACTIVE` or `INACTIVE`                      |
+
+## 7. Validation Rules
+
+Same trimming/non-empty/positive-integer/365-max rules as creation;
+`name` uniqueness re-checked case-insensitively on rename; `status`
+restricted to the `LeaveTypeStatus` enum.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "leaveType": {
+    "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "name": "Annual Leave",
+    "defaultAnnualEntitlement": 18,
+    "status": "INACTIVE",
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:05:00.000Z"
+  }
+}
+```
+
+Verified live, including the `status` transition shown above.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                                       |
+| ------ | ------------------------------------ | ---------------------------------------------------------- | ---------------------------------------------- |
+| `400`  | Validation failed                   | e.g. `"name: Leave type name is required"`, `"defaultAnnualEntitlement: defaultAnnualEntitlement seems unreasonably high"` | Empty/whitespace `name`, invalid `status`, out-of-range `defaultAnnualEntitlement` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                    |
+| `403`  | Caller lacks `leaveType:update`     | `"You do not have permission to perform this action"`   | Verified live for `EMPLOYEE`                |
+| `404`  | No such leave type                  | `"Leave type not found"`                                  | Invalid/nonexistent `id`                    |
+| `409`  | Duplicate `name`                    | `"A leave type with this name already exists"`            | Renaming to a name already used, case-insensitive |
+
+## 10. Postman Test Cases
+
+| #   | Case                              | Expected |
+| --- | ------------------------------------ | -------- |
+| 1   | Update `name` only                   | `200`    |
+| 2   | Update `defaultAnnualEntitlement` only | `200`    |
+| 3   | Deactivate (`status: "INACTIVE"`)    | `200` — verified live |
+| 4   | Reactivate (`status: "ACTIVE"`)      | `200`    |
+| 5   | Rename to another leave type's existing `name`, any case | `409` |
+| 6   | Nonexistent `id`                     | `404`    |
+| 7   | As `EMPLOYEE`/`MANAGER` token         | `403`    |
+| 8   | No token                             | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                     | Expected |
+| -------------------------------- | -------- |
+| `status` outside the enum        | `400`    |
+| Empty body `{}`                  | `200`, no-op update              |
+| Tampered/expired JWT             | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                       |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Deactivating a leave type with existing `LeaveRequest`/`LeaveBalance` references | Succeeds; existing references are **untouched**. Only *future* `POST /leave-requests` attempts against this type are blocked (`400`, `"leaveTypeId: this leave type is not active and cannot be assigned"`) — verified live (`leaveType.service.test.js`). |
+| Reactivating a leave type                                          | Immediately assignable again                                                                                              |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot update a leave type —
+  verified live.
+- **Mass assignment**: only `name`/`defaultAnnualEntitlement`/`status`
+  are read from the body.
+
+## 14. Database Impact
+
+- **Tables affected**: `LeaveType` (update), `AuditLog` (insert), inside
+  one `prisma.$transaction`.
+- **Cascade behavior**: none — deactivating never touches `LeaveRequest`/
+  `LeaveBalance` rows.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/leave-types/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('leaveType:update')
+    ↓ (403 if not granted)
+validateMiddleware(updateLeaveTypeSchema)
+    ↓ (400 if invalid)
+leaveType.controller.update → leaveType.service.updateLeaveType(id, data, actor)
+    ├─ leaveTypeRepository.findById(id) → not found → 404
+    ├─ (if name changing) leaveTypeRepository.findByName(name) → conflict → 409
+    └─ prisma.$transaction:
+         ├─ leaveTypeRepository.update(id, data, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', beforeData, afterData, ... }, tx)
+    ↓ (catch) Prisma P2002 → 409
+200 { leaveType }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup, optional uniqueness pre-check, one update, one
+audit-log insert.
+
+## 17. Interview Notes
+
+Structurally identical to `PATCH /designations/:id` (endpoint 32) — the
+one real difference is the extra `defaultAnnualEntitlement` field, which
+carries the same positive-integer/365-max rule as creation.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/leave-types/$LEAVE_TYPE_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"INACTIVE"}'
+```
+
+## 19. Postman Collection Notes
+
+Run a deactivate/reactivate pair back-to-back, then re-run
+`POST /leave-requests` with `{{leaveTypeId}}` while inactive to confirm
+the `400` from the assignability check.
+
+## 20. Testing Checklist
+
+- ✅ Field-only update, status-only update, both together
+- ✅ Deactivate → existing references untouched (verified live)
+- ✅ Deactivate → future assignment rejected with `400` (verified live)
+- ✅ `409` on rename collision, case-insensitive
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 60. `DELETE /leave-types/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Leave Domain (2026-09-15, feature/22-leave-domain)
+Endpoint:           Hard-delete a Leave Type
+Description:        Permanently removes a LeaveType row - only when zero LeaveRequest and zero LeaveBalance records reference it
+Method:             DELETE
+URL:                /api/v1/leave-types/:id
+API Version:        v1
+Module:             modules/leaveTypes
+Authentication:     Yes (Bearer access token)
+Authorization:      `leaveType:delete` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Covers the genuine data-entry-mistake case (a leave type created in
+error, never used by any request or balance) — the only hard-delete
+path; a referenced leave type must be deactivated instead. Diverges
+slightly from every prior master-data domain's delete guard: the
+reference count here spans **two** aggregates (`LeaveRequest` and
+`LeaveBalance`), not one.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                             |
+| -------------------------------------- | -------- | --------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `leaveType:delete` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Leave Type record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check, the record's existence, and the
+zero-reference check across both `LeaveRequest` and `LeaveBalance`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Leave type deleted successfully"
+}
+```
+
+Verified live for a leave type with zero references.
+
+## 9. Error Responses
+
+| Status | Reason                                      | Response (`message`)                                                                | When                                                                 |
+| ------ | ---------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token           | Same as every other protected endpoint                                                  | `authMiddleware` failure                                                 |
+| `403`  | Caller lacks `leaveType:delete`                 | `"You do not have permission to perform this action"`                                    | Verified live for `EMPLOYEE`                                             |
+| `404`  | No such leave type                             | `"Leave type not found"`                                                                 | Invalid/nonexistent `id`                                                  |
+| `409`  | Referenced by one or more `LeaveRequest` or `LeaveBalance` rows | `"This leave type has LeaveRequest or LeaveBalance records referencing it and cannot be deleted - deactivate it instead"` | Verified live — either referencing aggregate alone is enough to block deletion |
+
+## 10. Postman Test Cases
+
+| #   | Case                                          | Expected |
+| --- | ------------------------------------------------ | -------- |
+| 1   | Delete a leave type with zero references          | `200` — verified live |
+| 2   | Delete a leave type with a `LeaveRequest` reference | `409` — verified live |
+| 3   | Delete a leave type with only a `LeaveBalance` reference (no requests) | `409` |
+| 4   | Nonexistent `id`                                  | `404`    |
+| 5   | As `EMPLOYEE`/`MANAGER` token                      | `403`    |
+| 6   | No token                                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario              | Expected |
+| ------------------------ | -------- |
+| Malformed (non-UUID) `id` | `404`    |
+| Tampered/expired JWT      | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                                 | Expected Behavior                                                                                                                                                                       |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Leave type referenced only by a `CANCELLED`/`REJECTED` `LeaveRequest`        | Still `409` — the reference count is unconditional on status, same "any reference blocks the hard delete" reasoning as every prior master-data domain.                                    |
+| Concurrent delete requests for the same `id`                                 | One succeeds, the other sees `404` — not independently verified under true concurrency.                                                                                                  |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot delete a leave type —
+  verified live.
+- **Idempotency under retry**: a retried `DELETE` gets a safe `404` on
+  the second attempt.
+
+## 14. Database Impact
+
+- **Tables affected**: `LeaveType` (delete), `AuditLog` (insert), inside
+  one `prisma.$transaction`.
+- **DB-level backstop**: `LeaveRequest.leaveTypeId`/`LeaveBalance.leaveTypeId`'s
+  `onDelete: Restrict` refuses the delete at the database level even if
+  this service-layer check were somehow bypassed.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/leave-types/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('leaveType:delete')
+    ↓ (403 if not granted)
+leaveType.controller.remove → leaveType.service.deleteLeaveType(id, actor)
+    ├─ leaveTypeRepository.findById(id) → not found → 404
+    ├─ leaveTypeRepository.countReferencesForLeaveType(id)
+    │    = count(LeaveRequest where leaveTypeId) + count(LeaveBalance where leaveTypeId)
+    │    → count > 0 → 409
+    └─ prisma.$transaction:
+         ├─ leaveTypeRepository.remove(id, tx)
+         └─ auditLogRepository.create({ action: 'DELETE', beforeData, afterData: null, ... }, tx)
+    ↓
+200 { message: "Leave type deleted successfully" }
+```
+
+## 16. Performance Notes
+
+One indexed existence lookup, two count queries (run via `Promise.all`),
+one delete, one audit-log insert.
+
+## 17. Interview Notes
+
+- **Q: Why does the reference check span two tables instead of one, unlike
+  every prior master-data domain's delete guard?** `LeaveType` is
+  referenced by two distinct aggregates with different lifecycles
+  (`LeaveRequest`, transactional; `LeaveBalance`, a per-year ledger) —
+  `leaveTypeRepository.countReferencesForLeaveType` sums both counts so
+  a leave type can never be hard-deleted while either still points at
+  it, consistent with `docs/domain-leave.md`'s "never hard-deleted while
+  referenced" invariant applied across both aggregates it owns.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/leave-types/$LEAVE_TYPE_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this **last** for any `{{leaveTypeId}}` with zero references; for a
+referenced leave type, expect and assert on the `409`.
+
+## 20. Testing Checklist
+
+- ✅ Delete with zero references → `200` (verified live)
+- ✅ Delete with a `LeaveRequest` reference → `409` (verified live)
+- ✅ Delete with only a `LeaveBalance` reference → `409`
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `404` for nonexistent `id`
+
+---
+
+---
+
+# 61. `POST /leave-requests`
+
+## 1. Endpoint Information
+
+```
+Feature:            Leave Domain (2026-09-15, feature/22-leave-domain)
+Endpoint:           Apply for Leave
+Description:        Creates a PENDING LeaveRequest against the caller's own Employee record
+Method:             POST
+URL:                /api/v1/leave-requests
+API Version:        v1
+Module:             modules/leave
+Authentication:     Yes (Bearer access token)
+Authorization:      `leaveRequest:create:own` permission required (every role, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: `docs/domain-leave.md` §2 establishes `LeaveRequest`
+  as the first explicit multi-party approval workflow in this API — this
+  endpoint is the employee-facing entry point into that workflow.
+- **Business problem solved**: lets any employee apply for time off
+  against a governed `LeaveType`, starting the `PENDING` →
+  `APPROVED`/`REJECTED` workflow decided by their manager or `ADMIN`.
+- **Deliberate scope limit — no administrative on-behalf-of creation**:
+  unlike `POST /attendance` (endpoint 50), there is **no** path for
+  `ADMIN`/`MANAGER` to file a leave request *for* someone else — every
+  `LeaveRequest` is always created against the caller's own Employee
+  record, resolved via `employeeRepository.findByUserId`. An `ADMIN`
+  wanting to record leave on an employee's behalf has no shortcut here
+  by design.
+- **Expected callers**: every authenticated user with a linked Employee
+  record — same broad grant shape as `attendance:checkin`.
+
+## 3. Request Headers
+
+| Header                                 | Required | Notes                                                 |
+| ---------------------------------------- | -------- | ----------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `leaveRequest:create:own` permission |
+| `Content-Type: application/json`      | **Yes**  |                                                               |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "leaveTypeId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+  "startDate": "2026-10-05",
+  "endDate": "2026-10-09",
+  "reason": "Family function"
+}
+```
+
+| Field         | Type              | Required | Description                                                        |
+| ------------- | ----------------- | -------- | ------------------------------------------------------------------- |
+| `leaveTypeId` | string (UUID)     | **Yes**  | Must reference an existing, `ACTIVE` `LeaveType`                     |
+| `startDate`   | string (ISO date) | **Yes**  | Must not be after `endDate`                                          |
+| `endDate`     | string (ISO date) | **Yes**  | Must not be before `startDate`                                       |
+| `reason`      | string            | No       | Trimmed, non-empty when provided                                     |
+
+## 7. Validation Rules
+
+- `leaveTypeId`: required, valid UUID; then re-checked in the service
+  layer — `400` with `"leaveTypeId: references a record that does not
+  exist"` if no such `LeaveType` exists, or `"leaveTypeId: this leave
+  type is not active and cannot be assigned"` if it exists but is
+  `INACTIVE` (`leaveTypeService.assertLeaveTypeAssignable`, the same
+  positive-allowlist pattern every prior domain's FK-assignability check
+  uses).
+- `startDate`/`endDate`: both required, coerced dates; a Zod `.refine`
+  rejects `startDate > endDate` with `"endDate: startDate cannot be
+  after endDate"` (attached to the `endDate` field path).
+- `reason`: optional, `.trim().min(1)` when provided.
+- **No linked Employee record**: `400` with `"No employee record linked
+  to this account"` — the same `resolveOwnEmployee` pattern self-service
+  check-in uses.
+- **Overlap invariant** (`docs/domain-leave.md` §4): an employee cannot
+  have two `PENDING`/`APPROVED` requests with overlapping date ranges —
+  `409` with `"This employee already has a pending or approved leave
+  request overlapping these dates"`. `REJECTED`/`CANCELLED` requests
+  never count toward this check (`leaveRequestRepository.findActiveByEmployee`
+  only fetches `PENDING`/`APPROVED` rows).
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "request": {
+    "id": "c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6f7a",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "leaveTypeId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "startDate": "2026-10-05T00:00:00.000Z",
+    "endDate": "2026-10-09T00:00:00.000Z",
+    "reason": "Family function",
+    "status": "PENDING",
+    "durationDays": null,
+    "createdAt": "2026-09-15T10:10:00.000Z",
+    "updatedAt": "2026-09-15T10:10:00.000Z"
+  }
+}
+```
+
+`durationDays` is always `null` on creation — it is only computed and
+stored once the request is `APPROVED` (endpoint 64), since duration is
+meaningless before a request is actually granted. Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                                        | Response (`message`)                                                          | When                                                                 |
+| ------ | ---------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `400`  | Validation failed                             | e.g. `"endDate: startDate cannot be after endDate"`, `"leaveTypeId: Invalid UUID"`  | Malformed body, `startDate` after `endDate`                                 |
+| `400`  | No linked Employee record                     | `"No employee record linked to this account"`                                       | Caller's `User` has no `Employee` row                                       |
+| `400`  | `leaveTypeId` doesn't exist or isn't `ACTIVE`  | `"leaveTypeId: references a record that does not exist"` / `"leaveTypeId: this leave type is not active and cannot be assigned"` | Nonexistent or deactivated `LeaveType`                                       |
+| `401`  | Missing/invalid/expired access token           | Same as every other protected endpoint                                             | `authMiddleware` failure                                                    |
+| `403`  | Caller lacks `leaveRequest:create:own`        | `"You do not have permission to perform this action"`                              | Not expected in practice — every seeded role has this grant                 |
+| `409`  | Overlapping `PENDING`/`APPROVED` request       | `"This employee already has a pending or approved leave request overlapping these dates"` | Verified live (`leave.service.test.js`)                                    |
+
+## 10. Postman Test Cases
+
+| #   | Case                                              | Expected |
+| --- | ---------------------------------------------------- | -------- |
+| 1   | Valid create, with `reason`                          | `201` — verified live |
+| 2   | Valid create, `reason` omitted                       | `201`    |
+| 3   | Overlapping an existing `PENDING`/`APPROVED` request | `409` — verified live |
+| 4   | Same dates as a `REJECTED`/`CANCELLED` request        | `201` — does not block |
+| 5   | `startDate` after `endDate`                          | `400`    |
+| 6   | Inactive `leaveTypeId`                               | `400`    |
+| 7   | Nonexistent `leaveTypeId`                            | `400` — verified live |
+| 8   | Caller with no linked Employee record                | `400`    |
+| 9   | No token                                            | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Malformed JSON body                | `400` from Express's own JSON body-parser                                  |
+| Tampered/expired JWT               | `401`                                                                       |
+| `startDate`/`endDate` as a number/array | `400` — Zod's `.coerce.date()` rejects shapes it cannot parse as a date |
+| `leaveTypeId` as a non-UUID string | `400`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `startDate` equals `endDate`                                      | `201` — a single-day request is valid                                                                                                                  |
+| Two concurrent `POST`s for the same employee/overlapping dates    | The service-layer overlap check is not a database exclusion constraint (`docs/domain-leave.md` §4's own schema comment) — a genuine race could let both through; not independently verified under true concurrency |
+| `reason` omitted entirely                                         | Stored as `null`                                                                                                                                       |
+
+## 13. Security Testing
+
+- **No BOLA concern**: the target Employee is always resolved from the
+  caller's own account, never from a client-supplied `employeeId` — there
+  is no `employeeId` field in this request body at all.
+- **Mass assignment**: only `leaveTypeId`/`startDate`/`endDate`/`reason`
+  are read from the body; `status`/`durationDays`/`employeeId` can never
+  be set by the caller.
+
+## 14. Database Impact
+
+- **Tables affected**: `LeaveRequest` (insert), `AuditLog` (insert).
+- **Transactions**: both inside one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/leave-requests
+    ↓
+authMiddleware
+    ↓
+requirePermission('leaveRequest:create:own')
+    ↓ (403 if not granted)
+validateMiddleware(createLeaveRequestSchema)
+    ↓ (400 if invalid, including startDate > endDate)
+leave.controller.create → leave.service.createLeaveRequest(data, actor)
+    ├─ resolveOwnEmployee(actor.id) → not found → 400
+    ├─ leaveTypeService.assertLeaveTypeAssignable(leaveTypeId) → 400
+    ├─ leaveRequestRepository.findActiveByEmployee(employee.id) [PENDING/APPROVED only]
+    ├─ hasOverlap(...) → true → 409
+    └─ prisma.$transaction:
+         ├─ leaveRequestRepository.create({ employeeId, leaveTypeId, startDate, endDate, reason }, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', afterData, ... }, tx)
+    ↓
+201 { request }
+```
+
+## 16. Performance Notes
+
+One Employee lookup, one LeaveType assignability lookup, one overlap
+query (bounded to the employee's own `PENDING`/`APPROVED` rows, typically
+a handful), one insert, one audit-log insert — no notable performance
+concerns.
+
+## 17. Interview Notes
+
+- **Q: Why is the overlap check done in application code instead of a
+  database constraint?** `docs/domain-leave.md` §4 and the
+  `LeaveRequest` model's own schema comment are explicit: a true
+  date-range exclusion constraint would require PostgreSQL's
+  `btree_gist` extension, judged unnecessary complexity for a check this
+  cheap to run in the service layer — consistent with this project's
+  general preference for the simpler option absent a demonstrated need.
+- **Q: Why no admin on-behalf-of creation, unlike Attendance?** Applying
+  for leave is inherently a first-person act in this domain's model
+  (`docs/domain-leave.md` §2) — an `ADMIN` correcting or backfilling
+  leave history is instead handled entirely through
+  `PATCH /leave-balances/:id`'s manual balance adjustment (endpoint 69),
+  not by fabricating a request on someone's behalf.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/leave-requests \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"leaveTypeId":"b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f","startDate":"2026-10-05","endDate":"2026-10-09","reason":"Family function"}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `request.id` as `{{leaveRequestId}}` — used by
+`GET`/`PATCH .../approve`/`PATCH .../reject`/`PATCH .../cancel
+/leave-requests/:id`.
+
+## 20. Testing Checklist
+
+- ✅ Valid create → `201`, `status: "PENDING"`, `durationDays: null`
+  (verified live)
+- ✅ Overlapping request → `409` (verified live)
+- ✅ `startDate` after `endDate` → `400`
+- ✅ Inactive/nonexistent `leaveTypeId` → `400` (verified live)
+- ✅ No linked Employee record → `400`
+- ✅ `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 62. `GET /leave-requests`
+
+## 1. Endpoint Information
+
+```
+Feature:            Leave Domain (2026-09-15, feature/22-leave-domain)
+Endpoint:           List Leave Requests
+Method:             GET
+URL:                /api/v1/leave-requests
+API Version:        v1
+Module:             modules/leave
+Authentication:     Yes (Bearer access token)
+Authorization:      `leaveRequest:read:any` OR `leaveRequest:read:own`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: browse/search leave requests — for admin/manager
+  approval queues and for an employee's own leave history.
+- **Business problem solved**: "show me all pending requests I need to
+  decide," "show me this employee's leave history," and "show me my own
+  leave requests."
+- **Diverges from `GET /attendance`'s any-only shape** (endpoint 51): a
+  caller **without** `leaveRequest:read:any` is not refused — they are
+  auto-scoped to their own Employee's requests instead
+  (`leave.service.js`'s `listLeaveRequests`), since viewing your own
+  leave history is a core self-service need, unlike bulk attendance
+  browsing. Any `employeeId` filter the caller supplies is silently
+  overridden by their own Employee id in this case.
+- **Expected callers**: any authenticated user — `EMPLOYEE` sees only
+  their own; `ADMIN`/`MANAGER` see everyone's via `:any`.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                          |
+| -------------------------------------- | -------- | -------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `leaveRequest:read:any` or `leaveRequest:read:own` |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name         | Type            | Required | Default     | Description                                                                 |
+| -------------- | --------------- | -------- | ------------- | --------------------------------------------------------------------------- |
+| `page`       | integer         | No       | `1`         | 1-indexed page number                                                        |
+| `limit`      | integer         | No       | `10` (max 100) | Page size                                                                    |
+| `employeeId` | string (UUID)   | No       | —           | **Only honored when the caller holds `:any`** — silently overridden to the caller's own Employee id otherwise |
+| `leaveTypeId`| string (UUID)   | No       | —           | Filter to one leave type                                                     |
+| `status`     | enum            | No       | —           | `PENDING`, `APPROVED`, `REJECTED`, or `CANCELLED`                            |
+| `dateFrom`   | string (ISO date) | No     | —           | Inclusive lower bound on `startDate`                                          |
+| `dateTo`     | string (ISO date) | No     | —           | Inclusive upper bound on `startDate`                                          |
+| `sortBy`     | enum            | No       | `startDate` | `startDate`, `endDate`, `status`, `createdAt`                                |
+| `order`      | enum            | No       | `desc`      | `asc` or `desc`                                                              |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same page/limit/sort shape as every other list endpoint
+(`listLeaveRequestsQuerySchema`). `employeeId`/`leaveTypeId` must be
+valid UUIDs when present but are **not** checked for existence —
+filtering by a nonexistent id simply returns an empty `requests` array.
+`dateFrom`/`dateTo` filter on `startDate` only (not `endDate`); no
+refinement enforces `dateFrom <= dateTo`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "requests": [
+    {
+      "id": "c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6f7a",
+      "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "leaveTypeId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+      "startDate": "2026-10-05T00:00:00.000Z",
+      "endDate": "2026-10-09T00:00:00.000Z",
+      "reason": "Family function",
+      "status": "PENDING",
+      "durationDays": null,
+      "createdAt": "2026-09-15T10:10:00.000Z",
+      "updatedAt": "2026-09-15T10:10:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+Verified live, both for an `:any` caller and for an auto-scoped `:own`
+caller (`leave.service.test.js`'s "auto-scopes to the caller's own
+employeeId" case).
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                  | When                                       |
+| ------ | ------------------------------------ | ---------------------------------------------------------- | --------------------------------------------- |
+| `400`  | A query parameter failed validation | e.g. `"limit: Too big: expected number to be <=100"`      | Out-of-bounds `limit`, invalid `sortBy`/`status` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                   |
+| `403`  | Caller lacks both `leaveRequest:read:any` and `leaveRequest:read:own` | `"You do not have permission to perform this action"`   | Not expected in practice — every seeded role has at least one grant |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                | Expected |
+| --- | -------------------------------------------------------- | -------- |
+| 1   | `ADMIN`/`MANAGER`, default pagination (`:any`)             | `200`, all employees' requests |
+| 2   | `EMPLOYEE`, default pagination (`:own`, auto-scoped)       | `200`, only their own requests — verified live |
+| 3   | `EMPLOYEE` supplies a different `employeeId`               | `200`, silently ignored — still only their own requests |
+| 4   | `status=PENDING` filter                                    | `200`, only pending requests |
+| 5   | `dateFrom`/`dateTo` range filter (on `startDate`)           | `200`, only in-range requests |
+| 6   | `sortBy=status&order=asc`                                   | `200`    |
+| 7   | `limit=101`                                                | `400`    |
+| 8   | No token                                                   | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                | Expected                                                          |
+| -------------------------------------------- | -------------------------------------------------------------------------- |
+| `sortBy` value outside the allowlist          | `400`                                                                       |
+| `status` value outside the enum              | `400`                                                                       |
+| A caller with `:own` only and no linked Employee record | `200` with an empty `requests` array, not an error (`listLeaveRequests` returns `{ requests: [], pagination: { total: 0, ... } }` rather than throwing) |
+| Tampered/expired JWT                         | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                             | Expected Behavior                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `page` beyond the last page             | `200` with an empty `requests` array, not an error                                                     |
+| Two requests with identical `startDate` | Deterministic ordering via the unconditional secondary `id ASC` tiebreaker                              |
+| `:own`-only caller combines `leaveTypeId`/`status`/date filters with the (ignored) `employeeId` | All other filters still apply normally, only `employeeId` is overridden |
+
+## 13. Security Testing
+
+- **No BOLA on the `employeeId` filter for `:own`-only callers**: the
+  filter is silently overridden server-side rather than merely
+  unchecked — a caller cannot see another employee's requests by
+  supplying their id, even accidentally.
+- **Authorization layering**: `requirePermission` accepts either key at
+  the middleware level; the service layer decides the actual scope.
+
+## 14. Database Impact
+
+Read-only — one optional `Employee` lookup by `userId` (only for
+non-`:any` callers) plus `LeaveRequest.findMany` + `LeaveRequest.count`,
+the latter two run in parallel via `Promise.all`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/leave-requests
+    ↓
+authMiddleware
+    ↓
+requirePermission('leaveRequest:read:any', 'leaveRequest:read:own')
+    ↓ (403 if neither granted)
+validateMiddleware(listLeaveRequestsQuerySchema, 'query')
+    ↓ (400 if invalid)
+leave.controller.list → leave.service.listLeaveRequests(query, requester)
+    ├─ !grantedPermissions.includes('leaveRequest:read:any')?
+    │    → employeeRepository.findByUserId(requester.id)
+    │    → no Employee? return { requests: [], pagination: { total: 0, ... } }
+    │    → filters.employeeId = ownEmployee.id (overrides any supplied value)
+    └─ Promise.all([leaveRequestRepository.findAll(...), leaveRequestRepository.count(...)])
+    ↓
+200 { requests, pagination }
+```
+
+## 16. Performance Notes
+
+Indexed on `employeeId`/`leaveTypeId`/`status` individually — filtering
+by any of these (or the `startDate` range) stays index-backed.
+Pagination bounds the result set regardless of total row count.
+
+## 17. Interview Notes
+
+- **Q: Why does this endpoint auto-scope to `:own` instead of refusing
+  access outright, unlike `GET /attendance`?** `docs/domain-leave.md`'s
+  own framing treats viewing your own leave history as core self-service
+  functionality, not an administrative nicety — the same reasoning
+  `GET /employees/:id`/`GET /attendance/:id` already apply at the
+  single-record level, extended here to a *list* endpoint for the first
+  time in this API. `GET /attendance` never needed this because
+  Attendance's own single-record and `effective-status` endpoints already
+  cover self-service viewing without a list mode.
+
+## 18. cURL Examples
+
+```bash
+# ADMIN/MANAGER browsing everyone's requests
+curl -s "http://localhost:3000/api/v1/leave-requests?status=PENDING" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+```bash
+# EMPLOYEE viewing their own history (auto-scoped)
+curl -s "http://localhost:3000/api/v1/leave-requests" \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run once as `ADMIN` (expect requests across employees) and once as
+`EMPLOYEE` (expect only their own) in the same collection to exercise
+both scoping paths.
+
+## 20. Testing Checklist
+
+- ✅ `:any` caller sees all employees' requests
+- ✅ `:own`-only caller auto-scoped to their own `employeeId` (verified live)
+- ✅ Supplied `employeeId` silently ignored for `:own`-only callers
+- ✅ `status`/`leaveTypeId`/date-range filters
+- ✅ Sort both directions with deterministic tiebreaker
+- ✅ `401` with no token
+- ✅ `400` on out-of-bounds `limit`
+
+---
+
+---
+
+# 63. `GET /leave-requests/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Leave Domain (2026-09-15, feature/22-leave-domain)
+Endpoint:           Get one Leave Request
+Description:        Returns a single LeaveRequest, subject to an ownership check
+Method:             GET
+URL:                /api/v1/leave-requests/:id
+API Version:        v1
+Module:             modules/leave
+Authentication:     Yes (Bearer access token)
+Authorization:      `leaveRequest:read:any` OR `leaveRequest:read:own` (the latter requires the record's employeeId to match the caller's own Employee record)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the one place a plain `EMPLOYEE` can see a specific
+  `LeaveRequest` in full detail — their own — mirroring `GET
+  /employees/:id`'s (endpoint 11) and `GET /attendance/:id`'s (endpoint
+  53) own/any shape rather than a new pattern.
+- **Business problem solved**: "what's the status of my leave request,"
+  and "look up this specific request" for HR/management.
+- **Expected callers**: any authenticated user, with two different access
+  paths depending on their permissions.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                          |
+| -------------------------------------- | -------- | -------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `leaveRequest:read:any` or `leaveRequest:read:own` |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                  |
+| ---- | ------------- | -------- | ---------------------------------- |
+| `id` | string (UUID) | **Yes**  | The LeaveRequest's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No format validation on `id` — an invalid UUID or a well-formed UUID
+that doesn't exist both simply fail to match any row and produce the
+same `404`. Two-layer authorization, identical shape to `GET
+/attendance/:id`:
+
+1. **Middleware** (`requirePermission('leaveRequest:read:any',
+   'leaveRequest:read:own')`): does the caller have _either_ key? If
+   neither, `403` before the record is even fetched.
+2. **Service** (`getLeaveRequestById` → `assertOwnershipOrAny`): fetches
+   the record first (`404` if missing), _then_ — only if the caller
+   doesn't have the `:any` grant — resolves the caller's own Employee
+   record and compares its id to `request.employeeId`, throwing `403`
+   on mismatch (or if the caller has no linked Employee record at all).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "request": {
+    "id": "c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6f7a",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "leaveTypeId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "startDate": "2026-10-05T00:00:00.000Z",
+    "endDate": "2026-10-09T00:00:00.000Z",
+    "reason": "Family function",
+    "status": "PENDING",
+    "durationDays": null,
+    "createdAt": "2026-09-15T10:10:00.000Z",
+    "updatedAt": "2026-09-15T10:10:00.000Z"
+  }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                                                              | Response (`message`)                          | When                                                                                                                                  |
+| ------ | ------------------------------------------------------------------------ | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `401`  | No/invalid/expired access token                                          | Same as every other protected endpoint             | `authMiddleware` failure                                                                                                                 |
+| `403`  | Roles grant neither `leaveRequest:read:any` nor `leaveRequest:read:own`  | `"You do not have permission to perform this action"` | Caller has no leave-request-read permission at all                                                                                       |
+| `403`  | Caller only has `leaveRequest:read:own`, and the record isn't theirs    | `"You do not have permission to view this record"`   | The generic ownership message shared with `GET /leave-balances/:id` (`assertOwnershipOrAny`'s single message, not record-type-specific) — verified live (`leave.service.test.js`) |
+| `404`  | No such request                                                          | `"Leave request not found"`                          | Invalid/nonexistent `id`                                                                                                                 |
+
+## 10. Postman Test Cases
+
+| #   | Case                                        | Expected                            |
+| --- | ------------------------------------------------ | ------------------------------------ |
+| 1   | `ADMIN`/`MANAGER`, any valid `id`                | `200`    |
+| 2   | Owning `EMPLOYEE`, own request's `id`             | `200` — verified live |
+| 3   | Different `EMPLOYEE`, someone else's request's `id` | `403` — verified live |
+| 4   | Valid UUID, nonexistent request                   | `404`    |
+| 5   | Malformed (non-UUID) `id`                        | `404` |
+| 6   | No token                                        | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                              | Expected                                                                                                         |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| SQL injection attempt as the `id` (`'; DROP TABLE--`) | `404` — Prisma's parameterized query treats it as a literal string that matches nothing, no query-structure risk |
+| Tampered/expired JWT                                  | `401`                                                                                                              |
+
+## 12. Edge Cases
+
+| Scenario                                                                                      | Expected Behavior                                                                                                                        |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| An `ADMIN` fetching their own Employee's leave request (if they have one)                      | `200` — `:any` short-circuits the ownership check entirely; an admin never needs `:own` to see their own record                          |
+| A caller with **no** Employee record, holding only `leaveRequest:read:own`, requests any `id`  | `403` — `assertOwnershipOrAny` resolves `ownEmployee` as `null`, which never equals `request.employeeId`                                  |
+
+## 13. Security Testing
+
+- **BOLA (Broken Object Level Authorization)**: the primary BOLA test
+  case for this endpoint — confirm systematically that a
+  `leaveRequest:read:own`-only caller **cannot** read any `id` except one
+  whose `employeeId` matches their own Employee record.
+- **Authorization layering**: confirm the two distinct `403` messages
+  above correspond to the two different rejection paths (middleware vs.
+  service).
+
+## 14. Database Impact
+
+- **Tables affected**: `LeaveRequest` (read only, single row); an
+  additional `Employee` lookup by `userId` when the ownership check runs
+  (i.e. whenever the caller lacks `:any`).
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/leave-requests/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('leaveRequest:read:any', 'leaveRequest:read:own')
+    ↓ (403 if neither granted; req.grantedPermissions set otherwise)
+leave.controller.getById
+    → leave.service.getLeaveRequestById(id, { id: req.user.id, grantedPermissions })
+        ├─ leaveRequestRepository.findById(id) → not found → 404
+        └─ assertOwnershipOrAny(request.employeeId, requester, 'leaveRequest:read:any')
+             ├─ grantedPermissions includes 'leaveRequest:read:any'? → skip
+             └─ else: employeeRepository.findByUserId(requester.id); id !== employeeId → 403
+    ↓
+200 { request }
+```
+
+## 16. Performance Notes
+
+Single indexed `LeaveRequest.findUnique` by primary key, plus one
+additional indexed `Employee` lookup by `userId` only when the ownership
+check path runs.
+
+## 17. Interview Notes
+
+- **Q: Why is the `:own` mismatch message generic ("this record") here,
+  instead of "this leave request" like `GET /attendance/:id`'s
+  record-specific message?** `assertOwnershipOrAny` is a single shared
+  helper reused by both `getLeaveRequestById` and `getLeaveBalanceById`
+  (endpoint 68) — it takes the permission key as a parameter rather than
+  a record-type label, so its one message stays generic across both
+  callers rather than duplicating near-identical helpers just to get a
+  more specific string.
+
+## 18. cURL Examples
+
+```bash
+# As the owning EMPLOYEE
+curl -i http://localhost:3000/api/v1/leave-requests/$LEAVE_REQUEST_ID \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+
+# As ADMIN, any id
+curl -i http://localhost:3000/api/v1/leave-requests/$LEAVE_REQUEST_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Uses `{{leaveRequestId}}` saved from `POST /leave-requests`. Needs both
+an `{{adminAccessToken}}` and an `{{employeeAccessToken}}` (belonging to
+the user whose Employee record owns the target request) to exercise both
+authorization paths.
+
+## 20. Testing Checklist
+
+- ✅ `200` as `ADMIN`/`MANAGER` for any request
+- ✅ `200` as the owning `EMPLOYEE` (verified live)
+- ✅ `403` (generic ownership message) as a different `EMPLOYEE` (verified live)
+- ✅ `404` for nonexistent `id`
+- ✅ `401` with no token
+
+---
+
+---
+
+# 64. `PATCH /leave-requests/:id/approve`
+
+## 1. Endpoint Information
+
+```
+Feature:            Leave Domain (2026-09-15, feature/22-leave-domain)
+Endpoint:           Approve a Pending Leave Request
+Description:        Computes holiday/week-off-excluded duration, deducts the LeaveBalance, and sets the request APPROVED
+Method:             PATCH
+URL:                /api/v1/leave-requests/:id/approve
+API Version:        v1
+Module:             modules/leave
+Authentication:     Yes (Bearer access token)
+Authorization:      `leaveRequest:decide:any` (ADMIN, unconditional) OR `leaveRequest:decide:reports` (MANAGER, own direct reports only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the decision point of the approval workflow
+  `docs/domain-leave.md` §2 describes — grants the request and applies
+  its real consequence, a `LeaveBalance` deduction.
+- **Business problem solved**: lets an authorized decider approve a
+  `PENDING` request, automatically computing how many days it should
+  actually cost (excluding holidays/week-offs) and enforcing that the
+  employee has enough remaining balance to cover it.
+- **Two distinct authorization paths, deliberately not the same `:any`
+  meaning as elsewhere**: `leaveRequest:decide:any` (`ADMIN`) may decide
+  **any** request unconditionally. `leaveRequest:decide:reports`
+  (`MANAGER`) may decide a request **only** when the caller is the
+  actual assigned manager of that request's employee — checked live
+  against `Employee.managerId`, not merely "any manager." A `MANAGER`
+  holding `decide:reports` who is not that specific employee's manager
+  gets `403`, even though they hold a "decide" permission in principle.
+  This is a real authorization narrowing beyond the permission name
+  itself (`docs/domain-leave.md` ADR-LV02's implementation note).
+- **What "approve" actually does**, in order: (1) computes a
+  holiday/week-off-excluded day count by walking the request's date
+  range (`leaveService.computeLeaveDuration`, ADR-LV04); (2) lazily
+  creates or fetches the employee's `LeaveBalance` for that
+  `leaveTypeId`/year if one doesn't exist yet, applying the hire-year
+  proration formula (ADR-LV03); (3) rejects with `409` if the computed
+  duration would exceed the remaining balance (ADR-LV05); (4) otherwise
+  deducts the duration from `LeaveBalance.consumed` and sets the
+  request's `status` to `APPROVED` and `durationDays` to the computed
+  value — both inside one transaction, both audit-logged.
+- **Expected callers**: `ADMIN` (any request) and `MANAGER` (own direct
+  reports only).
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                          |
+| -------------------------------------- | -------- | -------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `leaveRequest:decide:any` or `leaveRequest:decide:reports` |
+
+No `Content-Type` is needed — no body is sent.
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                    |
+| ---- | ------------- | -------- | ---------------------------------- |
+| `id` | string (UUID) | **Yes**  | The LeaveRequest's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None. **This endpoint never accepts a body.**
+
+## 7. Validation Rules
+
+No body to validate. The service layer, in order:
+
+1. `leaveRequestRepository.findById(id)` → `404` if missing.
+2. `request.status !== 'PENDING'` → `409` — checked **before**
+   authorization, so a decider without the right permission still sees
+   `409` (not `403`) when targeting an already-decided request; see
+   Edge Cases.
+3. `assertCanDecide(request, actor)` — `403` unless `decide:any`, or
+   `decide:reports` **and** the caller is the request's employee's
+   actual manager.
+4. `computeLeaveDuration(employee, startDate, endDate)` — walks the date
+   range once, excluding holidays (via the employee's `Branch`'s
+   `HolidayCalendar`) and non-working days (via the employee's `Shift`'s
+   `workingDays`); either leg is skipped if the employee has no
+   `Branch`/`Shift` respectively.
+5. `getOrCreateLeaveBalance(...)` — fetches the existing balance for
+   `(employeeId, leaveTypeId, year)` or creates one via hire-year
+   proration.
+6. `duration > remaining` (`balance.entitlement - balance.consumed`) →
+   `409` with `` `Insufficient leave balance: ${duration} day(s)
+   requested, ${remaining} remaining` `` — a template with the real
+   computed numbers, e.g. `"Insufficient leave balance: 5 day(s)
+   requested, 1 remaining"`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "request": {
+    "id": "c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6f7a",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "leaveTypeId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "startDate": "2026-10-05T00:00:00.000Z",
+    "endDate": "2026-10-09T00:00:00.000Z",
+    "reason": "Family function",
+    "status": "APPROVED",
+    "durationDays": "4",
+    "createdAt": "2026-09-15T10:10:00.000Z",
+    "updatedAt": "2026-09-15T10:20:00.000Z"
+  }
+}
+```
+
+`durationDays` is a Prisma `Decimal`, serialized as a string — a 5-day
+calendar span here excludes 1 weekly off-day, netting `4`. Verified live
+(`leave.service.test.js`'s "computes holiday/week-off-excluded duration"
+case: a 7-day range with 2 week-off days and 1 holiday nets `4`).
+
+## 9. Error Responses
+
+| Status | Reason                                     | Response (`message`)                                                  | When                                                                 |
+| ------ | -------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token        | Same as every other protected endpoint                                       | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks both permissions at the middleware layer | `"You do not have permission to perform this action"`                | No `leaveRequest:decide:*` grant at all                                    |
+| `403`  | `decide:reports` caller is not the request's employee's manager | `"You do not have permission to decide this leave request"`         | Verified live (`leave.service.test.js`'s manager-cannot-decide-non-report case) |
+| `404`  | No such request                             | `"Leave request not found"`                                                   | Invalid/nonexistent `id`                                                   |
+| `409`  | Request is not `PENDING`                    | `"Only a pending leave request can be approved"`                              | Already `APPROVED`/`REJECTED`/`CANCELLED`                                    |
+| `409`  | Insufficient remaining balance              | e.g. `"Insufficient leave balance: 5 day(s) requested, 1 remaining"`          | Verified live (`leave.service.test.js`'s overdraft case)                     |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                        | Expected |
+| --- | ------------------------------------------------------------- | -------- |
+| 1   | `ADMIN` approves any `PENDING` request                        | `200` — verified live |
+| 2   | `MANAGER` approves their own direct report's request           | `200` — verified live |
+| 3   | `MANAGER` attempts to approve a non-report's request            | `403` — verified live |
+| 4   | Approve an already-`APPROVED` request                          | `409`    |
+| 5   | Approve when duration exceeds remaining balance                 | `409` — verified live |
+| 6   | Nonexistent `id`                                               | `404`    |
+| 7   | As `EMPLOYEE` token                                             | `403`    |
+| 8   | No token                                                       | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                        |
+| ----------------------------------- | --------------------------------------------------------------------- |
+| Body sent anyway                    | `200` — the body is never read                                        |
+| Tampered/expired JWT                | `401`                                                                  |
+| Double-approving concurrently (two simultaneous requests) | The status check and the update are not wrapped in a single atomic check-then-act across both requests at the database level beyond the transaction around the write itself — not independently verified under true concurrency, same honest caveat as other domains' race conditions |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                       |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| A `MANAGER` (`decide:reports` only, not the assigned manager) targets an already-`APPROVED`/non-`PENDING` request | `409` (status check runs *before* the authorization check), not `403` — a real ordering detail: the caller learns "already decided" before "you couldn't have decided this anyway" |
+| Employee has no `Branch`/`Shift` assigned                          | Every day in the range counts as chargeable — no holiday/week-off exclusion is possible without them, verified live (`leave.service.test.js`'s overdraft case uses this) |
+| `LeaveBalance` doesn't exist yet for this employee/type/year        | Created lazily via hire-year proration (ADR-LV03) before the balance-sufficiency check runs |
+| Duration exactly equals remaining balance                          | `200` — the check is `duration > remaining`, so an exact match is allowed, not rejected |
+| Request's employee has `managerId` set to a *different* manager than the caller | `403` for a `decide:reports`-only caller — verified live |
+
+## 13. Security Testing
+
+- **Authorization**: the primary authorization test case for this
+  endpoint — confirm a `MANAGER` cannot approve a request belonging to
+  an employee who is not their direct report, tested against at least
+  one non-report employee's request (verified live).
+- **Mass assignment**: N/A — no body is ever read; `durationDays`/
+  `status` are entirely server-computed.
+
+## 14. Database Impact
+
+- **Tables affected**: `LeaveBalance` (insert if newly created, then
+  update), `LeaveRequest` (update), `AuditLog` (two inserts — one for
+  the request, one for the balance).
+- **Transactions**: the balance update and the request update happen
+  inside one `prisma.$transaction`, alongside both audit-log inserts.
+  The lazy `LeaveBalance` creation (if needed) is its own separate
+  transaction, run before the approval transaction.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/leave-requests/:id/approve
+    ↓
+authMiddleware
+    ↓
+requirePermission('leaveRequest:decide:any', 'leaveRequest:decide:reports')
+    ↓ (403 if neither granted)
+leave.controller.approve → leave.service.approveLeaveRequest(id, actor)
+    ├─ leaveRequestRepository.findById(id) → not found → 404
+    ├─ request.status !== 'PENDING' → 409
+    ├─ assertCanDecide(request, actor)
+    │    ├─ decide:any? → pass
+    │    ├─ decide:reports? → employeeRepository.findByUserId(actor.id) [manager]
+    │    │    → employeeRepository.findById(request.employeeId) [report]
+    │    │    → report.managerId === manager.id? → pass : → 403
+    │    └─ else → 403
+    ├─ employeeRepository.findById(request.employeeId)
+    ├─ computeLeaveDuration(employee, startDate, endDate)
+    │    ├─ (branchId) holidayCalendarService.isDateHolidayInCalendar per day
+    │    └─ (shiftId) weekday in shift.workingDays per day
+    ├─ getOrCreateLeaveBalance(employee, leaveTypeId, year, actor)
+    │    └─ (if new) computeEntitlement(employee, leaveType, year) [hire-year proration]
+    ├─ duration > (entitlement - consumed) → 409
+    └─ prisma.$transaction:
+         ├─ leaveBalanceRepository.update(balance.id, { consumed: consumed + duration }, tx)
+         ├─ leaveRequestRepository.update(id, { status: 'APPROVED', durationDays: duration }, tx)
+         ├─ auditLogRepository.create({ action: 'UPDATE', entityType: 'LeaveRequest', ... }, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'LeaveBalance', ... }, tx)
+    ↓
+200 { request }
+```
+
+## 16. Performance Notes
+
+The widest fan-out of any Leave endpoint: up to one `Branch` lookup, one
+`Shift` lookup, and one holiday-calendar lookup **per day** in the
+requested range (`computeLeaveDuration` iterates day-by-day), plus the
+balance lookup/creation and the final transaction. Named as an
+acceptable cost for typical leave-request lengths (days, not months) —
+not optimized further since no real performance problem has been
+demonstrated at this scale.
+
+## 17. Interview Notes
+
+- **Q: Why does the `PENDING` status check run before the authorization
+  check?** A straightforward implementation-order consequence of
+  `approveLeaveRequest` fetching and validating the record's state
+  before delegating to `assertCanDecide` — not a deliberate security
+  design choice, just worth knowing so the observed `409`-before-`403`
+  ordering (§12) doesn't look like a bug during testing.
+- **Q: Why is `LeaveBalance` created lazily inside the approval flow
+  instead of requiring it to already exist?** `docs/domain-leave.md`
+  ADR-LV03: this project has no scheduler/cron infrastructure for an
+  annual grant job, so "first read or approval that needs a given
+  balance computes and persists it" is the pragmatic implementation of
+  the "annual lump sum" recommendation without inventing new
+  cross-cutting infrastructure for one domain.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/leave-requests/$LEAVE_REQUEST_ID/approve \
+  -H "Authorization: Bearer $MANAGER_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Requires a `MANAGER` token whose Employee record is the target request's
+employee's actual `managerId`, or an `ADMIN` token, to see `200`. Follow
+with `GET /leave-balances?employeeId=...` to confirm the deduction.
+
+## 20. Testing Checklist
+
+- ✅ `ADMIN` approves any request → `200` (verified live)
+- ✅ `MANAGER` approves own report's request → `200` (verified live)
+- ✅ `MANAGER` cannot approve a non-report's request → `403` (verified live)
+- ✅ Non-`PENDING` request → `409`
+- ✅ Insufficient balance → `409` (verified live)
+- ✅ Correct holiday/week-off-excluded duration computed (verified live)
+- ✅ `LeaveBalance.consumed` deducted correctly (verified live)
+- ✅ `401` with no token
+- ✅ Two `AuditLog` rows created (request + balance)
+
+---
+
+---
+
+# 65. `PATCH /leave-requests/:id/reject`
+
+## 1. Endpoint Information
+
+```
+Feature:            Leave Domain (2026-09-15, feature/22-leave-domain)
+Endpoint:           Reject a Pending Leave Request
+Description:        Sets a PENDING request to REJECTED - no balance effect
+Method:             PATCH
+URL:                /api/v1/leave-requests/:id/reject
+API Version:        v1
+Module:             modules/leave
+Authentication:     Yes (Bearer access token)
+Authorization:      `leaveRequest:decide:any` (ADMIN) OR `leaveRequest:decide:reports` (MANAGER, own direct reports only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the other branch of the approval workflow's
+  decision point — denies the request instead of granting it.
+- **Business problem solved**: lets an authorized decider decline a
+  `PENDING` request, optionally recording a reason, with **no**
+  `LeaveBalance` consequence (nothing was ever deducted for a request
+  that was never approved).
+- **Same authorization shape as approve** (endpoint 64):
+  `leaveRequest:decide:any` (unconditional) or `leaveRequest:decide:reports`
+  (own direct reports only, checked against `Employee.managerId`).
+- **Expected callers**: `ADMIN` (any request) and `MANAGER` (own direct
+  reports only).
+
+## 3. Request Headers
+
+| Header                                 | Required | Notes                                                              |
+| ---------------------------------------- | -------- | -------------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to `leaveRequest:decide:any` or `leaveRequest:decide:reports` |
+| `Content-Type: application/json`      | No       | Only needed if a `reason` is sent                                          |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                    |
+| ---- | ------------- | -------- | ---------------------------------- |
+| `id` | string (UUID) | **Yes**  | The LeaveRequest's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{ "reason": "Insufficient coverage that week" }
+```
+
+| Field    | Type   | Required | Description                                    |
+| -------- | ------ | -------- | -------------------------------------------------- |
+| `reason` | string | No       | Trimmed, non-empty when provided                    |
+
+## 7. Validation Rules
+
+- `reason`: optional, `.trim().min(1)` when provided.
+- `request.status !== 'PENDING'` → `409` with `"Only a pending leave
+  request can be rejected"` — checked before authorization, same
+  ordering as approve (endpoint 64, §12).
+- Same `assertCanDecide` authorization check as approve.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "request": {
+    "id": "c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6f7a",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "leaveTypeId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "startDate": "2026-10-05T00:00:00.000Z",
+    "endDate": "2026-10-09T00:00:00.000Z",
+    "reason": "Family function",
+    "status": "REJECTED",
+    "durationDays": null,
+    "createdAt": "2026-09-15T10:10:00.000Z",
+    "updatedAt": "2026-09-15T10:25:00.000Z"
+  }
+}
+```
+
+Verified live. **Note**: the response's `reason` field is the
+**applicant's original** `reason` from creation, unchanged — see §12
+below for why the body's `reason` doesn't appear here.
+
+## 9. Error Responses
+
+| Status | Reason                                     | Response (`message`)                                                  | When                                                                 |
+| ------ | -------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token        | Same as every other protected endpoint                                       | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks both permissions               | `"You do not have permission to perform this action"`                        | No `leaveRequest:decide:*` grant at all                                    |
+| `403`  | `decide:reports` caller is not the request's employee's manager | `"You do not have permission to decide this leave request"`         | Same message and check as approve                                            |
+| `404`  | No such request                             | `"Leave request not found"`                                                   | Invalid/nonexistent `id`                                                   |
+| `409`  | Request is not `PENDING`                    | `"Only a pending leave request can be rejected"`                              | Verified live (`leave.service.test.js`)                                    |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                        | Expected |
+| --- | ------------------------------------------------------------- | -------- |
+| 1   | `ADMIN`/authorized `MANAGER` rejects a `PENDING` request, with `reason` | `200` — verified live |
+| 2   | Reject with no body                                             | `200`    |
+| 3   | `MANAGER` attempts to reject a non-report's request              | `403`    |
+| 4   | Reject an already-`REJECTED` request                            | `409` — verified live |
+| 5   | Nonexistent `id`                                                | `404`    |
+| 6   | As `EMPLOYEE` token                                              | `403`    |
+| 7   | No token                                                        | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                        |
+| ----------------------------------- | --------------------------------------------------------------------- |
+| Malformed JSON body                 | `400` from Express's own JSON body-parser                             |
+| `reason` as a number/array          | `400` — Zod's `.string()` rejects non-string types                    |
+| Tampered/expired JWT                | `401`                                                                  |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                       |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| A `reason` is supplied in the body                                 | **Not persisted to `LeaveRequest.reason`** — only `status` is written (`leaveRequestRepository.update(id, { status: 'REJECTED' }, tx)`). The supplied `reason` is folded only into the `AuditLog`'s `afterData` snapshot, so it's recoverable from the audit trail but never shows up in the API response or on future `GET`s of this request — a real, verified-by-reading-the-source behavior, not a documentation guess. |
+| `LeaveBalance` state                                                | Untouched — rejection never creates, reads, or modifies a `LeaveBalance`, unlike approval |
+
+## 13. Security Testing
+
+- **Authorization**: confirm a `MANAGER` cannot reject a non-report's
+  request, same test shape as approve.
+- **Mass assignment**: only `reason` is read from the body, and even
+  that is not persisted to the row itself (§12).
+
+## 14. Database Impact
+
+- **Tables affected**: `LeaveRequest` (update, `status` only),
+  `AuditLog` (insert).
+- **Transactions**: both inside one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/leave-requests/:id/reject
+    ↓
+authMiddleware
+    ↓
+requirePermission('leaveRequest:decide:any', 'leaveRequest:decide:reports')
+    ↓ (403 if neither granted)
+validateMiddleware(rejectLeaveRequestSchema)
+    ↓ (400 if invalid)
+leave.controller.reject → leave.service.rejectLeaveRequest(id, data, actor)
+    ├─ leaveRequestRepository.findById(id) → not found → 404
+    ├─ request.status !== 'PENDING' → 409
+    ├─ assertCanDecide(request, actor) → 403
+    └─ prisma.$transaction:
+         ├─ leaveRequestRepository.update(id, { status: 'REJECTED' }, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', afterData: { ...updated, reason: data?.reason ?? updated.reason }, ... }, tx)
+    ↓
+200 { request }
+```
+
+## 16. Performance Notes
+
+One lookup, one update, one audit-log insert — the cheapest mutation in
+the Leave Request workflow (no balance/duration computation, unlike
+approve).
+
+## 17. Interview Notes
+
+- **Q: Why doesn't the rejection `reason` get saved to the request row?**
+  A verified implementation detail, not a documented design decision —
+  `rejectLeaveRequest` only ever writes `{ status: 'REJECTED' }` to the
+  `LeaveRequest` table. The `reason` field on `LeaveRequest` is
+  populated once, by the applicant, at creation (`POST
+  /leave-requests`) and this endpoint never overwrites it. A future
+  enhancement could add a dedicated `rejectionReason` column if this
+  gap turns out to matter in practice — not built now, since the
+  `AuditLog` already captures the value for after-the-fact review.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/leave-requests/$LEAVE_REQUEST_ID/reject \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"Insufficient coverage that week"}'
+```
+
+## 19. Postman Collection Notes
+
+Requires a decider token (`ADMIN`, or the target employee's actual
+`MANAGER`) to see `200`.
+
+## 20. Testing Checklist
+
+- ✅ Reject a `PENDING` request, with and without `reason` → `200`
+  (verified live)
+- ✅ `MANAGER` cannot reject a non-report's request → `403`
+- ✅ Non-`PENDING` request → `409` (verified live)
+- ✅ No balance change (verified live)
+- ✅ Supplied `reason` not persisted to the row, only the audit trail
+- ✅ `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 66. `PATCH /leave-requests/:id/cancel`
+
+## 1. Endpoint Information
+
+```
+Feature:            Leave Domain (2026-09-15, feature/22-leave-domain)
+Endpoint:           Cancel a Pending or Future-Dated Approved Leave Request
+Description:        Cancels a PENDING request freely, or a future-dated APPROVED request with balance restoration
+Method:             PATCH
+URL:                /api/v1/leave-requests/:id/cancel
+API Version:        v1
+Module:             modules/leave
+Authentication:     Yes (Bearer access token)
+Authorization:      `leaveRequest:cancel:own` (the request's own employee) OR `leaveRequest:cancel:any` (ADMIN)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: `docs/domain-leave.md` §2 names cancellation as a
+  distinct transition from the `PENDING → APPROVED|REJECTED` decision —
+  "an employee may cancel a `Pending` request outright, or an `Approved`
+  request that has not yet started."
+- **Business problem solved**: plans change — an employee withdraws a
+  request they no longer need, with the balance consequence correctly
+  reversed if it had already been approved and deducted.
+- **Three distinct outcomes depending on current state**:
+  1. `PENDING` → cancels immediately, no balance effect (nothing was
+     ever deducted).
+  2. `APPROVED` **and** not yet started (`startDate` in the future) →
+     cancels **and** restores the balance (`consumed -=
+     durationDays`).
+  3. `APPROVED` **and** already started (`startDate <= today`) → `400`,
+     rejected as a retroactive cancellation — "the same category of
+     problem Attendance's own sign-off already deferred as a
+     'regularization workflow'" (`docs/domain-leave.md` §2, citing
+     `docs/domain-attendance.md` §8).
+  Already `REJECTED`/`CANCELLED` → `409`, nothing left to cancel.
+- **Expected callers**: any employee cancelling their own request
+  (`:own`), or `ADMIN` cancelling any request (`:any`). Note:
+  `MANAGER` does **not** hold `leaveRequest:cancel:any` in this
+  codebase's seeded grants (see §13) — only `ADMIN` has the
+  unconditional override.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                          |
+| -------------------------------------- | -------- | -------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `leaveRequest:cancel:own` or `leaveRequest:cancel:any` |
+
+No `Content-Type` is needed — no body is sent.
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                    |
+| ---- | ------------- | -------- | ---------------------------------- |
+| `id` | string (UUID) | **Yes**  | The LeaveRequest's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None. **This endpoint never accepts a body.**
+
+## 7. Validation Rules
+
+No body to validate. The service layer, in order:
+
+1. `leaveRequestRepository.findById(id)` → `404` if missing.
+2. `assertCanCancel(request, actor)`: passes if the caller holds
+   `leaveRequest:cancel:any`; otherwise resolves the caller's own
+   Employee record and requires it to equal `request.employeeId` — `403`
+   with `"You do not have permission to cancel this leave request"`
+   otherwise (including when the caller has no linked Employee record
+   at all).
+3. Branches on `request.status` per §2's three outcomes above.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "request": {
+    "id": "c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6f7a",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "leaveTypeId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "startDate": "2026-10-05T00:00:00.000Z",
+    "endDate": "2026-10-09T00:00:00.000Z",
+    "reason": "Family function",
+    "status": "CANCELLED",
+    "durationDays": null,
+    "createdAt": "2026-09-15T10:10:00.000Z",
+    "updatedAt": "2026-09-15T10:30:00.000Z"
+  }
+}
+```
+
+Verified live for all three cancellable-outcome paths
+(`leave.service.test.js`'s "Pending cancels freely; future-dated
+Approved restores balance; already-started Approved is rejected" case).
+
+## 9. Error Responses
+
+| Status | Reason                                                | Response (`message`)                                                          | When                                                                 |
+| ------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `400`  | Approved request already started                        | `"An approved leave that has already started cannot be cancelled retroactively"`    | `status === 'APPROVED'` and `startDate <= today` — verified live            |
+| `401`  | Missing/invalid/expired access token                     | Same as every other protected endpoint                                             | `authMiddleware` failure                                                    |
+| `403`  | Caller lacks both permissions, or `:own`-only and not their request | `"You do not have permission to cancel this leave request"`                | Verified live                                                                 |
+| `404`  | No such request                                          | `"Leave request not found"`                                                        | Invalid/nonexistent `id`                                                    |
+| `409`  | Request is already `REJECTED` or `CANCELLED`             | `"Only a pending or future-dated approved leave request can be cancelled"`         | Nothing left to cancel                                                       |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                        | Expected |
+| --- | ------------------------------------------------------------- | -------- |
+| 1   | Owning `EMPLOYEE` cancels their own `PENDING` request           | `200` — verified live |
+| 2   | Owning `EMPLOYEE` cancels their own future-dated `APPROVED` request | `200`, balance restored — verified live |
+| 3   | Owning `EMPLOYEE` cancels an already-started `APPROVED` request | `400` — verified live |
+| 4   | `ADMIN` cancels any employee's request (`:any`)                 | `200`    |
+| 5   | Different `EMPLOYEE` attempts to cancel someone else's request  | `403`    |
+| 6   | Cancel an already-`CANCELLED`/`REJECTED` request                | `409`    |
+| 7   | Nonexistent `id`                                                | `404`    |
+| 8   | No token                                                        | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                        |
+| ----------------------------------- | --------------------------------------------------------------------- |
+| Body sent anyway                    | `200` — the body is never read                                        |
+| Tampered/expired JWT                | `401`                                                                  |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                       |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `startDate` equals today                                          | `400` — the check is `startDate <= today`, so a leave starting today is already "started" and cannot be cancelled                        |
+| Cancelling a future-dated `APPROVED` request whose `LeaveBalance` row is somehow missing | The request still cancels; `updatedBalance` stays `undefined`/skipped, no balance audit-log entry is written — a defensive branch (`if (balance && request.durationDays)`), not expected in normal operation |
+| Restoring `consumed` below zero                                    | Floored at `0` via `Math.max(0, balance.consumed - durationDays)` — never goes negative even in an inconsistent-data scenario             |
+| `MANAGER` attempts to cancel a direct report's request             | `403` — `MANAGER` holds neither `leaveRequest:cancel:any` nor (typically) `:own` for someone else's request; only the applicant themselves or `ADMIN` can cancel |
+
+## 13. Security Testing
+
+- **Authorization**: confirm a non-owning `EMPLOYEE` cannot cancel
+  another employee's request, and that `MANAGER` — despite holding
+  `leaveRequest:decide:reports` for approval/rejection — does **not**
+  separately hold `leaveRequest:cancel:any` in this codebase's seeded
+  grants (`prisma/seed.js`), so a `MANAGER` cannot cancel a report's
+  request on their behalf, only the applicant or `ADMIN` can.
+- **Mass assignment**: N/A — no body is ever read.
+
+## 14. Database Impact
+
+- **Tables affected**: `LeaveRequest` (update); `LeaveBalance` (update,
+  only for the future-dated-`APPROVED` restoration path); `AuditLog`
+  (one or two inserts, depending on whether a balance restoration
+  happened).
+- **Transactions**: each outcome's writes happen inside one
+  `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/leave-requests/:id/cancel
+    ↓
+authMiddleware
+    ↓
+requirePermission('leaveRequest:cancel:any', 'leaveRequest:cancel:own')
+    ↓ (403 if neither granted)
+leave.controller.cancel → leave.service.cancelLeaveRequest(id, actor)
+    ├─ leaveRequestRepository.findById(id) → not found → 404
+    ├─ assertCanCancel(request, actor) → 403
+    ├─ status === 'PENDING'?
+    │    └─ prisma.$transaction: update status → CANCELLED; audit log
+    ├─ status === 'APPROVED'?
+    │    ├─ startDate <= today → 400
+    │    └─ prisma.$transaction:
+    │         ├─ update status → CANCELLED
+    │         ├─ (if balance exists) leaveBalanceRepository.update(consumed - durationDays, floored at 0)
+    │         └─ audit log(s)
+    └─ else (REJECTED/CANCELLED) → 409
+    ↓
+200 { request }
+```
+
+## 16. Performance Notes
+
+For the `PENDING` path: one lookup, one update, one audit-log insert. For
+the future-dated-`APPROVED` path: one additional `LeaveBalance` lookup
+and update, plus a second audit-log insert. No notable performance
+concerns either way.
+
+## 17. Interview Notes
+
+- **Q: Why is "already started" checked with `<=`, not `<`?** A leave
+  that starts today is, by this endpoint's definition, already
+  underway — cancelling it would mean retroactively un-happening a day
+  that has already begun, the same category of correction this endpoint
+  deliberately refuses (§2). Same-day cancellation would need to go
+  through the deferred "regularization workflow," not this endpoint.
+- **Q: Why does `MANAGER` get `decide:reports` for approve/reject but no
+  cancellation authority at all over a report's request?** A genuine,
+  verified divergence in this codebase's seeded permissions (`prisma/seed.js`)
+  — `MANAGER`'s grants include `leaveRequest:cancel:own` (their own
+  requests only) but not `leaveRequest:cancel:any`. Deciding a request
+  is a manager's approval authority; withdrawing a request once filed
+  remains the applicant's own prerogative (or an `ADMIN` override) in
+  this design, not something a manager can do on an employee's behalf.
+
+## 18. cURL Examples
+
+```bash
+# Owning EMPLOYEE cancels their own request
+curl -i -X PATCH http://localhost:3000/api/v1/leave-requests/$LEAVE_REQUEST_ID/cancel \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+
+# ADMIN cancels any request
+curl -i -X PATCH http://localhost:3000/api/v1/leave-requests/$LEAVE_REQUEST_ID/cancel \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run three separate scenarios in the collection to exercise all three
+branches: cancel a still-`PENDING` request, approve-then-cancel a
+future-dated request (assert the balance restoration via
+`GET /leave-balances/:id`), and attempt to cancel a past-dated
+`APPROVED` request (assert the `400`).
+
+## 20. Testing Checklist
+
+- ✅ Cancel `PENDING` → `200`, no balance effect (verified live)
+- ✅ Cancel future-dated `APPROVED` → `200`, balance restored (verified live)
+- ✅ Cancel already-started `APPROVED` → `400` (verified live)
+- ✅ Cancel already-`REJECTED`/`CANCELLED` → `409`
+- ✅ Non-owning `EMPLOYEE` cannot cancel → `403`
+- ✅ `MANAGER` has no `cancel:any` grant (confirmed via `prisma/seed.js`)
+- ✅ `401` with no token
+- ✅ `AuditLog` row(s) created
+
+---
+
+---

@@ -1501,3 +1501,133 @@ named explicitly rather than silently narrowed, confidence 82%→85%),
 `backend/README.md` updated to match.
 
 Deliberately **backend-only**, same as every prior domain.)_
+
+_(Leave Domain — 2026-09-15, on branch `feature/22-leave-domain` (based on
+`feature/21-attendance-domain`). Eighth domain from the HRMS/ERP Business
+Architecture Review (`docs/domain-leave.md`), and by far the largest yet -
+three aggregates (`LeaveType`, `LeaveRequest`, `LeaveBalance`) instead of
+one, this review's first genuine multi-party approval workflow
+(Pending → Approved | Rejected, Approved → Cancelled), and the domain
+that finally closes the `ON_LEAVE` gap Attendance's own ADR-AT03 named as
+a requirement one domain ago.
+
+Two genuinely open business questions the domain doc itself flags and
+explicitly asks be confirmed with real stakeholders (Final Sign-off: "confirm
+entitlement-proration formula ... before implementation") - concrete,
+flagged recommendations were implemented rather than blocking, the same
+treatment Employment Type's FULL_TIME-default migration and Attendance's
+Half-Day/overnight-lateness scoping got: **entitlement proration** is a
+concrete hire-year formula (`defaultAnnualEntitlement × daysRemainingInHireYear
+/ totalDaysInHireYear`, full entitlement every subsequent year, zero
+before hire), literally domain-doc §4's own recommendation made concrete
+- not a fresh assumption. **No employment-type-based entitlement
+adjustment** was added - the domain doc explicitly warns against
+hard-coding an unverified percentage (§3), so only the hire-date leg of
+its recommendation was implemented, deliberately leaving the rest as a
+named, open deferred item rather than inventing numbers.
+
+`LeaveBalance` is computed **lazily**, not via a scheduled annual grant
+job - this project has no scheduler/cron infrastructure anywhere, so
+`leaveService.getOrCreateLeaveBalance()` computes-and-persists a balance
+row the first time one is actually needed (on read or on request
+approval), the pragmatic implementation of "annual lump sum" (§4) without
+introducing new cross-cutting scheduling infrastructure for one domain.
+
+The employee-request/manager-approval overlap invariant ("no two
+Pending/Approved requests with overlapping dates," §4) is enforced in the
+**service layer**, not a DB exclusion constraint - a real range-overlap
+check needs Postgres's `btree_gist` extension, a heavier migration lift
+than anything else in this review; app-layer checking against the small
+per-employee active-request set is the simpler option this project has
+consistently favored absent a demonstrated need.
+
+**Approval authority refined during implementation, flagged explicitly
+rather than left ambiguous:** the domain doc describes `ADMIN` as a
+fallback only when `managerId` is null (§2). Implemented instead as two
+distinct permissions - `leaveRequest:decide:any` (`ADMIN`, unconditional
+on every request, not just the null-manager case) and
+`leaveRequest:decide:reports` (`MANAGER`, scoped in the service to the
+caller's own direct reports via `Employee.managerId`) - widening ADMIN's
+authority slightly beyond the doc's literal wording, consistent with the
+"audit-logged manual override as escape hatch" philosophy already applied
+to `LeaveBalance` elsewhere in this same domain doc (§10).
+
+Holiday/week-off-excluded duration (ADR-LV04) reuses the exact primitives
+Holiday Calendar and Shift already built for Attendance -
+`isDateHolidayInCalendar` and a `Weekday`-array membership check -
+computed once per request at approval time via
+`leave.service.js`'s internal `computeLeaveDuration`, iterating the
+requested date range. This is the second consumer of
+`isDateHolidayInCalendar` ADR-HC04 anticipated, exactly as planned.
+
+**Closes Attendance's own named gap (new ADR-LV08):**
+`leaveService.hasApprovedLeaveOnDate(employeeId, date)` is the query
+ADR-AT03/§12 asked Leave to expose. `attendanceService.getEffectiveStatus()`
+was extended with one new leg, inserted as
+`HOLIDAY → WEEK_OFF → ON_LEAVE → ABSENT → HALF_DAY → LATE → PRESENT` -
+a pure read of Leave's approved-request data, Attendance's own schema and
+write paths completely untouched, honoring ADR-AT03's read-only contract
+from both sides.
+
+**Permission model breaks in two different directions depending on
+aggregate shape (new ADR-LV07)** - the largest permission surface of any
+domain in this review, 14 new keys: `LeaveType` follows the ADMIN-only-
+mutation/read-for-all pattern every master-data domain since Branch
+converged on; `LeaveRequest`/`LeaveBalance` instead mirror `Employee`'s
+own/any split (`leaveRequest:create:own`, `:read:own`/`:read:any`,
+`:cancel:own`/`:cancel:any`, `:decide:any`/`:decide:reports`;
+`leaveBalance:read:own`/`:read:any`/`:adjust:any`), the same divergence
+Attendance's own ADR-AT06 already established for self-service-plus-
+admin-correction domains.
+
+New modules: `src/modules/leaveTypes/` (flat master-data aggregate,
+identical shape to `designations/`) and `src/modules/leave/` (two
+repositories - `leaveRequest.repository.js`, `leaveBalance.repository.js`
+- one orchestrating `leave.service.js`, mirroring Holiday Calendar's
+two-repositories-one-service shape). 15 new endpoints total: 5 for
+`/leave-types` (full CRUD), 6 for `/leave-requests`
+(create/list/get/approve/reject/cancel), 3 for `/leave-balances`
+(list/get/adjust) plus `GET /leave-requests` and `GET /leave-balances`
+diverging from Attendance's any-only list precedent - auto-scoped to the
+caller's own `employeeId` without `:read:any`, since viewing your own
+leave history is a core self-service need, not a nice-to-have. Migration
+was purely additive (three new tables, two new FKs onto `Employee`,
+`onDelete: Cascade` on both, mirroring `EmployeeDocument`/
+`AttendanceRecord`'s precedent) - no expand/backfill/contract needed
+since this is wholly new ground.
+
+New `leaveType.service.test.js` (5 tests) and `leave.service.test.js` (12
+tests: request creation + overlap rejection, inactive-leaveTypeId
+rejection, manager-approves-own-report-only authorization, holiday/
+week-off-excluded duration computed against a real 7-day range verified
+programmatically rather than assuming calendar alignment, insufficient-
+balance rejection, reject-only-when-pending, the full cancel matrix
+(pending/future-approved/already-started), both list/get ownership
+scoping, the hire-year proration formula across before/during/after the
+hire year, the admin balance-adjustment escape hatch, and the new
+Attendance `ON_LEAVE` integration end-to-end). All 69 tests across all
+eight domains pass together.
+
+Verified live end-to-end against the running server with four scratch
+users (ADMIN, MANAGER, EMPLOYEE, and a second unrelated EMPLOYEE) and a
+real manager-report relationship: LeaveType CRUD and its EMPLOYEE-403,
+leave application and overlap-409, a MANAGER correctly blocked from
+approving a non-report's request then correctly approving their own
+report's (duration computed as 3 chargeable days, no branch/shift
+assigned), the balance reflecting the deduction, `GET /attendance/
+effective-status` resolving `ON_LEAVE` for a covered date, cancellation
+restoring both the balance and the effective status back to `ABSENT`,
+the ADMIN manual balance-adjustment escape hatch, and delete-blocked-
+while-referenced on the LeaveType. All live-verification fixtures cleaned
+up afterward.
+
+`docs/domain-leave.md` (ADR-LV01-06 implementation confirmed, new
+ADR-LV07/LV08 added, confidence 83%→87%), `docs/domain-attendance.md`
+(ADR-AT03 marked fully implemented, confidence 85%→88%),
+`docs/adr-index.md`, `docs/deferred-decisions-register.md` updated.
+`handbook/API_ENDPOINTS.md` gained new endpoint docs for `/leave-types`,
+`/leave-requests`, and `/leave-balances` (delegated to a background agent
+given the expected size, then verified). `backend/README.md` updated to
+match.
+
+Deliberately **backend-only**, same as every prior domain.)_

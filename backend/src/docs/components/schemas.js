@@ -154,7 +154,7 @@ export const EffectiveStatusSchema = z
   .object({
     employeeId: z.uuid().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
     date: z.iso.datetime().meta({ example: '2026-09-15T00:00:00.000Z' }),
-    status: z.enum(['PRESENT', 'LATE', 'HALF_DAY', 'ABSENT', 'HOLIDAY', 'WEEK_OFF']).meta({
+    status: z.enum(['PRESENT', 'LATE', 'HALF_DAY', 'ABSENT', 'HOLIDAY', 'WEEK_OFF', 'ON_LEAVE']).meta({
       description: 'Computed on read (ADR-AT03), never stored',
       example: 'PRESENT',
     }),
@@ -164,6 +164,48 @@ export const EffectiveStatusSchema = z
     }),
   })
   .meta({ id: 'EffectiveStatus' });
+
+export const LeaveTypeSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f' }),
+    name: z.string().meta({ example: 'Annual Leave' }),
+    defaultAnnualEntitlement: z.int().meta({ example: 18 }),
+    status: z.enum(['ACTIVE', 'INACTIVE']).meta({ example: 'ACTIVE' }),
+    createdAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+  })
+  .meta({ id: 'LeaveType' });
+
+export const LeaveRequestSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6f7a' }),
+    employeeId: z.uuid().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    leaveTypeId: z.uuid().meta({ example: 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f' }),
+    startDate: z.iso.datetime().meta({ example: '2026-10-05T00:00:00.000Z' }),
+    endDate: z.iso.datetime().meta({ example: '2026-10-09T00:00:00.000Z' }),
+    reason: z.string().nullable().meta({ example: 'Family function' }),
+    status: z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']).meta({ example: 'PENDING' }),
+    durationDays: z.string().nullable().meta({
+      description: 'Prisma Decimal - serializes as a string. Set only once APPROVED.',
+      example: null,
+    }),
+    createdAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+  })
+  .meta({ id: 'LeaveRequest' });
+
+export const LeaveBalanceSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'd4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6f7a8b' }),
+    employeeId: z.uuid().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    leaveTypeId: z.uuid().meta({ example: 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f' }),
+    year: z.int().meta({ example: 2026 }),
+    entitlement: z.string().meta({ description: 'Prisma Decimal - serializes as a string', example: '18' }),
+    consumed: z.string().meta({ description: 'Prisma Decimal - serializes as a string', example: '5' }),
+    createdAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+  })
+  .meta({ id: 'LeaveBalance' });
 
 export const EmployeeDocumentSchema = z
   .object({

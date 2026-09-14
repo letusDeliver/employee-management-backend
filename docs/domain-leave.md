@@ -89,7 +89,8 @@ Leave manages **employee requests for planned time off** — leave types (Annual
 1. Carry-forward and encashment policy — explicitly deferred (§6), not decided either way.
 2. Negative-balance / advance-leave policy — explicitly deferred; current default is strict no-negative-balance.
 3. Leave-type-specific sub-rules (e.g., medical certificate required above N consecutive sick days) — deferred; no verified requirement yet.
-4. Permission scoping for LeaveType management — same unresolved `ADMIN`-only vs. broader pattern as prior domains.
+4. ~~Permission scoping for LeaveType management — same unresolved `ADMIN`-only vs. broader pattern as prior domains.~~ **Resolved (2026-09-15) — see ADR-LV07.**
+5. Entitlement-proration formula and any employment-type-based adjustment — **partially resolved (2026-09-15)**: the hire-date proration leg of §4's own recommendation is implemented concretely (see ADR-LV03's implementation note); no employment-type-based adjustment was added, since no verified formula exists and hard-coding one was explicitly warned against (§3). Still not confirmed with real business stakeholders, as this section originally requested.
 
 ## 9. Deferred Decisions
 
@@ -127,35 +128,48 @@ This most directly constrains the future **Payroll** domain, which will need to 
 ## Architecture Decision Records
 
 **ADR-LV01 — Three Aggregates: LeaveType, LeaveRequest, LeaveBalance**
-Status: Accepted
+Status: Accepted; Implemented (2026-09-15)
 Summary: Distinct lifecycle shapes (master data, workflow, ledger) are modeled as distinct aggregates rather than collapsed into one table.
+Implementation note: `LeaveType` has no `code` field (same reasoning as `HolidayCalendar` - this domain's own sign-off never names one as useful).
 
 **ADR-LV02 — Manager-Approval Workflow with Admin Fallback**
-Status: Accepted
+Status: Accepted; Implemented (2026-09-15) — refined, see note
 Summary: Reuses existing `Employee.managerId`; `ADMIN` approves when no manager is assigned.
+Implementation note: implemented as two distinct permissions rather than one shared `:any` key - `leaveRequest:decide:any` (ADMIN, unconditional on every request, not just the null-manager fallback case §2 literally describes) and `leaveRequest:decide:reports` (MANAGER, scoped in the service to the caller's own direct reports via `Employee.managerId`). This widens ADMIN's authority slightly beyond the doc's literal "fallback when managerId is null" wording, consistent with the "audit-logged manual override as escape hatch" philosophy already applied to LeaveBalance (§10) - worth naming explicitly as a refinement, not a silent reinterpretation.
 
 **ADR-LV03 — LeaveBalance Stored, Not Computed-on-Read**
-Status: Accepted
+Status: Accepted; Implemented (2026-09-15)
 Summary: Deliberately different from Attendance's ADR-AT03, justified by the intra-domain vs. cross-domain distinction (§7).
+Implementation note: balances are computed **lazily** (`leaveService.getOrCreateLeaveBalance`), not by a scheduled annual grant job - this project has no scheduler/cron infrastructure, so the first read or approval that needs a given (employee, leaveType, year) balance computes and persists it via the concrete hire-year proration formula: full `defaultAnnualEntitlement` every year after hire, zero before hire, and `defaultAnnualEntitlement × (daysRemainingInHireYear / totalDaysInHireYear)` (rounded to 2 decimals) during the hire year itself. No employment-type-based adjustment (§3's own caveat honored - not hard-coding an unverified formula).
 
 **ADR-LV04 — Holiday-Aware Duration via Shared Resolution Query**
-Status: Accepted
+Status: Accepted; Implemented (2026-09-15)
 Summary: Reuses the query recommended in Holiday Calendar's ADR-HC04; second consumer alongside Attendance.
+Implementation note: `leaveService`'s internal `computeLeaveDuration` reads the employee's Branch → HolidayCalendar → `isDateHolidayInCalendar` and Shift → `workingDays`, iterating the requested date range once at approval time - computed and stored on `LeaveRequest.durationDays`, never recalculated afterward.
 
 **ADR-LV05 — Strict No-Negative-Balance Default**
-Status: Accepted (default policy)
+Status: Accepted (default policy); Implemented (2026-09-15)
 Summary: Leave requests exceeding balance are rejected by default; manual admin override is the escape hatch.
+Implementation note: the escape hatch is real, not just described - `PATCH /leave-balances/:id` (`leaveBalance:adjust:any`, ADMIN-only, always audit-logged).
 
 **ADR-LV06 — Carry-Forward / Encashment Deferred**
 Status: Deferred
 Summary: No verified requirement; additive to today's per-year ledger shape if ever needed.
 
+**ADR-LV07 — Permission Scoping**
+Status: Accepted; Implemented (2026-09-15)
+Summary: `LeaveType` follows the established `ADMIN`-only-mutation/read-for-all pattern (matching Branch/Department/Designation/Holiday Calendar/Shift). `LeaveRequest`/`LeaveBalance` instead mirror `Employee`'s own/any split (`leaveRequest:create:own`, `:read:own`/`:read:any`, `:cancel:own`/`:cancel:any`, `:decide:any`/`:decide:reports`; `leaveBalance:read:own`/`:read:any`/`:adjust:any`) - the largest permission surface of any domain in this review (14 keys), proportionate to having three aggregates with genuinely different actor shapes.
+
+**ADR-LV08 — Closes Attendance's ADR-AT03 Leave Leg**
+Status: Accepted; Implemented (2026-09-15)
+Summary: `leaveService.hasApprovedLeaveOnDate(employeeId, date)` is the query ADR-AT03/§12 named as a requirement for Leave to expose. `attendanceService.getEffectiveStatus()` now consumes it, inserted into the resolution order as `HOLIDAY → WEEK_OFF → ON_LEAVE → ABSENT → HALF_DAY → LATE → PRESENT`. Pure read; Attendance's schema and write paths are untouched, honoring the "no cross-domain writes" contract from both sides.
+
 ## Final Sign-off
 
-**Implementation readiness:** Ready. Open items (§8) are policy parameters, not structural blockers.
+**Implementation readiness:** Implemented (2026-09-15). Remaining open items (§8) are policy parameters, not structural blockers.
 
-**Confidence score: 83%** — reflects the genuine policy ambiguity around negative-balance/carry-forward/encashment, all explicitly named rather than silently assumed.
+**Confidence score: 87%** — up from 83%, reflecting successful implementation of all three aggregates, the approval workflow, holiday-aware duration, and the Attendance integration. Not higher: the genuine policy ambiguity around negative-balance/carry-forward/encashment/entitlement-proration remains unconfirmed with real business stakeholders, exactly as this section originally flagged.
 
-**Remaining blockers:** None structural. Confirm entitlement-proration formula and negative-balance policy with actual business stakeholders before implementation.
+**Remaining blockers:** None structural. The entitlement-proration formula and any employment-type-based adjustment still await real business-stakeholder confirmation, as this section originally requested - what's implemented is a concrete, reasoned default (§4's own recommendation made concrete), not a verified requirement.
 
 **Recommended next domain:** Payroll — the domain whose calculation inputs (Employment Type, Attendance's effective status, Leave's balance/deduction data) are now all designed and available to depend on.

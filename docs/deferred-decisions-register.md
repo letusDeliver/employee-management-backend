@@ -72,18 +72,20 @@ Every decision explicitly deferred across every domain in this review, in one pl
 | Biometric/geofenced device ingestion | No verified requirement, no existing hardware infrastructure. |
 | Regularization approval workflow | No approval-workflow infrastructure exists anywhere in this system yet. |
 | Effective-status caching/read-model | Only justified once a real, demonstrated performance problem exists. |
-| "On Leave" effective status | The Leave domain this leg of ADR-AT03 depends on doesn't exist yet (2026-09-15) — currently resolves as `ABSENT`; a named future extension point, not a silent gap. |
+| ~~"On Leave" effective status~~ | **Resolved (2026-09-15)** — Leave's ADR-LV08 added the `ON_LEAVE` branch to `getEffectiveStatus()`. |
 | Overnight-shift lateness computation | Comparing a real check-in timestamp against an overnight shift's startTime is ambiguous once the calendar day rolls over; implemented for non-overnight shifts only (2026-09-15). |
 
 ## Leave
 | Deferred Item | Reason |
 |---|---|
 | Carry-forward / encashment (LV06) | No verified requirement; **blocks Payroll and Exit Management's final-settlement completeness.** |
-| Monthly/periodic accrual instead of annual lump sum | No verified requirement. |
-| Negative-balance / advance-leave policy | No verified requirement; strict no-negative-balance is the safer default. |
+| Monthly/periodic accrual instead of annual lump sum | No verified requirement; implemented as annual lump-sum, hire-year-prorated (2026-09-15). |
+| Negative-balance / advance-leave policy | No verified requirement; strict no-negative-balance is the safer default - implemented (2026-09-15), `PATCH /leave-balances/:id` is the ADMIN escape hatch. |
 | Multi-level approval workflow | No approval-workflow infrastructure exists project-wide yet. |
 | Leave-type-specific sub-rules (medical certificates, etc.) | No verified requirement. |
-| Permission scoping | Open. |
+| Employment-type-based entitlement adjustment | No verified formula exists; explicitly not hard-coded (2026-09-15) - only the hire-date proration leg of §4's recommendation was implemented. |
+| Per-employee optional/restricted holiday election (HC05's boundary) | Still open even after Leave's implementation (2026-09-15) - no verified requirement surfaced during this pass. |
+| Permission scoping | **Resolved (2026-09-15)** — `LeaveType` follows the `ADMIN`-only pattern; `LeaveRequest`/`LeaveBalance` mirror Employee's own/any split (ADR-LV07). |
 
 ## Payroll
 | Deferred Item | Reason |
@@ -143,9 +145,9 @@ These are not domain-specific deferrals but the same missing capability surfacin
 
 | Recurring Gap | Domains Affected |
 |---|---|
-| Permission scoping beyond `ADMIN`-only | Leave, Payroll, Recruitment, Training, Asset Management, Exit Management. Branch (ADR-B07), Department (ADR-D08), Designation (ADR-DS06), Holiday Calendar (ADR-HC06), and Shift (ADR-SH05) have all now resolved this as `ADMIN`-only mutations / read-for-all (2026-09-13 through 2026-09-15) — the same resolution is the likely default for the rest unless a real requirement diverges. |
+| Permission scoping beyond `ADMIN`-only | Payroll, Recruitment, Training, Asset Management, Exit Management. Branch (ADR-B07), Department (ADR-D08), Designation (ADR-DS06), Holiday Calendar (ADR-HC06), Shift (ADR-SH05), and LeaveType (ADR-LV07) have all now resolved this as `ADMIN`-only mutations / read-for-all (2026-09-13 through 2026-09-15) — the same resolution is the likely default for the rest unless a real requirement diverges. Attendance (ADR-AT06) and LeaveRequest/LeaveBalance (ADR-LV07) instead resolved to Employee's own/any split, since both are self-service-plus-admin-correction domains, not pure master data - a second, equally-established pattern now exists depending on domain shape. |
 | No approval-workflow infrastructure project-wide | Attendance (regularization), Leave (multi-level approval), Asset Management (asset requests) all independently deferred the same underlying capability. |
 | No notification infrastructure project-wide | Training (renewal reminders) is the only domain to name this explicitly, but it would also affect Leave (approval notifications) and Exit Management (clearance reminders) once built. |
-| AuditLog extension to new entity types | Leave/Payroll assume it's used but don't re-litigate whether it should be. Branch (ADR-B08), Department (ADR-D09), Designation, Holiday Calendar (both entities, `HolidayCalendar` and `Holiday`), Shift, and Attendance (ADR-AT04) have all resolved this (2026-09-13 through 2026-09-15) — confirms the generic `AuditLog` model extends cleanly with no schema change, as predicted, across six independent domains now. |
+| AuditLog extension to new entity types | Payroll assumes it's used but doesn't re-litigate whether it should be. Branch (ADR-B08), Department (ADR-D09), Designation, Holiday Calendar (both entities, `HolidayCalendar` and `Holiday`), Shift, Attendance (ADR-AT04), and Leave (all three entities - `LeaveType`, `LeaveRequest`, `LeaveBalance`) have all resolved this (2026-09-13 through 2026-09-15) — confirms the generic `AuditLog` model extends cleanly with no schema change, as predicted, across eight independent domains now. |
 
 See [[future-roadmap]] for how these recurring gaps should be sequenced relative to the domain-specific open items above.

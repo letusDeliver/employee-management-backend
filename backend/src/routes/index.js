@@ -12,6 +12,9 @@ import designationRouter from '../modules/designations/designation.routes.js';
 import holidayCalendarRouter from '../modules/holidayCalendars/holidayCalendar.routes.js';
 import shiftRouter from '../modules/shifts/shift.routes.js';
 import attendanceRouter from '../modules/attendance/attendance.routes.js';
+import leaveTypeRouter from '../modules/leaveTypes/leaveType.routes.js';
+import leaveRequestRouter from '../modules/leave/leaveRequest.routes.js';
+import leaveBalanceRouter from '../modules/leave/leaveBalance.routes.js';
 
 const router = Router();
 
@@ -24,6 +27,9 @@ router.use('/designations', designationRouter);
 router.use('/holiday-calendars', holidayCalendarRouter);
 router.use('/shifts', shiftRouter);
 router.use('/attendance', attendanceRouter);
+router.use('/leave-types', leaveTypeRouter);
+router.use('/leave-requests', leaveRequestRouter);
+router.use('/leave-balances', leaveBalanceRouter);
 
 router.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });

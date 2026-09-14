@@ -5,6 +5,7 @@ import branchRepository from '../branches/branch.repository.js';
 import shiftRepository from '../shifts/shift.repository.js';
 import shiftService from '../shifts/shift.service.js';
 import holidayCalendarService from '../holidayCalendars/holidayCalendar.service.js';
+import leaveService from '../leave/leave.service.js';
 import auditLogRepository from '../audit/auditLog.repository.js';
 import { AUDIT_ACTIONS, AUDIT_ENTITY_TYPES } from '../audit/auditLog.constants.js';
 import NotFoundError from '../../errors/NotFoundError.js';
@@ -275,11 +276,12 @@ const deleteAttendanceRecord = async (id, actor) => {
 };
 
 // The "Attendance Calculation Service" domain-attendance.md §3/§5 names -
-// the one place that reads Shift + Holiday Calendar + raw AttendanceRecord
-// to produce an effective daily status. Computed on every call, never
-// persisted (ADR-AT03). Does NOT yet resolve "On Leave" - the Leave domain
-// this would require doesn't exist yet; that branch is a named future
-// extension point, not a silent gap (docs/domain-attendance.md §12).
+// the one place that reads Shift + Holiday Calendar + Leave + raw
+// AttendanceRecord to produce an effective daily status. Computed on
+// every call, never persisted (ADR-AT03). Now resolves "ON_LEAVE" too
+// (docs/domain-leave.md, closing the gap named when this service was
+// first built) - a pure read of Leave's approved-request data, never a
+// write into Attendance.
 const getEffectiveStatus = async (employeeIdInput, dateInput, requester) => {
   let employeeId = employeeIdInput;
 
@@ -326,6 +328,17 @@ const getEffectiveStatus = async (employeeIdInput, dateInput, requester) => {
     if (shift && !shift.workingDays.includes(weekday)) {
       return { employeeId, date, status: 'WEEK_OFF', record: null };
     }
+  }
+
+  // Closes the gap named at this domain's own implementation time
+  // (docs/domain-attendance.md ADR-AT03's Leave leg): a pure read of
+  // Leave's approved-request data, never a write into Attendance - Leave
+  // exposes exactly the query ADR-AT03/§12 asked for
+  // (leaveService.hasApprovedLeaveOnDate), and this is its only consumer.
+  const approvedLeave = await leaveService.hasApprovedLeaveOnDate(employeeId, date);
+
+  if (approvedLeave) {
+    return { employeeId, date, status: 'ON_LEAVE', record: null };
   }
 
   const record = await attendanceRepository.findByEmployeeAndDate(employeeId, date);

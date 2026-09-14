@@ -233,6 +233,105 @@ const PERMISSIONS = [
     scope: 'any',
     description: 'Delete any attendance record',
   },
+  {
+    key: 'leaveType:create',
+    resource: 'leaveType',
+    action: 'create',
+    scope: null,
+    description: 'Create a leave type',
+  },
+  {
+    key: 'leaveType:read',
+    resource: 'leaveType',
+    action: 'read',
+    scope: null,
+    description: 'Read leave type records',
+  },
+  {
+    key: 'leaveType:update',
+    resource: 'leaveType',
+    action: 'update',
+    scope: null,
+    description: 'Update a leave type, including activating/deactivating it',
+  },
+  {
+    key: 'leaveType:delete',
+    resource: 'leaveType',
+    action: 'delete',
+    scope: null,
+    description: 'Hard-delete a leave type with zero LeaveRequest/LeaveBalance references',
+  },
+  {
+    key: 'leaveRequest:create:own',
+    resource: 'leaveRequest',
+    action: 'create',
+    scope: 'own',
+    description: "Apply for leave against the caller's own Employee record",
+  },
+  {
+    key: 'leaveRequest:read:own',
+    resource: 'leaveRequest',
+    action: 'read',
+    scope: 'own',
+    description: "Read the caller's own leave requests only",
+  },
+  {
+    key: 'leaveRequest:read:any',
+    resource: 'leaveRequest',
+    action: 'read',
+    scope: 'any',
+    description: 'Read any leave request, including listing across employees',
+  },
+  {
+    key: 'leaveRequest:cancel:own',
+    resource: 'leaveRequest',
+    action: 'cancel',
+    scope: 'own',
+    description: "Cancel the caller's own pending or future-dated approved leave request",
+  },
+  {
+    key: 'leaveRequest:cancel:any',
+    resource: 'leaveRequest',
+    action: 'cancel',
+    scope: 'any',
+    description: 'Cancel any pending or future-dated approved leave request',
+  },
+  {
+    key: 'leaveRequest:decide:any',
+    resource: 'leaveRequest',
+    action: 'decide',
+    scope: 'any',
+    description: 'Approve or reject any pending leave request, unconditionally (ADMIN)',
+  },
+  {
+    key: 'leaveRequest:decide:reports',
+    resource: 'leaveRequest',
+    action: 'decide',
+    scope: 'reports',
+    description:
+      "Approve or reject a pending leave request only for the caller's own direct reports (MANAGER)",
+  },
+  {
+    key: 'leaveBalance:read:own',
+    resource: 'leaveBalance',
+    action: 'read',
+    scope: 'own',
+    description: "Read the caller's own leave balances only",
+  },
+  {
+    key: 'leaveBalance:read:any',
+    resource: 'leaveBalance',
+    action: 'read',
+    scope: 'any',
+    description: 'Read any leave balance, including listing across employees',
+  },
+  {
+    key: 'leaveBalance:adjust:any',
+    resource: 'leaveBalance',
+    action: 'adjust',
+    scope: 'any',
+    description: 'Manually adjust any leave balance (ADMIN escape hatch, always audit-logged)',
+  },
 ];
 
 const ROLE_PERMISSIONS = {
@@ -268,6 +367,19 @@ const ROLE_PERMISSIONS = {
     'attendance:create:any',
     'attendance:update:any',
     'attendance:delete:any',
+    'leaveType:create',
+    'leaveType:read',
+    'leaveType:update',
+    'leaveType:delete',
+    'leaveRequest:create:own',
+    'leaveRequest:read:own',
+    'leaveRequest:read:any',
+    'leaveRequest:cancel:own',
+    'leaveRequest:cancel:any',
+    'leaveRequest:decide:any',
+    'leaveBalance:read:own',
+    'leaveBalance:read:any',
+    'leaveBalance:adjust:any',
   ],
   MANAGER: [
     'employee:create',
@@ -285,6 +397,14 @@ const ROLE_PERMISSIONS = {
     'attendance:create:any',
     'attendance:update:any',
     'attendance:delete:any',
+    'leaveType:read',
+    'leaveRequest:create:own',
+    'leaveRequest:read:own',
+    'leaveRequest:read:any',
+    'leaveRequest:cancel:own',
+    'leaveRequest:decide:reports',
+    'leaveBalance:read:own',
+    'leaveBalance:read:any',
   ],
   EMPLOYEE: [
     'employee:read:own',
@@ -295,6 +415,11 @@ const ROLE_PERMISSIONS = {
     'shift:read',
     'attendance:checkin',
     'attendance:read:own',
+    'leaveType:read',
+    'leaveRequest:create:own',
+    'leaveRequest:read:own',
+    'leaveRequest:cancel:own',
+    'leaveBalance:read:own',
   ],
 };
 
@@ -333,7 +458,7 @@ const seedRolesAndGrants = async () => {
 const main = async () => {
   await seedPermissions();
   await seedRolesAndGrants();
-  console.log('Seed complete: 3 system roles, 32 permissions, role-permission grants.');
+  console.log('Seed complete: 3 system roles, 46 permissions, role-permission grants.');
 };
 
 main()

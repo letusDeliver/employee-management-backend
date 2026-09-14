@@ -132,6 +132,8 @@ model Employee {
   updatedAt     DateTime           @updatedAt
   documents     EmployeeDocument[]
   attendanceRecords AttendanceRecord[]
+  leaveRequests LeaveRequest[]
+  leaveBalances LeaveBalance[]
 
   // No @unique on userId: Prisma's schema DSL can't express a *partial*
   // unique constraint (scoped to non-deleted rows), so the real
@@ -352,6 +354,95 @@ model AttendanceRecord {
   @@unique([employeeId, date])
   @@index([employeeId])
   @@index([date])
+}
+
+// See docs/domain-leave.md for the full business-architecture sign-off.
+// Master data (ADR-LV01) - same status-lifecycle/hard-delete-if-
+// unreferenced shape as Branch/Department/Designation. No `code` field:
+// unlike those three, this domain's own sign-off never names one as
+// useful here (same reasoning HolidayCalendar applied).
+enum LeaveTypeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model LeaveType {
+  id                       String          @id @default(uuid())
+  name                     String          @unique
+  // Whole days, admin-configured per type (e.g. 18 for Annual, 10 for
+  // Sick) - the base a LeaveBalance's entitlement is prorated from.
+  defaultAnnualEntitlement Int
+  status                   LeaveTypeStatus @default(ACTIVE)
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime        @updatedAt
+  requests                 LeaveRequest[]
+  balances                 LeaveBalance[]
+}
+
+// Workflow aggregate (ADR-LV01) - this review's first explicit multi-party
+// approval state machine. PENDING -> APPROVED | REJECTED (manager, or
+// ADMIN when managerId is null); APPROVED -> CANCELLED only while
+// future-dated (ADR-LV02, domain doc §2).
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model LeaveRequest {
+  id           String             @id @default(uuid())
+  employeeId   String
+  employee     Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveTypeId  String
+  leaveType    LeaveType          @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  // Date-only (truncated to UTC midnight by the service layer), same
+  // convention as AttendanceRecord.date.
+  startDate    DateTime
+  endDate      DateTime
+  reason       String?
+  status       LeaveRequestStatus @default(PENDING)
+  // Holiday/week-off-excluded day count (ADR-LV04), computed and stored
+  // only at approval time - null while PENDING/REJECTED, since duration
+  // is meaningless until the request is actually granted.
+  durationDays Decimal?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  // The "no two overlapping Pending/Approved requests" invariant (§4) is
+  // a date-range overlap check, not expressible as a simple Prisma/SQL
+  // unique constraint (would need a btree_gist exclusion constraint) - so
+  // it is enforced in the service layer instead, consistent with this
+  // project's preference for the simpler option absent a demonstrated need.
+  @@index([employeeId])
+  @@index([leaveTypeId])
+  @@index([status])
+}
+
+// Per-employee, per-leaveType, per-year ledger (ADR-LV01) - Leave's own
+// internal aggregate, deliberately stored rather than computed-on-read
+// (ADR-LV03, diverging from Attendance's ADR-AT03: this is intra-domain
+// state updated at discrete events, not a cross-domain reconciliation).
+// `remaining` is never stored - always `entitlement - consumed`,
+// computed in the service/API response layer to avoid a redundant,
+// driftable column.
+model LeaveBalance {
+  id          String    @id @default(uuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveTypeId String
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  year        Int
+  // Decimal, not Int - hire-year proration produces fractional days
+  // (e.g. 9.07), same precision treatment as Employee.salary.
+  entitlement Decimal
+  consumed    Decimal   @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([employeeId, leaveTypeId, year])
+  @@index([employeeId])
+  @@index([leaveTypeId])
 }
 
 model EmployeeDocument {

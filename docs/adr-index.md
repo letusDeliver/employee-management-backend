@@ -81,7 +81,7 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the two most load-
 |---|---|---|
 | AT01 | Attendance as a raw-fact ledger, not master data | Accepted; Implemented (2026-09-15) |
 | AT02 | One record per (employee, date) | Accepted; Implemented (2026-09-15) |
-| AT03 | Effective status computed on read, never written by Leave (no cross-domain writes) | Accepted; Implemented (2026-09-15) — Holiday Calendar + Shift + AttendanceRecord legs only; the Leave leg ("On Leave") is a named gap until Leave exists |
+| AT03 | Effective status computed on read, never written by Leave (no cross-domain writes) | Accepted; Fully Implemented (2026-09-15) — Holiday Calendar + Shift + AttendanceRecord legs, plus the Leave leg (ADR-LV08 added `ON_LEAVE`) |
 | AT04 | Corrections tracked via generic `AuditLog` | Accepted; Implemented (2026-09-15) — every mutation logged, not just corrections |
 | AT05 | Single check-in/check-out; multi-punch explicitly deferred | Deferred (base accepted); base case Implemented (2026-09-15) |
 | AT06 | Permission scoping mirrors Employee's own/any split, not the master-data ADMIN-only pattern | Accepted; Implemented (2026-09-15) |
@@ -89,12 +89,14 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the two most load-
 ## Leave — [[domain-leave]]
 | ADR | Summary | Status |
 |---|---|---|
-| LV01 | Three aggregates: LeaveType, LeaveRequest, LeaveBalance | Accepted |
-| LV02 | Manager-approval workflow with admin fallback (reuses `managerId`) | Accepted |
-| LV03 | LeaveBalance stored, not computed-on-read (intra-domain, distinct from AT03) | Accepted |
-| LV04 | Holiday-aware duration via HC04's shared resolution query | Accepted |
-| LV05 | Strict no-negative-balance default | Accepted (default policy) |
+| LV01 | Three aggregates: LeaveType, LeaveRequest, LeaveBalance | Accepted; Implemented (2026-09-15) |
+| LV02 | Manager-approval workflow with admin fallback (reuses `managerId`) | Accepted; Implemented (2026-09-15) — refined to two permission keys, `decide:any` (ADMIN, unconditional) and `decide:reports` (MANAGER, own reports only) |
+| LV03 | LeaveBalance stored, not computed-on-read (intra-domain, distinct from AT03) | Accepted; Implemented (2026-09-15) — computed lazily on first need, via a concrete hire-year proration formula |
+| LV04 | Holiday-aware duration via HC04's shared resolution query | Accepted; Implemented (2026-09-15) |
+| LV05 | Strict no-negative-balance default | Accepted (default policy); Implemented (2026-09-15) — `PATCH /leave-balances/:id` is the ADMIN-only, audit-logged escape hatch |
 | LV06 | Carry-forward / encashment | **Deferred — Open**, blocks Payroll/Exit Management final-settlement completeness |
+| LV07 | Permission scoping | Accepted; Implemented (2026-09-15) — `LeaveType` follows the `ADMIN`-only pattern; `LeaveRequest`/`LeaveBalance` mirror Employee's own/any split |
+| LV08 | Closes Attendance's ADR-AT03 Leave leg via `hasApprovedLeaveOnDate` | Accepted; Implemented (2026-09-15) |
 
 ## Payroll — [[domain-payroll]]
 | ADR | Summary | Status |
@@ -149,8 +151,7 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the two most load-
 
 | ADR | Domain | Nature of Gap |
 |---|---|---|
-| HC05 | Holiday Calendar | Optional/restricted holiday election — boundary deferred to Leave. |
-| AT03 (Leave leg) | Attendance | "On Leave" effective status not resolvable until Leave exists and exposes an "approved leave for employee X on date Y" query — currently resolves as `ABSENT`, a named gap (§9), not a defect. |
+| HC05 | Holiday Calendar | Optional/restricted holiday election — boundary deferred to Leave; still open, Leave's own implementation (2026-09-15) did not add per-employee holiday election. |
 | LV06 | Leave | Carry-forward / encashment policy — blocks Payroll (PR05-adjacent) and Exit Management (EM05) final-settlement completeness. |
 | PR05 | Payroll | Salary period unit unverified — requires stakeholder confirmation. |
 | RC04 | Recruitment | Candidate PII retention — requires legal/compliance input. |
