@@ -1390,3 +1390,114 @@ section for `shiftId` (delegated to a background agent given the
 expected size, then verified). `backend/README.md` updated to match.
 
 Deliberately **backend-only**, same as every prior domain.)_
+
+_(Attendance Domain — 2026-09-15, on branch `feature/21-attendance-domain`
+(based on `feature/20-shift-domain`). Seventh domain from the HRMS/ERP
+Business Architecture Review (`docs/domain-attendance.md`), and the first
+domain that genuinely breaks the mold every prior domain (Branch through
+Shift) followed - no status/archive lifecycle, no hard-delete-if-
+referenced rule (`AttendanceRecord` is a raw-fact historical ledger per
+ADR-AT01, closer in nature to `AuditLog` than to master data), and the
+first domain to need a **coordinating read service** that cross-
+references two other domains' data (Holiday Calendar + Shift) to produce
+a value that is never itself persisted (ADR-AT03: effective status
+computed on read).
+
+`attendanceService.getEffectiveStatus(employeeId, date, requester)` is
+that coordinating service - the concrete point where ADR-HC04's
+Holiday-Calendar resolution-query recommendation and ADR-SH03's Shift
+overnight-semantics primitive actually get consumed together, rather
+than remaining hypothetical for "whoever designs Attendance next" (as
+both domains' own sign-offs anticipated). It resolves, in order: Employee
+→ Branch → HolidayCalendar → `isDateHolidayInCalendar` (`HOLIDAY`);
+Employee → Shift → `workingDays` exclusion (`WEEK_OFF`); no
+`AttendanceRecord` (`ABSENT`); `record.isHalfDay` (`HALF_DAY`); Shift
+assigned and non-overnight and `checkIn` later than `shift.startTime`
+(`LATE`); otherwise `PRESENT`. Does **not** resolve `ON_LEAVE` - the
+Leave domain that leg of ADR-AT03 depends on doesn't exist yet; a
+currently-on-leave date resolves as `ABSENT` today, a named gap (§9 of
+the domain doc), not a silent one.
+
+Two judgment calls made and documented rather than left implicit, since
+the domain doc names the resulting status values but doesn't fully
+specify either: **`isHalfDay` is a stored fact, not a derived time-
+threshold** (mirrors `Holiday.isOptional`'s shape - inventing a minimum-
+hours rule with no verified requirement would have been a fabricated
+assumption, not an architecture decision). **Lateness is only computed
+for non-overnight shifts** - comparing a real check-in timestamp's HH:mm
+against an overnight shift's `startTime` string is ambiguous once the
+calendar day rolls over, and Shift's own ADR-SH03 risk row already
+flagged this exact edge case as something "Attendance's own sign-off
+should re-verify" - scoped out explicitly as a named entry in
+`docs/domain-attendance.md`'s Deferred Decisions table, rather than
+guessing at fragile date arithmetic.
+
+`AttendanceRecord.employeeId` uses `onDelete: Cascade`, not `Restrict`
+like every governed-master-data FK on Employee (`branchId`/
+`departmentId`/`designationId`/`shiftId`) - this is owned-by-Employee
+history, mirroring `EmployeeDocument`'s own Cascade, not referenced
+master data that must outlive its owner. `date` is truncated to UTC
+midnight by the service layer before every write/query
+(`attendanceService`'s `toDateOnly`), enforcing ADR-AT02's one-record-
+per-(employee,date) invariant regardless of what time-of-day component an
+input carried.
+
+**Permission model deliberately breaks from the ADMIN-only-mutation shape
+every master-data domain (Branch through Shift) converged on** (new
+ADR-AT06): `attendance:checkin` (self-service check-in/check-out, every
+role), `attendance:read:own`/`:read:any`, `attendance:create:any`/
+`:update:any`/`:delete:any` (ADMIN + MANAGER, mirroring `employee:*:any`'s
+existing MANAGER grant - the closest existing precedent for a domain
+that's inherently self-service-plus-admin-correction, not pure master
+data). `GET /attendance` (list) stayed `:any`-only with no auto-scoped
+`:own` listing, matching `GET /employees`'s existing shape rather than
+inventing a new one; single-record `GET /attendance/:id` and
+`GET /attendance/effective-status` both got the own-vs-any split,
+mirroring `GET /employees/:id`'s existing ownership-check pattern (service
+layer checks `req.grantedPermissions` post-fetch, since the permission
+middleware has no record yet to compare against).
+
+New module `src/modules/attendance/` - repository, validation, service,
+controller, routes, docs. Two self-service endpoints with no request body
+(`POST /attendance/check-in`, `PATCH /attendance/check-out` - the
+timestamp is always the server's current time, never client-supplied) plus
+the standard create/list/get/update/delete set for admin/manager use, plus
+the dedicated `GET /attendance/effective-status?employeeId=&date=` read
+(registered before `/:id` in the route file, otherwise Express would try
+to match "effective-status" as an `:id` value). Self-check-in/check-out
+resolve "my own Employee record" via `employeeRepository.findByUserId`,
+the same lookup `employee.service.js`'s `createEmployee` already uses to
+detect an existing link - reused here since there's no `:id` in the URL to
+derive ownership from. Migration was purely additive (new `AttendanceRecord`
+table, new FK to Employee) - no expand/backfill/contract needed since this
+is a wholly new aggregate, not a column replacement.
+
+New `attendance.service.test.js` (15 tests: check-in/check-out flows
+including duplicate-in/duplicate-out/no-employee-record rejections, admin
+manual creation plus duplicate-(employeeId,date) and future-date
+rejection, single-record ownership checks for owner/non-owner/`:any`,
+list filtering by employeeId and date range, correction with AuditLog
+verification, deletion with no reference-count restriction, and all six
+`getEffectiveStatus` branches - `HOLIDAY`, `WEEK_OFF`, `ABSENT`,
+`PRESENT`, `LATE`, `HALF_DAY` - plus the overnight-shift limitation and
+the cross-employee ownership rejection). All 52 tests across all seven
+domains pass together.
+
+Verified live end-to-end against the running server: self check-in/
+check-out (including both duplicate-action 409s), EMPLOYEE-role 403 on
+list and on admin-create, admin manual creation plus duplicate-409 and
+future-date-400, filtered list, a real correction via `PATCH`, effective-
+status for both an explicit `employeeId` (ADMIN) and the caller's own
+default (EMPLOYEE), a 403 when EMPLOYEE queried another employee's
+effective status, and delete-then-404. All live-verification fixtures
+cleaned up afterward.
+
+`docs/domain-attendance.md` (ADR-AT01-05 implementation confirmed, new
+ADR-AT06 added for permission scoping, the Leave-dependent gap in AT03
+named explicitly rather than silently narrowed, confidence 82%→85%),
+`docs/adr-index.md`, `docs/deferred-decisions-register.md` updated.
+`handbook/API_ENDPOINTS.md` gained new endpoint docs for `/attendance`
+(delegated to a background agent given the expected size, then verified).
+`backend/README.md` updated to match.
+
+Deliberately **backend-only**, same as every prior domain.)_

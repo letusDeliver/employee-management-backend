@@ -137,6 +137,34 @@ export const ShiftSchema = z
   })
   .meta({ id: 'Shift' });
 
+export const AttendanceRecordSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'c9b8a7d6-e5f4-4a3b-8c1d-0e9f8a7b6c5f' }),
+    employeeId: z.uuid().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    date: z.iso.datetime().meta({ example: '2026-09-15T00:00:00.000Z' }),
+    checkIn: z.iso.datetime().nullable().meta({ example: '2026-09-15T09:05:00.000Z' }),
+    checkOut: z.iso.datetime().nullable().meta({ example: '2026-09-15T18:02:00.000Z' }),
+    isHalfDay: z.boolean().meta({ example: false }),
+    createdAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
+  })
+  .meta({ id: 'AttendanceRecord' });
+
+export const EffectiveStatusSchema = z
+  .object({
+    employeeId: z.uuid().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    date: z.iso.datetime().meta({ example: '2026-09-15T00:00:00.000Z' }),
+    status: z.enum(['PRESENT', 'LATE', 'HALF_DAY', 'ABSENT', 'HOLIDAY', 'WEEK_OFF']).meta({
+      description: 'Computed on read (ADR-AT03), never stored',
+      example: 'PRESENT',
+    }),
+    record: AttendanceRecordSchema.nullable().meta({
+      description: 'The raw AttendanceRecord this status was derived from, if one exists',
+      example: null,
+    }),
+  })
+  .meta({ id: 'EffectiveStatus' });
+
 export const EmployeeDocumentSchema = z
   .object({
     id: z.uuid().meta({ example: 'f1e2d3c4-b5a6-4978-8f6e-5d4c3b2a1908' }),

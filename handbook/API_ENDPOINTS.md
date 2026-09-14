@@ -282,6 +282,14 @@ in Postman's cookie jar once register/login/refresh sets it.
 | 45  | Shifts    | `GET`    | `/shifts/:id`                          | Access token              | `shift:read`                                   | Protected          |
 | 46  | Shifts    | `PATCH`  | `/shifts/:id`                          | Access token              | `shift:update`                                 | Protected          |
 | 47  | Shifts    | `DELETE` | `/shifts/:id`                          | Access token              | `shift:delete`                                 | Protected          |
+| 48  | Attendance | `POST`   | `/attendance/check-in`                | Access token              | `attendance:checkin`                           | Protected          |
+| 49  | Attendance | `PATCH`  | `/attendance/check-out`               | Access token              | `attendance:checkin`                           | Protected          |
+| 50  | Attendance | `POST`   | `/attendance`                          | Access token              | `attendance:create:any`                        | Protected          |
+| 51  | Attendance | `GET`    | `/attendance`                          | Access token              | `attendance:read:any`                          | Protected          |
+| 52  | Attendance | `GET`    | `/attendance/effective-status`         | Access token              | `attendance:read:any` OR `attendance:read:own` | Protected          |
+| 53  | Attendance | `GET`    | `/attendance/:id`                      | Access token              | `attendance:read:any` OR `attendance:read:own` | Protected          |
+| 54  | Attendance | `PATCH`  | `/attendance/:id`                      | Access token              | `attendance:update:any`                        | Protected          |
+| 55  | Attendance | `DELETE` | `/attendance/:id`                      | Access token              | `attendance:delete:any`                        | Protected          |
 
 **As of the Branch domain (2026-09-13)**, `Employee` create/update also
 accept an optional `branchId` — see endpoints 9 and 12 above, whose
@@ -374,6 +382,63 @@ assignment. Mutations require `shift:create`/`update`/`delete` (`ADMIN`
 only, as seeded, ADR-SH05); `shift:read` is granted to every role, the same
 broad reference-data reasoning already applied to `branch:read`/
 `department:read`/`designation:read`/`holidayCalendar:read`.
+
+**As of the Attendance domain (2026-09-15)**: the first domain in this
+review that is **not** master data — a raw-fact historical ledger
+(`docs/domain-attendance.md` ADR-AT01), architecturally closer to
+`AuditLog` than to Branch/Department/Designation/Holiday Calendar/Shift's
+shared create → update → archive (`status`) → hard-delete-if-unreferenced
+shape. `AttendanceRecord` (`id`, `employeeId`, `date`, `checkIn` —
+nullable, `checkOut` — nullable, `isHalfDay` — boolean, defaults `false`,
+timestamps) has **no `status`/archive field and no `code` field at all** —
+a record is never deactivated, only created or corrected. Exactly one
+`AttendanceRecord` may exist per `(employeeId, date)` pair
+(`@@unique([employeeId, date])`, ADR-AT02), enforced at the database
+level; `date` is always truncated to UTC midnight server-side (regardless
+of what time-of-day component a request's date string carried) before
+every write or query. Unlike every prior domain's `onDelete: Restrict`
+from Employee's own FKs, `AttendanceRecord.employeeId`'s FK uses
+`onDelete: Cascade` — this is owned-by-Employee history, the same
+relationship shape as `EmployeeDocument`, not referenced master data. See
+endpoints 48-55 below for the full `/attendance` surface: self-service
+`POST /attendance/check-in`/`PATCH /attendance/check-out` (endpoints
+48-49 — every role, as seeded; resolve the caller's own Employee record
+from their User id; never accept a request body, the timestamp is always
+the server's current time), administrative `POST`/`GET`/`GET
+/attendance/:id`/`PATCH`/`DELETE /attendance` (endpoints 50, 51, 53, 54,
+55), and the coordinating-service read `GET /attendance/effective-status`
+(endpoint 52) that `docs/domain-attendance.md` §3/§5 names — it
+cross-references Holiday Calendar (via the employee's `Branch`) and Shift
+(via the employee's `shiftId`) with the raw `AttendanceRecord` to compute
+one of six statuses, in this resolution order: `HOLIDAY` → `WEEK_OFF` →
+`ABSENT` → `HALF_DAY` → `LATE` → `PRESENT` — computed fresh on every call,
+never persisted (ADR-AT03). This computed status does **not** yet resolve
+an `ON_LEAVE` state — the Leave domain that would require doesn't exist
+anywhere in this codebase yet, so a leave day currently computes as
+`ABSENT`, a named future extension point (`docs/domain-attendance.md`
+§9/§12), not a silent gap. Lateness is computed only for **non-overnight**
+shifts (`shiftService.isOvernightShift`) — an overnight shift (`endTime <
+startTime`) skips the `LATE` check entirely and falls through to
+`PRESENT`, a deliberate, documented scope limitation, not a bug (comparing
+a real check-in timestamp against an overnight shift's `startTime` is
+ambiguous once the calendar day rolls over). Permission scoping diverges
+from every master-data domain's `ADMIN`-only-mutation pattern (ADR-AT06):
+`attendance:checkin` and `attendance:read:own` are granted to every role
+including `EMPLOYEE`, while `attendance:read:any`/`create:any`/
+`update:any`/`delete:any` are granted to **both** `ADMIN` and `MANAGER` —
+mirroring `employee:*:any`'s existing `MANAGER` grant rather than
+Branch/Department/Designation/Holiday Calendar/Shift's `ADMIN`-only
+mutation scoping (B07/D08/DS06/HC06/SH05). `GET /attendance` (endpoint 51)
+has **no auto-scoped `:own` listing mode** — the same shape as `GET
+/employees` (endpoint 10), not a new pattern. `DELETE /attendance/:id`
+(endpoint 55) has **no reference-count restriction**, unlike
+Branch/Department/Designation/Shift's delete guards — nothing holds a
+foreign key onto `AttendanceRecord`, so it is a plain hard delete, still
+audit-logged like every other mutation in this domain (ADR-AT04). `PATCH
+/attendance/:id` cannot change `employeeId`/`date` — correcting a record's
+employee or date isn't a correction, it's a different record. No existing
+Employee endpoint's request/response shape changes as part of this
+domain — Attendance is entirely additive.
 
 **As of Feature 9**, authorization is permission-based, not role-based —
 `ADMIN`/`MANAGER`/`EMPLOYEE` are just role _names_ that happen to be
@@ -10338,3 +10403,1757 @@ for a referenced shift, expect and assert on the `409`.
 - ✅ Delete with an active reference → `409` (verified live)
 - ✅ `403` as `EMPLOYEE`, `401` with no token
 - ✅ `404` for nonexistent `id`
+
+---
+
+---
+
+# 48. `POST /attendance/check-in`
+
+## 1. Endpoint Information
+
+```
+Feature:            Attendance Domain (2026-09-15, feature/21-attendance-domain)
+Endpoint:           Self-Service Check-In
+Description:        Creates today's AttendanceRecord for the caller's own Employee record, or fills in checkIn on an existing blank one
+Method:             POST
+URL:                /api/v1/attendance/check-in
+API Version:        v1
+Module:             modules/attendance
+Authentication:     Yes (Bearer access token)
+Authorization:      `attendance:checkin` permission required (every role, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: `docs/domain-attendance.md` §2 names self-service
+  check-in as the primary creation path for an `AttendanceRecord` —
+  Attendance is the first domain in this review that records something
+  that *happened*, daily, at scale, rather than master data. This is the
+  everyday entry point for that fact.
+- **Business problem solved**: lets an employee mark "I am here today"
+  without any admin involvement, the raw input every later computed
+  status (`GET /attendance/effective-status`, endpoint 52) is built from.
+- **Expected callers**: every authenticated user with a linked Employee
+  record — `ADMIN`, `MANAGER`, and `EMPLOYEE` alike, unlike every prior
+  domain's mutation endpoints which are `ADMIN`-only or `ADMIN`+`MANAGER`
+  (ADR-AT06).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                              |
+| -------------------------------------- | -------- | ------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `attendance:checkin` permission |
+
+No `Content-Type` is needed — no body is sent.
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None. **This endpoint never accepts a body** — any body sent is ignored.
+The `checkIn` timestamp is always the server's current time (`new
+Date()`), never a client-supplied value; the target date and employee are
+both resolved server-side.
+
+## 7. Validation Rules
+
+No body to validate. The service layer instead:
+
+1. Resolves the caller's own Employee record from their User id
+   (`employeeRepository.findByUserId(actor.id)`) — `400` if none is
+   linked.
+2. Truncates "now" to a calendar day (UTC midnight) and looks up
+   today's `AttendanceRecord` for that employee
+   (`attendanceRepository.findByEmployeeAndDate`).
+3. If a record already exists **and already has a `checkIn`**, `409`.
+   Otherwise, creates a new record (no prior record for today) or fills
+   in `checkIn` on the existing one (e.g. an admin-precreated blank
+   record via `POST /attendance`, endpoint 50).
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "record": {
+    "id": "c9b8a7d6-e5f4-4a3b-8c1d-0e9f8a7b6c5f",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "date": "2026-09-15T00:00:00.000Z",
+    "checkIn": "2026-09-15T09:05:00.000Z",
+    "checkOut": null,
+    "isHalfDay": false,
+    "createdAt": "2026-09-15T09:05:00.000Z",
+    "updatedAt": "2026-09-15T09:05:00.000Z"
+  }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                                   | Response (`message`)                              | When                                                             |
+| ------ | ------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------- |
+| `400`  | No linked Employee record                  | `"No employee record linked to this account"`         | The caller's User id has no matching `Employee.userId`                |
+| `401`  | Missing/invalid/expired access token        | Same as every other protected endpoint               | `authMiddleware` failure                                              |
+| `403`  | Caller lacks `attendance:checkin`           | `"You do not have permission to perform this action"` | Not expected in practice — every seeded role has this grant           |
+| `409`  | Already checked in for today               | `"Already checked in for today"`                       | Verified live: a second `POST /attendance/check-in` the same day → `409` |
+
+## 10. Postman Test Cases
+
+| #   | Case                                              | Expected |
+| --- | ---------------------------------------------------- | -------- |
+| 1   | First check-in of the day, linked Employee           | `201` — verified live |
+| 2   | Second check-in the same day                         | `409` — verified live |
+| 3   | Check-in against an admin-precreated blank record (no prior `checkIn`) | `201`, fills in `checkIn` on the existing record |
+| 4   | Caller with no linked Employee record                | `400` — verified live |
+| 5   | As `ADMIN`/`MANAGER`/`EMPLOYEE` token, each with their own linked Employee | `201` — verified live for all three |
+| 6   | No token                                            | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                        |
+| ----------------------------------- | --------------------------------------------------------------------- |
+| Body sent anyway (e.g. `{"checkIn": "2020-01-01T00:00:00.000Z"}`) | `201` — the body is never read; the server's own current time is used regardless |
+| Tampered/expired JWT                | `401`                                                                  |
+| Two check-ins racing for the same employee/date | One succeeds; the other observes the already-updated record's `checkIn` and gets `409` (not independently verified under true concurrency) |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                       |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Checking in against an existing record that has no `checkIn` yet (e.g. created by `POST /attendance` for an exception day) | `201` — `attendanceRepository.update` fills in `checkIn`; the `AuditLog` entry's `action` is `UPDATE`, not `CREATE`, since a row already existed |
+| Checking in on consecutive days                                  | Each day gets its own `AttendanceRecord` — the `(employeeId, date)` uniqueness constraint is per calendar day, not global                |
+| Checking in exactly at UTC midnight                              | Belongs to the new day — `toDateOnly(new Date())` truncates using the current moment, not a cached value                                  |
+
+## 13. Security Testing
+
+- **No BOLA concern**: the target Employee record is always resolved
+  from the caller's own User id server-side — there is no `employeeId` in
+  the request for a caller to tamper with.
+- **Mass assignment**: N/A — no body is ever read.
+
+## 14. Database Impact
+
+- **Tables affected**: `AttendanceRecord` (insert or update), `AuditLog`
+  (insert).
+- **Transactions**: both happen inside one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/attendance/check-in
+    ↓
+authMiddleware
+    ↓
+requirePermission('attendance:checkin')
+    ↓ (403 if not granted)
+attendance.controller.checkIn → attendance.service.checkIn(actor)
+    ├─ resolveOwnEmployee(actor.id) → employeeRepository.findByUserId → not found → 400
+    ├─ attendanceRepository.findByEmployeeAndDate(employee.id, today)
+    ├─ existing?.checkIn truthy → 409
+    └─ prisma.$transaction:
+         ├─ existing ? attendanceRepository.update(existing.id, { checkIn: now }, tx)
+         │            : attendanceRepository.create({ employeeId, date, checkIn: now }, tx)
+         └─ auditLogRepository.create({ action: existing ? 'UPDATE' : 'CREATE', ... }, tx)
+    ↓
+201 { record }
+```
+
+## 16. Performance Notes
+
+One `findByUserId` lookup, one `findByEmployeeAndDate` lookup (both
+indexed), one insert-or-update, one audit-log insert — cheap and
+bounded regardless of scale.
+
+## 17. Interview Notes
+
+- **Q: Why is there no body at all, unlike `POST /attendance`'s
+  admin-driven creation?** Self-service check-in has exactly one
+  meaningful value to record — "now" — and exactly one meaningful
+  target — "my own Employee record." Accepting a client-supplied
+  timestamp or `employeeId` here would let a caller backdate their own
+  attendance or check in on someone else's behalf; the administrative
+  path (`POST /attendance`, `attendance:create:any`) exists precisely to
+  handle the cases that need an explicit date/employee.
+- **Q: Why does check-in sometimes `UPDATE` instead of `CREATE`?**
+  Because `docs/domain-attendance.md` §2 requires administrative creation
+  ("HR marking attendance manually for an exception") to also be
+  supported — a blank record for today may already exist before the
+  employee ever checks in.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/attendance/check-in \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `record.id` as `{{attendanceRecordId}}` — reused by
+`GET`/`PATCH`/`DELETE /attendance/:id`. Run once per day per environment;
+a second run the same day is expected to return `409`.
+
+## 20. Testing Checklist
+
+- ✅ First check-in of the day → `201` (verified live)
+- ✅ Duplicate check-in same day → `409` (verified live)
+- ✅ Fills in `checkIn` on an admin-precreated blank record (`UPDATE`, not `CREATE`)
+- ✅ `400` with no linked Employee record (verified live)
+- ✅ `201` for `ADMIN`/`MANAGER`/`EMPLOYEE` alike (verified live)
+- ✅ `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 49. `PATCH /attendance/check-out`
+
+## 1. Endpoint Information
+
+```
+Feature:            Attendance Domain (2026-09-15, feature/21-attendance-domain)
+Endpoint:           Self-Service Check-Out
+Description:        Sets checkOut on today's AttendanceRecord for the caller's own Employee record
+Method:             PATCH
+URL:                /api/v1/attendance/check-out
+API Version:        v1
+Module:             modules/attendance
+Authentication:     Yes (Bearer access token)
+Authorization:      `attendance:checkin` permission required (every role, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: completes the punch pair `docs/domain-attendance.md`
+  §6/ADR-AT05 names as today's scope — "single check-in/single check-out
+  per day," with multi-punch/break tracking explicitly deferred.
+- **Business problem solved**: the other half of "did this person work
+  today" — without a `checkOut`, `GET /attendance/effective-status`
+  (endpoint 52) has no way to know the employee's day actually ended,
+  though the current implementation does not compute a distinct status
+  for a missing checkout beyond what `checkIn`/`isHalfDay` already
+  determine.
+- **Expected callers**: every authenticated user with a linked Employee
+  record — same broad grant as check-in (`attendance:checkin`, ADR-AT06).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                              |
+| -------------------------------------- | -------- | ------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `attendance:checkin` permission |
+
+No `Content-Type` is needed — no body is sent.
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None. **This endpoint never accepts a body** — the `checkOut` timestamp
+is always the server's current time.
+
+## 7. Validation Rules
+
+No body to validate. The service layer:
+
+1. Resolves the caller's own Employee record — `400` if none is linked
+   (same `resolveOwnEmployee` helper `POST /attendance/check-in` uses).
+2. Looks up today's `AttendanceRecord`. If none exists, or it has no
+   `checkIn` yet, `400`.
+3. If the record already has a `checkOut`, `409`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "record": {
+    "id": "c9b8a7d6-e5f4-4a3b-8c1d-0e9f8a7b6c5f",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "date": "2026-09-15T00:00:00.000Z",
+    "checkIn": "2026-09-15T09:05:00.000Z",
+    "checkOut": "2026-09-15T18:02:00.000Z",
+    "isHalfDay": false,
+    "createdAt": "2026-09-15T09:05:00.000Z",
+    "updatedAt": "2026-09-15T18:02:00.000Z"
+  }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                                   | Response (`message`)                              | When                                                             |
+| ------ | ------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------- |
+| `400`  | No check-in yet today (or no record at all) | `"Cannot check out before checking in today"`          | Verified live: `PATCH /attendance/check-out` with no prior `POST /attendance/check-in` |
+| `401`  | Missing/invalid/expired access token        | Same as every other protected endpoint               | `authMiddleware` failure                                              |
+| `403`  | Caller lacks `attendance:checkin`           | `"You do not have permission to perform this action"` | Not expected in practice — every seeded role has this grant           |
+| `409`  | Already checked out for today               | `"Already checked out for today"`                      | Verified live: a second `PATCH /attendance/check-out` the same day → `409` |
+
+## 10. Postman Test Cases
+
+| #   | Case                                       | Expected |
+| --- | ----------------------------------------------- | -------- |
+| 1   | Check out after checking in                     | `200` — verified live |
+| 2   | Check out with no prior check-in today          | `400` — verified live |
+| 3   | Second check-out the same day                   | `409` — verified live |
+| 4   | Caller with no linked Employee record           | `400`    |
+| 5   | As `ADMIN`/`MANAGER`/`EMPLOYEE` token, each with their own linked Employee | `200` — verified live for all three |
+| 6   | No token                                       | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                        |
+| ----------------------------------- | --------------------------------------------------------------------- |
+| Body sent anyway                    | `200` — the body is never read; the server's own current time is used |
+| Tampered/expired JWT                | `401`                                                                  |
+| Check-out on a day with a `checkIn` from a *different* day's record | `400` — only today's record (by the current UTC date) is ever looked up |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                       |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Check-in and check-out crossing UTC midnight (e.g. checked in at 23:50 UTC, checking out at 00:10 UTC the next day) | The check-out still targets *today's* record by the current moment's date — if that has rolled to a new day, `checkOut` targets a record that may not exist yet → `400`, not a retroactive update of yesterday's record. A documented consequence of per-calendar-day records (ADR-AT02), not a bug. |
+| Checking out immediately after checking in (same second)          | `200` — no minimum-duration rule exists                                                                                                   |
+
+## 13. Security Testing
+
+- **No BOLA concern**: same as check-in — the target record is always
+  resolved from the caller's own Employee record, never from a
+  client-supplied id.
+- **Mass assignment**: N/A — no body is ever read.
+
+## 14. Database Impact
+
+- **Tables affected**: `AttendanceRecord` (update), `AuditLog` (insert).
+- **Transactions**: both happen inside one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/attendance/check-out
+    ↓
+authMiddleware
+    ↓
+requirePermission('attendance:checkin')
+    ↓ (403 if not granted)
+attendance.controller.checkOut → attendance.service.checkOut(actor)
+    ├─ resolveOwnEmployee(actor.id) → not found → 400
+    ├─ attendanceRepository.findByEmployeeAndDate(employee.id, today)
+    ├─ !existing?.checkIn → 400
+    ├─ existing.checkOut truthy → 409
+    └─ prisma.$transaction:
+         ├─ attendanceRepository.update(existing.id, { checkOut: now }, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', ... }, tx)
+    ↓
+200 { record }
+```
+
+## 16. Performance Notes
+
+One `findByUserId` lookup, one `findByEmployeeAndDate` lookup, one
+update, one audit-log insert — same cost shape as check-in.
+
+## 17. Interview Notes
+
+- **Q: Why `PATCH`, not `POST`, for check-out?** It's always modifying an
+  existing resource (today's `AttendanceRecord`, which must already
+  exist with a `checkIn`) rather than creating a new one — `PATCH` is the
+  semantically correct verb, matching every other correction-style
+  mutation in this API (`PATCH /attendance/:id`, `PATCH /shifts/:id`,
+  etc.), even though this one is self-service rather than administrative.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/attendance/check-out \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run immediately after `POST /attendance/check-in` in the same collection
+run/day; running it a second time in the same run is expected to return
+`409`.
+
+## 20. Testing Checklist
+
+- ✅ Check-out after check-in → `200` (verified live)
+- ✅ Check-out with no prior check-in → `400` (verified live)
+- ✅ Duplicate check-out same day → `409` (verified live)
+- ✅ `400` with no linked Employee record
+- ✅ `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 50. `POST /attendance`
+
+## 1. Endpoint Information
+
+```
+Feature:            Attendance Domain (2026-09-15, feature/21-attendance-domain)
+Endpoint:           Administratively Create an AttendanceRecord
+Description:        Creates an AttendanceRecord for any Employee and date - HR marking attendance manually for an exception
+Method:             POST
+URL:                /api/v1/attendance
+API Version:        v1
+Module:             modules/attendance
+Authentication:     Yes (Bearer access token)
+Authorization:      `attendance:create:any` permission required (ADMIN + MANAGER, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: `docs/domain-attendance.md` §2 requires that
+  "administrative creation (HR marking attendance manually for an
+  exception) must also be supported" alongside self-service check-in —
+  e.g. backfilling a record for an employee who forgot to check in, or
+  pre-creating a blank record.
+- **Business problem solved**: lets `ADMIN`/`MANAGER` record attendance on
+  behalf of an employee, for a specific past (or today's) date, optionally
+  with explicit `checkIn`/`checkOut` times and an `isHalfDay` flag.
+- **Expected callers**: `ADMIN` and `MANAGER` — this endpoint diverges
+  from every master-data domain's `ADMIN`-only mutation pattern
+  (B07/D08/DS06/HC06/SH05); `MANAGER` gets full attendance CRUD here,
+  mirroring `employee:*:any`'s existing `MANAGER` grant rather than
+  Branch/Department/Designation/Holiday Calendar/Shift's tighter scoping
+  (ADR-AT06).
+
+## 3. Request Headers
+
+| Header                                 | Required | Notes                                                 |
+| ---------------------------------------- | -------- | ----------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `attendance:create:any` permission |
+| `Content-Type: application/json`      | **Yes**  |                                                               |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  "date": "2026-09-15",
+  "checkIn": "2026-09-15T09:05:00.000Z",
+  "checkOut": "2026-09-15T18:02:00.000Z",
+  "isHalfDay": false
+}
+```
+
+| Field         | Type              | Required | Description                                                        |
+| ------------- | ----------------- | -------- | ------------------------------------------------------------------- |
+| `employeeId`  | string (UUID)     | **Yes**  | Must reference an existing `Employee`                                |
+| `date`        | string (ISO date) | **Yes**  | The calendar date this record is for — **must not be in the future** |
+| `checkIn`     | string (ISO datetime) | No   | Optional — a blank record (no `checkIn`) is valid, e.g. to be filled in later by self-service check-in |
+| `checkOut`    | string (ISO datetime) | No   | Optional — must be `>=` `checkIn` when both are given                |
+| `isHalfDay`   | boolean            | No       | Defaults `false` — a stored fact the caller asserts, not derived from any time threshold |
+
+## 7. Validation Rules
+
+- `employeeId`: required, must be a valid UUID; then re-checked for
+  existence against `Employee` in the service layer — `400` with
+  `"employeeId: references a record that does not exist"` if no such
+  Employee exists (the same convention as `branchId`/`departmentId`/
+  `designationId`/`shiftId`'s own existence checks on prior domains).
+- `date`: required, coerced from an ISO string, and refined to reject any
+  value later than "now" — `"date cannot be in the future"`. Truncated to
+  UTC midnight server-side before it is ever written or compared
+  (`toDateOnly`), so a `date` with a time-of-day component is silently
+  normalized, not rejected.
+- `checkIn`/`checkOut`: both optional, coerced datetimes. When both are
+  present, `checkOut` must be `>=` `checkIn` — `"checkOut cannot be
+  before checkIn"` (attached to the `checkOut` field path).
+- `isHalfDay`: optional boolean, defaults `false`.
+- **Uniqueness**: exactly one `AttendanceRecord` may exist per
+  `(employeeId, date)` — a second `POST` for the same pair fails with
+  `409` (both a service-layer check via the DB's own `P2002` unique-
+  constraint violation, and race-safe as a result — there is no
+  separate pre-check query, the insert itself is the source of truth).
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "record": {
+    "id": "c9b8a7d6-e5f4-4a3b-8c1d-0e9f8a7b6c5f",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "date": "2026-09-15T00:00:00.000Z",
+    "checkIn": "2026-09-15T09:05:00.000Z",
+    "checkOut": "2026-09-15T18:02:00.000Z",
+    "isHalfDay": false,
+    "createdAt": "2026-09-15T09:12:04.221Z",
+    "updatedAt": "2026-09-15T09:12:04.221Z"
+  }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                                | Response (`message`)                                                  | When                                                                 |
+| ------ | ------------------------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `400`  | Validation failed                         | e.g. `"date: date cannot be in the future"`, `"checkOut: checkOut cannot be before checkIn"`, `"employeeId: Invalid UUID"` | Malformed/future `date`, `checkOut` before `checkIn`, malformed `employeeId` |
+| `400`  | `employeeId` doesn't reference a real Employee | `"employeeId: references a record that does not exist"`                 | Well-formed UUID, no matching row                                          |
+| `401`  | Missing/invalid/expired access token       | Same as every other protected endpoint                                     | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks `attendance:create:any`       | `"You do not have permission to perform this action"`                     | `EMPLOYEE` token — verified live                                           |
+| `409`  | Duplicate `(employeeId, date)`             | `"An attendance record already exists for this employee and date"`       | Verified live: a second `POST` for the same employee/date pair             |
+
+## 10. Postman Test Cases
+
+| #   | Case                                       | Expected |
+| --- | ----------------------------------------------- | -------- |
+| 1   | Valid create, blank record (no `checkIn`/`checkOut`) | `201`    |
+| 2   | Valid create with `checkIn`/`checkOut`/`isHalfDay`   | `201` — verified live |
+| 3   | Duplicate `(employeeId, date)`                  | `409` — verified live |
+| 4   | `date` in the future                           | `400` — verified live |
+| 5   | `checkOut` before `checkIn`                    | `400`    |
+| 6   | Nonexistent `employeeId`                       | `400`    |
+| 7   | Malformed `employeeId` (non-UUID)              | `400`    |
+| 8   | As `EMPLOYEE` token                             | `403` — verified live |
+| 9   | No token                                       | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                           | Expected                                                             |
+| --------------------------------------- | --------------------------------------------------------------------------- |
+| Malformed JSON body                     | `400` from Express's own JSON body-parser                                  |
+| Tampered/expired JWT                    | `401`                                                                       |
+| `date`/`checkIn`/`checkOut` as a number/array | `400` — Zod's `.coerce.date()` rejects shapes it cannot parse as a date |
+| `isHalfDay` as a non-boolean string (e.g. `"yes"`) | `400` — Zod's `.boolean()` rejects non-boolean types                 |
+| Two concurrent `POST`s for the same `(employeeId, date)` | One succeeds; the other hits the DB's `P2002` unique-constraint violation, mapped to `409` |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                       |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `date` supplied with a non-midnight time-of-day component (e.g. `"2026-09-15T14:30:00.000Z"`) | `201` — silently truncated to `2026-09-15T00:00:00.000Z` by `toDateOnly`, not rejected                                                   |
+| `checkIn` and `checkOut` both omitted                              | `201` — a fully blank record, later fillable via self-service `POST /attendance/check-in`/`PATCH /attendance/check-out`                 |
+| `checkOut` supplied without `checkIn`                              | `201` — accepted as-is; no rule requires `checkIn` to be present for `checkOut` to be set via this administrative path (unlike self-service check-out, which does require a prior check-in) |
+| `date` exactly "today" (server's current UTC date)                 | `201` — the future-date refinement uses `<=`, so "now" itself passes                                                                     |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `EMPLOYEE` cannot create an attendance
+  record for anyone, including themselves, via this path — verified
+  live; self-service is the only creation path available to `EMPLOYEE`
+  (`POST /attendance/check-in`, endpoint 48).
+- **Mass assignment**: only `employeeId`/`date`/`checkIn`/`checkOut`/
+  `isHalfDay` are read from the body.
+
+## 14. Database Impact
+
+- **Tables affected**: `AttendanceRecord` (insert), `AuditLog` (insert).
+- **Transactions**: both inside one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/attendance
+    ↓
+authMiddleware
+    ↓
+requirePermission('attendance:create:any')
+    ↓ (403 if not granted)
+validateMiddleware(createAttendanceRecordSchema)
+    ↓ (400 if invalid)
+attendance.controller.create → attendance.service.createAttendanceRecord(data, actor)
+    ├─ employeeRepository.findById(data.employeeId) → not found → 400
+    └─ prisma.$transaction:
+         ├─ attendanceRepository.create({ ...data, date: toDateOnly(date) }, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', afterData, ... }, tx)
+    ↓ (catch) Prisma P2002 → 409
+201 { record }
+```
+
+## 16. Performance Notes
+
+One `Employee` existence lookup, one insert, one audit-log insert — no
+notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why does `MANAGER` get full CRUD here, unlike Branch/Department/
+  Designation/Holiday Calendar/Shift's `ADMIN`-only mutations?** Because
+  Attendance is inherently self-service-plus-admin-correction rather than
+  pure master data — `docs/domain-attendance.md` ADR-AT06 deliberately
+  follows `Employee`'s own/any permission split (where `MANAGER` already
+  has `employee:*:any`) instead of the master-data `ADMIN`-only precedent.
+- **Q: Why is there no `409` pre-check query before the insert, unlike
+  Shift's/Department's name-uniqueness checks?** The uniqueness dimension
+  here is a compound `(employeeId, date)` pair, not a single searchable
+  field — relying on the database's own `@@unique` constraint and
+  catching `P2002` is simpler and inherently race-safe, avoiding the
+  check-then-insert race window a separate pre-check would have.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/attendance \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"employeeId":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","date":"2026-09-15","checkIn":"2026-09-15T09:05:00.000Z","checkOut":"2026-09-15T18:02:00.000Z"}'
+```
+
+```bash
+# A blank record for a future self-service check-in to fill in
+curl -i -X POST http://localhost:3000/api/v1/attendance \
+  -H "Authorization: Bearer $MANAGER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"employeeId":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","date":"2026-09-15"}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `record.id` as `{{attendanceRecordId}}` — used by
+`GET`/`PATCH`/`DELETE /attendance/:id`.
+
+## 20. Testing Checklist
+
+- ✅ Valid create, with and without `checkIn`/`checkOut` → `201`
+- ✅ Duplicate `(employeeId, date)` → `409` (verified live)
+- ✅ Future `date` → `400` (verified live)
+- ✅ `checkOut` before `checkIn` → `400`
+- ✅ Nonexistent `employeeId` → `400`
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 51. `GET /attendance`
+
+## 1. Endpoint Information
+
+```
+Feature:            Attendance Domain (2026-09-15, feature/21-attendance-domain)
+Endpoint:           List AttendanceRecords
+Method:             GET
+URL:                /api/v1/attendance
+API Version:        v1
+Module:             modules/attendance
+Authentication:     Yes (Bearer access token)
+Authorization:      `attendance:read:any` permission required (ADMIN + MANAGER, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: browse/search attendance records across employees —
+  for admin/HR reporting, payroll-adjacent review, and spot-checking.
+- **Business problem solved**: "show me everyone's attendance for last
+  week," "show me this employee's attendance history" — filterable,
+  paginated, sortable.
+- **Expected callers**: `ADMIN` and `MANAGER` only. **There is no
+  auto-scoped `:own` listing mode** — the same shape as `GET /employees`
+  (endpoint 10), which also has no `:own` list mode; an `EMPLOYEE` who
+  wants their own history uses `GET /attendance/:id` per-record or `GET
+  /attendance/effective-status` (endpoints 53/52), not this endpoint.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                               |
+| -------------------------------------- | -------- | --------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `attendance:read:any` permission |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name        | Type            | Required | Default | Description                                       |
+| ------------- | --------------- | -------- | --------- | ----------------------------------------------------- |
+| `page`      | integer         | No       | `1`     | 1-indexed page number                                |
+| `limit`     | integer         | No       | `10` (max 100) | Page size                                     |
+| `employeeId`| string (UUID)   | No       | —       | Filter to one employee's records                     |
+| `dateFrom`  | string (ISO date) | No     | —       | Inclusive lower bound on `date`                       |
+| `dateTo`    | string (ISO date) | No     | —       | Inclusive upper bound on `date`                       |
+| `sortBy`    | enum            | No       | `date`  | `date`, `checkIn`, `checkOut`, `createdAt`            |
+| `order`     | enum            | No       | `desc`  | `asc` or `desc`                                      |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same page/limit/sort shape as every other list endpoint in this API
+(`listAttendanceQuerySchema`). `employeeId` must be a valid UUID when
+present but is **not** checked for existence — filtering by a
+nonexistent `employeeId` simply returns an empty `records` array, not an
+error. `dateFrom`/`dateTo` are independently optional and both coerced to
+dates; no refinement enforces `dateFrom <= dateTo` — an inverted range
+just yields zero matches.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "records": [
+    {
+      "id": "c9b8a7d6-e5f4-4a3b-8c1d-0e9f8a7b6c5f",
+      "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "date": "2026-09-15T00:00:00.000Z",
+      "checkIn": "2026-09-15T09:05:00.000Z",
+      "checkOut": "2026-09-15T18:02:00.000Z",
+      "isHalfDay": false,
+      "createdAt": "2026-09-15T09:12:04.221Z",
+      "updatedAt": "2026-09-15T09:12:04.221Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                                       |
+| ------ | ------------------------------------ | ---------------------------------------------------------- | --------------------------------------------- |
+| `400`  | A query parameter failed validation | e.g. `"limit: Too big: expected number to be <=100"`, `"employeeId: Invalid UUID"` | Out-of-bounds `limit`, invalid `sortBy`, malformed `employeeId`/`dateFrom`/`dateTo` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                   |
+| `403`  | Caller lacks `attendance:read:any`   | `"You do not have permission to perform this action"`   | `EMPLOYEE` token — verified live            |
+
+## 10. Postman Test Cases
+
+| #   | Case                                       | Expected |
+| --- | ----------------------------------------------- | -------- |
+| 1   | Default pagination                             | `200`, up to 10 results |
+| 2   | `employeeId` filter                            | `200`, only that employee's records |
+| 3   | `dateFrom`/`dateTo` range filter               | `200`, only records in range — verified live |
+| 4   | `sortBy=checkIn&order=asc`                     | `200`, earliest `checkIn` first |
+| 5   | `limit=101`                                    | `400`    |
+| 6   | As `EMPLOYEE` token                            | `403` — verified live |
+| 7   | No token                                       | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                | Expected                                                 |
+| -------------------------------------------- | ---------------------------------------------------------------- |
+| `sortBy` value outside the allowlist (e.g. `?sortBy=isHalfDay`) | `400`                                                     |
+| `dateFrom` after `dateTo`                    | `200` with an empty `records` array, not an error                |
+| Tampered/expired JWT                         | `401`                                                             |
+
+## 12. Edge Cases
+
+| Scenario                             | Expected Behavior                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `page` beyond the last page             | `200` with an empty `records` array, not an error                                                     |
+| Two records with identical `date`/`sortBy` value | Deterministic ordering via the unconditional secondary `id ASC` tiebreaker                              |
+| `employeeId` filter combined with `dateFrom`/`dateTo` | Both filters apply together (logical AND) — a single employee's records within a range                  |
+
+## 13. Security Testing
+
+`attendance:read:any` is intentionally narrower than `shift:read`/
+`branch:read`/etc. (which every role gets) — this endpoint exposes
+cross-employee data, so it is restricted to `ADMIN`/`MANAGER` only,
+consistent with `employee:read:any` on `GET /employees`.
+
+## 14. Database Impact
+
+Read-only — `AttendanceRecord.findMany` + `AttendanceRecord.count`, run
+in parallel via `Promise.all`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/attendance
+    ↓
+authMiddleware
+    ↓
+requirePermission('attendance:read:any')
+    ↓ (403 if not granted)
+validateMiddleware(listAttendanceQuerySchema, 'query')
+    ↓ (400 if invalid)
+attendance.controller.list → attendance.service.listAttendanceRecords(query)
+    ├─ buildAttendanceWhere({ employeeId, dateFrom, dateTo })
+    └─ Promise.all([attendanceRepository.findAll(...), attendanceRepository.count(...)])
+    ↓
+200 { records, pagination }
+```
+
+## 16. Performance Notes
+
+Indexed on `employeeId` and `date` individually — filtering by either (or
+both) stays index-backed. Pagination bounds the result set regardless of
+total row count, which is expected to grow unboundedly over time (one row
+per employee per working day) unlike prior master-data domains.
+
+## 17. Interview Notes
+
+- **Q: Why no `:own` scope here, given `attendance:read:own` exists as a
+  permission?** `attendance:read:own` is consumed by `GET
+  /attendance/:id` and `GET /attendance/effective-status` (endpoints
+  53/52) instead — both are single-record/single-date reads where an
+  ownership check against one fetched row is cheap. A `:own`-scoped
+  *list* would need to resolve the caller's own Employee id and filter
+  by it, which is a reasonable future addition but wasn't required by
+  any endpoint spec here; `GET /employees` set the precedent of no
+  `:own` list mode first.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/attendance?employeeId=$EMPLOYEE_ID&dateFrom=2026-09-01&dateTo=2026-09-30" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run after `POST /attendance`/`POST /attendance/check-in` to confirm newly
+created records are discoverable via `employeeId`/date-range filters.
+
+## 20. Testing Checklist
+
+- ✅ Default pagination, explicit `page`/`limit`
+- ✅ `employeeId` filter
+- ✅ `dateFrom`/`dateTo` range filter (verified live)
+- ✅ Sort both directions with deterministic tiebreaker
+- ✅ `403` as `EMPLOYEE` (verified live), `401` with no token
+- ✅ `400` on out-of-bounds `limit`
+
+---
+
+---
+
+# 52. `GET /attendance/effective-status`
+
+## 1. Endpoint Information
+
+```
+Feature:            Attendance Domain (2026-09-15, feature/21-attendance-domain)
+Endpoint:           Compute Effective Daily Attendance Status
+Description:        The coordinating-service read - cross-references Holiday Calendar and Shift with the raw AttendanceRecord to compute one of six statuses for one employee, one date
+Method:             GET
+URL:                /api/v1/attendance/effective-status
+API Version:        v1
+Module:             modules/attendance
+Authentication:     Yes (Bearer access token)
+Authorization:      `attendance:read:any` OR `attendance:read:own`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: this is the "Attendance Calculation Service"
+  `docs/domain-attendance.md` §3/§5 names explicitly — the one place
+  that reads Shift + Holiday Calendar + the raw `AttendanceRecord`
+  together to answer "what actually happened on this date," a question
+  no single stored field can answer, since a *missing* record can mean
+  Absent, Holiday, or Week-Off depending on context (§4).
+- **Business problem solved**: distinguishes "no `AttendanceRecord`
+  because it was a holiday," "no record because it was a scheduled day
+  off," and "no record because the employee was genuinely absent" —
+  three very different business facts a raw `GET /attendance/:id` lookup
+  cannot tell apart.
+- **Computed, never stored** (ADR-AT03): the result of this endpoint is
+  never written back to `AttendanceRecord` or anywhere else — every call
+  recomputes it fresh from Holiday Calendar + Shift + `AttendanceRecord`.
+- **Resolution order** (first match wins):
+  1. `HOLIDAY` — the employee's `Branch`'s holiday calendar has a
+     holiday on this date.
+  2. `WEEK_OFF` — the date's weekday is not in the employee's assigned
+     Shift's `workingDays`.
+  3. `ABSENT` — no `AttendanceRecord` exists for this employee/date (or
+     one exists but has no `checkIn`).
+  4. `HALF_DAY` — the record's `isHalfDay` flag is `true`.
+  5. `LATE` — a Shift is assigned, it is **not** an overnight shift, and
+     the record's `checkIn` (as `HH:mm`) is later than the shift's
+     `startTime`.
+  6. `PRESENT` — the fallback/default once none of the above apply.
+- **Documented gap — no `ON_LEAVE` status**: this endpoint does **not**
+  resolve an "On Leave" status. The Leave domain that would require
+  (an "approved leave for employee X on date Y" query) doesn't exist
+  anywhere in this codebase yet — a leave day currently computes as
+  `ABSENT`. This is a named future extension point
+  (`docs/domain-attendance.md` §9/§12, ADR-AT03's implementation note),
+  not a silent gap: Leave's own future design must add this leg without
+  ever writing into Attendance (§3's "read, don't write across
+  boundaries" discipline).
+- **Documented limitation — no `LATE` for overnight shifts**: lateness is
+  only computed when the assigned shift is **not** overnight
+  (`shiftService.isOvernightShift`, i.e. `endTime >= startTime`). An
+  overnight shift (e.g. `"22:00"`-`"07:00"`) skips the `LATE` check
+  entirely and falls straight through to `PRESENT` once a `checkIn`
+  exists — comparing a real check-in timestamp's `HH:mm` against an
+  overnight shift's `startTime` string is ambiguous once the calendar
+  day rolls over (`docs/domain-shift.md` ADR-SH03's own risk row), and no
+  verified requirement forces solving that now.
+- **Expected callers**: any authenticated user — `attendance:read:own`
+  lets an `EMPLOYEE` check their own status; `attendance:read:any` lets
+  `ADMIN`/`MANAGER` check anyone's.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                          |
+| -------------------------------------- | -------- | -------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `attendance:read:any` or `attendance:read:own` |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name         | Type            | Required | Description                                                                 |
+| -------------- | --------------- | -------- | --------------------------------------------------------------------------- |
+| `employeeId` | string (UUID)   | No       | Defaults to the caller's own Employee record when omitted. If provided and the caller lacks `attendance:read:any`, it must equal the caller's own Employee id or `403`. |
+| `date`       | string (ISO date) | **Yes** | The single calendar date to compute status for                              |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- `date`: required, coerced to a date — `400` if missing or unparseable.
+- `employeeId`: optional, must be a valid UUID when present.
+- If `employeeId` is omitted and the caller has no linked Employee
+  record, `400` with `"No employee record linked to this account"`
+  (the same `resolveOwnEmployee` helper used by self-service check-in).
+- If `employeeId` is provided, differs from the caller's own Employee id,
+  and the caller lacks `attendance:read:any`, `403`.
+- If the resolved `employeeId` doesn't reference an existing `Employee`,
+  `404`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  "date": "2026-09-15T00:00:00.000Z",
+  "status": "PRESENT",
+  "record": {
+    "id": "c9b8a7d6-e5f4-4a3b-8c1d-0e9f8a7b6c5f",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "date": "2026-09-15T00:00:00.000Z",
+    "checkIn": "2026-09-15T08:50:00.000Z",
+    "checkOut": null,
+    "isHalfDay": false,
+    "createdAt": "2026-09-15T08:50:00.000Z",
+    "updatedAt": "2026-09-15T08:50:00.000Z"
+  }
+}
+```
+
+`record` is `null` for `HOLIDAY`, `WEEK_OFF`, and `ABSENT`-with-no-record
+cases — there is no underlying row to return. `status` is always one of
+`PRESENT`/`LATE`/`HALF_DAY`/`ABSENT`/`HOLIDAY`/`WEEK_OFF`. Verified live
+for each of these six cases (see `attendance.service.test.js`).
+
+## 9. Error Responses
+
+| Status | Reason                                             | Response (`message`)                                                  | When                                                                 |
+| ------ | ------------------------------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `400`  | `date` missing/unparseable                            | e.g. `"date: Invalid input"`                                                   | Malformed/missing `date` query param                                       |
+| `400`  | No linked Employee record and `employeeId` omitted     | `"No employee record linked to this account"`                                | A caller with no Employee record queries their own status              |
+| `401`  | Missing/invalid/expired access token                   | Same as every other protected endpoint                                       | `authMiddleware` failure                                                   |
+| `403`  | Caller queried a different `employeeId` without `:any` | `"You do not have permission to view this attendance record"`               | `attendance:read:own`-only caller supplies someone else's `employeeId` — verified live |
+| `404`  | No such Employee                                       | `"Employee not found"`                                                        | Well-formed but nonexistent `employeeId`                                   |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                      | Expected |
+| --- | -------------------------------------------------------------- | -------- |
+| 1   | Own status, `employeeId` omitted                              | `200`    |
+| 2   | `ADMIN`/`MANAGER` querying another employee's status via `employeeId` | `200` |
+| 3   | `EMPLOYEE` querying their own `employeeId` explicitly           | `200`    |
+| 4   | `EMPLOYEE` querying someone else's `employeeId`                | `403` — verified live |
+| 5   | Date with a branch holiday                                    | `200`, `status: "HOLIDAY"`, `record: null` — verified live |
+| 6   | Date not in the assigned shift's `workingDays`                | `200`, `status: "WEEK_OFF"`, `record: null` — verified live |
+| 7   | No record on a working day                                    | `200`, `status: "ABSENT"`, `record: null` — verified live |
+| 8   | Record with `isHalfDay: true`                                 | `200`, `status: "HALF_DAY"` — verified live |
+| 9   | `checkIn` after shift `startTime`, non-overnight shift          | `200`, `status: "LATE"` — verified live |
+| 10  | `checkIn` after shift `startTime`, **overnight** shift          | `200`, `status: "PRESENT"` (documented limitation) — verified live |
+| 11  | `checkIn` on/before shift `startTime`                          | `200`, `status: "PRESENT"` — verified live |
+| 12  | Missing `date`                                                | `400`    |
+| 13  | Caller with no linked Employee record, `employeeId` omitted    | `400`    |
+| 14  | Nonexistent `employeeId`                                       | `404`    |
+| 15  | No token                                                       | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                               | Expected                                                       |
+| -------------------------------------------- | ---------------------------------------------------------------------- |
+| `date` as a non-date string (e.g. `"tomorrow"`) | `400` — Zod's `.coerce.date()` rejects it                          |
+| Malformed (non-UUID) `employeeId`             | `400`                                                                    |
+| Tampered/expired JWT                          | `401`                                                                    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                       |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Employee has no `branchId`                                        | The `HOLIDAY` leg is skipped entirely (no branch to resolve a holiday calendar from) — resolution proceeds to `WEEK_OFF`/`ABSENT`/etc. |
+| Employee's `Branch` has no `holidayCalendarId`                    | Same as above — `HOLIDAY` leg skipped                                                                                                    |
+| Employee has no `shiftId`                                         | The `WEEK_OFF` and `LATE` legs are both skipped — presence/absence is still tracked, but with no lateness/overtime expectation, consistent with `docs/domain-shift.md`'s "no shift = no fixed-hours expectation" default |
+| Record exists with `isHalfDay: true` **and** a late `checkIn`      | `HALF_DAY` wins — it is checked before `LATE` in the resolution order (§2 above) |
+| Date is both a branch holiday **and** outside the shift's `workingDays` | `HOLIDAY` wins — checked first in the resolution order                                                                                 |
+| Leave domain's "on leave" case (not yet implemented)               | Currently resolves as `ABSENT` — a named, expected gap (`docs/domain-attendance.md` §9), not a bug                                       |
+
+## 13. Security Testing
+
+- **BOLA**: the primary BOLA test case for Attendance — confirm an
+  `attendance:read:own`-only caller cannot resolve another employee's
+  status by supplying a different `employeeId`, tested against at least
+  two different non-owned ids.
+- **Authorization layering**: same two-layer model as `GET
+  /employees/:id` — `requirePermission` accepts either key at the
+  middleware level; the service layer does the fine-grained ownership
+  comparison once it knows which `employeeId` is being resolved.
+
+## 14. Database Impact
+
+Read-only, but the widest fan-out of any Attendance endpoint: up to one
+`Employee` lookup, one `Branch` lookup, one holiday-calendar date lookup,
+one `Shift` lookup, and one `AttendanceRecord` lookup — all single-row,
+indexed reads, short-circuited as soon as `HOLIDAY` or `WEEK_OFF` resolves.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/attendance/effective-status
+    ↓
+authMiddleware
+    ↓
+requirePermission('attendance:read:any', 'attendance:read:own')
+    ↓ (403 if neither granted)
+validateMiddleware(effectiveStatusQuerySchema, 'query')
+    ↓ (400 if invalid)
+attendance.controller.getEffectiveStatus
+    → attendance.service.getEffectiveStatus(employeeId, date, requester)
+        ├─ employeeId omitted? → resolveOwnEmployee(requester.id) → 400 if none
+        ├─ employeeId provided, no ':any'? → must equal caller's own Employee id → 403
+        ├─ employeeRepository.findById(employeeId) → not found → 404
+        ├─ employee.branchId? → branchRepository.findById → holidayCalendarService.isDateHolidayInCalendar → HOLIDAY
+        ├─ employee.shiftId? → shiftRepository.findById → weekday not in workingDays → WEEK_OFF
+        ├─ attendanceRepository.findByEmployeeAndDate → no record (or no checkIn) → ABSENT
+        ├─ record.isHalfDay → HALF_DAY
+        ├─ shift && !shiftService.isOvernightShift(shift) && checkIn HH:mm > shift.startTime → LATE
+        └─ else → PRESENT
+    ↓
+200 { employeeId, date, status, record }
+```
+
+## 16. Performance Notes
+
+Up to five sequential single-row lookups per call, all indexed
+(`Employee`/`Branch`/`Shift` by primary key, `Holiday` by
+`(holidayCalendarId, date)`, `AttendanceRecord` by
+`(employeeId, date)`). Named explicitly in `docs/domain-attendance.md` §7
+as a place a future read-model/cache could be added if a real
+performance problem materializes at scale (e.g. a company-wide monthly
+report calling this once per employee per day) — not built now, since no
+such problem has been demonstrated (YAGNI, per the doc's own reasoning).
+
+## 17. Interview Notes
+
+- **Q: Why is effective status computed on every read instead of stored
+  on `AttendanceRecord`?** ADR-AT03: storing it would mean Leave's future
+  approval workflow needs to *write into* Attendance's data to keep it
+  correct — the first cross-domain write anywhere in this architecture.
+  Computing on read keeps every domain read-only with respect to every
+  other domain's aggregate, the discipline every prior domain in this
+  review has followed.
+- **Q: Why does an overnight shift never produce `LATE`, even though the
+  employee could genuinely check in late?** Because `checkIn` is a full
+  timestamp but `shift.startTime` is a bare `"HH:mm"` string with no date
+  component — for a shift starting at `"22:00"`, a `checkIn` timestamp's
+  own calendar date could legitimately be either the shift's start day or
+  the next day, and naively comparing `HH:mm` strings would misclassify
+  one of those as late. Rather than build unverified disambiguation logic,
+  this is a named, deliberate scope limitation (`docs/domain-shift.md`
+  ADR-SH03's own risk row) — presence is still correctly tracked as
+  `PRESENT`, just without a `LATE` distinction for this shift shape.
+
+## 18. cURL Examples
+
+```bash
+# Caller's own status (employeeId omitted)
+curl -s "http://localhost:3000/api/v1/attendance/effective-status?date=2026-09-15" \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+```bash
+# ADMIN/MANAGER checking a specific employee's status
+curl -s "http://localhost:3000/api/v1/attendance/effective-status?employeeId=$EMPLOYEE_ID&date=2026-09-15" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Exercise all six statuses in one collection run by pairing this call
+against fixture dates set up via `POST /holiday-calendars/:id/holidays`,
+`POST /shifts`, and `POST /attendance`/`POST /attendance/check-in` — the
+same fixture pattern `attendance.service.test.js` uses.
+
+## 20. Testing Checklist
+
+- ✅ All six statuses resolved correctly, each verified live: `HOLIDAY`, `WEEK_OFF`, `ABSENT`, `HALF_DAY`, `LATE`, `PRESENT`
+- ✅ Overnight shift never produces `LATE` (verified live)
+- ✅ `employeeId` omitted defaults to caller's own Employee record
+- ✅ `403` when a `:own`-only caller queries another `employeeId` (verified live)
+- ✅ `404` for nonexistent `employeeId`
+- ✅ `400` for missing/malformed `date`, and for no linked Employee record
+- ✅ `401` with no token
+
+---
+
+---
+
+# 53. `GET /attendance/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Attendance Domain (2026-09-15, feature/21-attendance-domain)
+Endpoint:           Get one AttendanceRecord
+Description:        Returns a single AttendanceRecord, subject to an ownership check
+Method:             GET
+URL:                /api/v1/attendance/:id
+API Version:        v1
+Module:             modules/attendance
+Authentication:     Yes (Bearer access token)
+Authorization:      `attendance:read:any` OR `attendance:read:own` (the latter requires the record's employeeId to match the caller's own Employee record)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the one place a plain `EMPLOYEE` can see a specific
+  `AttendanceRecord` at all — their own — mirroring `GET
+  /employees/:id`'s own/any shape (endpoint 11) rather than a new
+  pattern.
+- **Business problem solved**: "what does my own check-in/check-out for
+  this date look like" for a regular employee, and "look up this
+  specific record" for HR/management.
+- **Expected callers**: any authenticated user, with two different access
+  paths depending on their permissions.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                            |
+| -------------------------------------- | -------- | ------------------------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `attendance:read:any` or `attendance:read:own` |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                    |
+| ---- | ------------- | -------- | ---------------------------------- |
+| `id` | string (UUID) | **Yes**  | The AttendanceRecord's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No format validation on `id` — an invalid UUID or a well-formed UUID
+that doesn't exist both simply fail to match any row and produce the
+same `404`. Two-layer authorization, identical shape to `GET
+/employees/:id`:
+
+1. **Middleware** (`requirePermission('attendance:read:any',
+   'attendance:read:own')`): does the caller have _either_ key? If
+   neither, `403` before the record is even fetched.
+2. **Service** (`getAttendanceRecordById` → `assertOwnershipOrAny`):
+   fetches the record first (`404` if missing), _then_ — only if the
+   caller doesn't have the `:any` grant — resolves the caller's own
+   Employee record and compares its id to `record.employeeId`, throwing
+   `403` on mismatch (or if the caller has no linked Employee record at
+   all).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "record": {
+    "id": "c9b8a7d6-e5f4-4a3b-8c1d-0e9f8a7b6c5f",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "date": "2026-09-15T00:00:00.000Z",
+    "checkIn": "2026-09-15T09:05:00.000Z",
+    "checkOut": "2026-09-15T18:02:00.000Z",
+    "isHalfDay": false,
+    "createdAt": "2026-09-15T09:12:04.221Z",
+    "updatedAt": "2026-09-15T18:02:00.000Z"
+  }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                                                              | Response (`message`)                                              | When                                                                                                                                  |
+| ------ | ------------------------------------------------------------------------ | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `401`  | No/invalid/expired access token                                          | Same as every other protected endpoint                                   | `authMiddleware` failure                                                                                                                 |
+| `403`  | Roles grant neither `attendance:read:any` nor `attendance:read:own`      | `"You do not have permission to perform this action"`                    | Caller has no attendance-related read permission at all                                                                                  |
+| `403`  | Caller only has `attendance:read:own`, and the record isn't theirs       | `"You do not have permission to view this attendance record"`           | A different, more specific message than the middleware's — same distinguishable-messages pattern as `GET /employees/:id` — verified live |
+| `404`  | No such record                                                           | `"Attendance record not found"`                                          | Invalid/nonexistent `id`                                                                                                                 |
+
+## 10. Postman Test Cases
+
+| #   | Case                                        | Expected                            |
+| --- | ------------------------------------------------ | ------------------------------------ |
+| 1   | `ADMIN`/`MANAGER`, any valid `id`                | `200`    |
+| 2   | Owning `EMPLOYEE`, own record's `id`             | `200` — verified live |
+| 3   | Different `EMPLOYEE`, someone else's record's `id` | `403` (the record-specific message) — verified live |
+| 4   | Valid UUID, nonexistent record                   | `404`    |
+| 5   | Malformed (non-UUID) `id`                        | `404` (verified live — no `500`) |
+| 6   | No token                                        | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                              | Expected                                                                                                         |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| SQL injection attempt as the `id` (`'; DROP TABLE--`) | `404` — Prisma's parameterized query treats it as a literal string that matches nothing, no query-structure risk |
+| Extremely long string as `id`                         | `404` — same as above                                                                                             |
+| Tampered/expired JWT                                  | `401`                                                                                                              |
+| Wrong method (`POST /attendance/:id`)                 | `404` (no route registered for `POST` on this path)                                                              |
+
+## 12. Edge Cases
+
+| Scenario                                                                                      | Expected Behavior                                                                                                                        |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| An `ADMIN` fetching their own Employee's attendance record (if they have one)                  | `200` — `:any` short-circuits the ownership check entirely; an admin never needs `:own` to see their own record                          |
+| A caller with **no** Employee record, holding only `attendance:read:own`, requests any `id`    | `403` — `assertOwnershipOrAny` resolves `ownEmployee` as `null`, which never equals `record.employeeId`                                  |
+| Requesting `/attendance/effective-status` as if it were an `:id`                                | Never reaches this handler — the route registers `/effective-status` **before** `/:id` specifically to avoid this ambiguity (`attendance.routes.js`) |
+
+## 13. Security Testing
+
+- **BOLA (Broken Object Level Authorization)**: the primary BOLA test
+  case for this endpoint — confirm systematically that an
+  `attendance:read:own`-only caller **cannot** read any `id` except one
+  whose `employeeId` matches their own Employee record, tested against
+  at least two different non-owned ids.
+- **Authorization layering**: confirm the two distinct `403` messages
+  above correspond to the two different rejection paths (middleware vs.
+  service).
+
+## 14. Database Impact
+
+- **Tables affected**: `AttendanceRecord` (read only, single row); an
+  additional `Employee` lookup by `userId` when the ownership check runs
+  (i.e. whenever the caller lacks `:any`).
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/attendance/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('attendance:read:any', 'attendance:read:own')
+    ↓ (403 if neither granted; req.grantedPermissions set otherwise)
+attendance.controller.getById
+    → attendance.service.getAttendanceRecordById(id, { id: req.user.id, grantedPermissions })
+        ├─ attendanceRepository.findById(id) → not found → 404
+        └─ assertOwnershipOrAny(record, requester)
+             ├─ grantedPermissions includes 'attendance:read:any'? → skip
+             └─ else: employeeRepository.findByUserId(requester.id); id !== record.employeeId → 403
+    ↓
+200 { record }
+```
+
+## 16. Performance Notes
+
+Single indexed `AttendanceRecord.findUnique` by primary key, plus one
+additional indexed `Employee` lookup by `userId` only when the ownership
+check path runs.
+
+## 17. Interview Notes
+
+- Structurally identical to `GET /employees/:id` (endpoint 11) — same
+  two-layer authorization reasoning applies, down to reusing the pattern
+  of two distinguishable `403` messages for "no permission at all" vs.
+  "right permission, wrong record."
+
+## 18. cURL Examples
+
+```bash
+# As the owning EMPLOYEE
+curl -i http://localhost:3000/api/v1/attendance/$ATTENDANCE_RECORD_ID \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+
+# As ADMIN, any id
+curl -i http://localhost:3000/api/v1/attendance/$ATTENDANCE_RECORD_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Uses `{{attendanceRecordId}}` saved from `POST /attendance` or `POST
+/attendance/check-in`. Needs both an `{{adminAccessToken}}` and an
+`{{employeeAccessToken}}` (belonging to the user whose Employee record
+owns the target record) to exercise both authorization paths.
+
+## 20. Testing Checklist
+
+- ✅ `200` as `ADMIN`/`MANAGER` for any record
+- ✅ `200` as the owning `EMPLOYEE` (verified live)
+- ✅ `403` (record-specific message) as a different `EMPLOYEE` (verified live)
+- ✅ `404` for nonexistent `id`
+- ✅ `404` (not `500`) for a malformed/non-UUID `id`
+- ✅ `401` with no token
+
+---
+
+---
+
+# 54. `PATCH /attendance/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Attendance Domain (2026-09-15, feature/21-attendance-domain)
+Endpoint:           Correct an AttendanceRecord
+Description:        Corrects checkIn/checkOut/isHalfDay on an existing record - employeeId/date cannot be changed
+Method:             PATCH
+URL:                /api/v1/attendance/:id
+API Version:        v1
+Module:             modules/attendance
+Authentication:     Yes (Bearer access token)
+Authorization:      `attendance:update:any` permission required (ADMIN + MANAGER, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: `docs/domain-attendance.md` §2 names correction of a
+  check-in/check-out time (e.g. a forgotten check-out) as "the domain's
+  most business-sensitive mutation" — this is that correction path.
+- **Business problem solved**: lets `ADMIN`/`MANAGER` fix a mistaken or
+  missing `checkIn`/`checkOut`, or mark a day as a half-day after the
+  fact, with every change captured in `AuditLog` (ADR-AT04).
+- **Deliberate scope limit — `employeeId`/`date` cannot be changed here**:
+  correcting which employee or date a record belongs to isn't a
+  "correction" in the sense this endpoint supports — it's a different
+  record entirely (a different `(employeeId, date)` uniqueness slot).
+  Reassigning a record's employee or date would need to go through
+  delete-and-recreate instead.
+- **Expected callers**: `ADMIN` and `MANAGER` — same broader-than-
+  master-data scoping as `POST /attendance` (ADR-AT06).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                 |
+| -------------------------------------- | -------- | ----------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `attendance:update:any` permission |
+| `Content-Type: application/json`      | **Yes**  |                                                               |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                    |
+| ---- | ------------- | -------- | ---------------------------------- |
+| `id` | string (UUID) | **Yes**  | The AttendanceRecord's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{ "checkOut": "2026-09-15T18:30:00.000Z" }
+```
+
+| Field       | Type                   | Required | Description                                                    |
+| ----------- | ---------------------- | -------- | ---------------------------------------------------------------- |
+| `checkIn`   | string (ISO datetime), nullable | No | Correct the check-in time, or `null` to clear it              |
+| `checkOut`  | string (ISO datetime), nullable | No | Correct the check-out time, or `null` to clear it              |
+| `isHalfDay` | boolean                | No       | Correct the half-day flag                                        |
+
+`employeeId` and `date` are **not accepted** — any value supplied for
+either is silently ignored, not applied (they are not part of
+`updateAttendanceRecordSchema` at all).
+
+## 7. Validation Rules
+
+- All three fields are optional; an empty body `{}` is valid and results
+  in a no-op update.
+- `checkIn`/`checkOut`: each nullable + optional — `null` explicitly
+  clears the field, omission leaves it unchanged.
+- When both `checkIn` and `checkOut` resolve to non-null values (whether
+  from this request or left as-is is **not** cross-checked against the
+  existing record — the refinement only compares the two fields *as
+  submitted together in the same request*), `checkOut` must be `>=`
+  `checkIn` — `"checkOut cannot be before checkIn"`.
+- `isHalfDay`: optional boolean.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "record": {
+    "id": "c9b8a7d6-e5f4-4a3b-8c1d-0e9f8a7b6c5f",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "date": "2026-09-15T00:00:00.000Z",
+    "checkIn": "2026-09-15T09:05:00.000Z",
+    "checkOut": "2026-09-15T18:30:00.000Z",
+    "isHalfDay": false,
+    "createdAt": "2026-09-15T09:12:04.221Z",
+    "updatedAt": "2026-09-15T19:00:11.402Z"
+  }
+}
+```
+
+Verified live, including the `checkOut` correction shown above.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                                       |
+| ------ | ------------------------------------ | ---------------------------------------------------------- | ---------------------------------------------- |
+| `400`  | Validation failed                   | e.g. `"checkOut: checkOut cannot be before checkIn"`      | `checkOut` earlier than `checkIn` in the same request |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                    |
+| `403`  | Caller lacks `attendance:update:any` | `"You do not have permission to perform this action"`   | Verified live for `EMPLOYEE`                |
+| `404`  | No such record                      | `"Attendance record not found"`                           | Invalid/nonexistent `id`                    |
+
+## 10. Postman Test Cases
+
+| #   | Case                                     | Expected |
+| --- | --------------------------------------------- | -------- |
+| 1   | Correct `checkOut` only                        | `200` — verified live |
+| 2   | Correct `checkIn`/`checkOut` together          | `200`    |
+| 3   | Set `isHalfDay: true`                          | `200`    |
+| 4   | Clear `checkOut` via explicit `null`           | `200`    |
+| 5   | `checkOut` earlier than `checkIn`              | `400`    |
+| 6   | Attempt to change `employeeId`/`date` in the body | `200`, silently ignored — the record's `employeeId`/`date` are unchanged |
+| 7   | Nonexistent `id`                               | `404`    |
+| 8   | As `EMPLOYEE`/`MANAGER`* token                  | `403` for `EMPLOYEE` — verified live (*`MANAGER` has this permission and succeeds*) |
+| 9   | No token                                       | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                     | Expected |
+| -------------------------------- | -------- |
+| Empty body `{}`                  | `200`, no-op update |
+| `checkIn`/`checkOut` as a non-date type | `400` — Zod's `.coerce.date()` rejects unparseable values |
+| `isHalfDay` as a non-boolean value | `400`  |
+| Tampered/expired JWT             | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                       |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Setting `checkOut` earlier than the record's **existing** `checkIn`, without resubmitting `checkIn` | **Accepted** (`200`) — the `checkOut >= checkIn` refinement only compares the two fields as submitted in the same request body; it does not re-fetch and compare against the existing stored `checkIn`. A known, undemonstrated gap, the same class as other cross-field refinements in this API that don't reach into prior state. |
+| Correcting a record that already has both `checkIn` and `checkOut` | `200` — corrections can be applied any number of times; there is no "locked after first correction" rule                |
+| Clearing both `checkIn` and `checkOut` via `null`                  | `200` — reverts the record to a fully blank state, equivalent to a freshly `POST /attendance`-created blank record       |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `EMPLOYEE` cannot correct any attendance
+  record, including their own, via this path — verified live;
+  self-service employees can only affect *today's* record via `POST
+  /attendance/check-in`/`PATCH /attendance/check-out`, never a past
+  correction.
+- **Mass assignment**: only `checkIn`/`checkOut`/`isHalfDay` are read
+  from the body — `employeeId`/`date` cannot be changed via this
+  endpoint even if supplied.
+
+## 14. Database Impact
+
+- **Tables affected**: `AttendanceRecord` (update), `AuditLog` (insert),
+  inside one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/attendance/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('attendance:update:any')
+    ↓ (403 if not granted)
+validateMiddleware(updateAttendanceRecordSchema)
+    ↓ (400 if invalid)
+attendance.controller.update → attendance.service.updateAttendanceRecord(id, data, actor)
+    ├─ attendanceRepository.findById(id) → not found → 404
+    └─ prisma.$transaction:
+         ├─ attendanceRepository.update(id, data, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', beforeData, afterData, ... }, tx)
+    ↓
+200 { record }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup, one update, one audit-log insert.
+
+## 17. Interview Notes
+
+- **Q: Why can't `employeeId`/`date` be changed via this endpoint?**
+  Both together form the record's uniqueness identity
+  (`@@unique([employeeId, date])`). Changing either wouldn't be
+  "correcting" the existing fact, it would be re-pointing the row at an
+  entirely different fact — the correct way to fix a genuinely
+  misattributed record is `DELETE` the wrong one and `POST` a new one at
+  the right `(employeeId, date)`, keeping both operations separately
+  audit-logged rather than conflating them into one ambiguous "move."
+- **Q: Why is every correction audit-logged, even routine ones?**
+  ADR-AT04 reuses the existing generic `AuditLog` model exactly the way
+  every other domain's mutations already do — Attendance introduces no
+  bespoke correction-history mechanism, and §10's risk table names
+  direct-edit corrections without an approval workflow as a real,
+  low-severity risk mitigated specifically by this always-on audit trail.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/attendance/$ATTENDANCE_RECORD_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"checkOut":"2026-09-15T18:30:00.000Z"}'
+```
+
+## 19. Postman Collection Notes
+
+Run after `POST /attendance` or `POST /attendance/check-in` against
+`{{attendanceRecordId}}`; follow with a `GET /attendance/:id` to confirm
+the correction and a manual `AuditLog` check for the `UPDATE` entry.
+
+## 20. Testing Checklist
+
+- ✅ Correct `checkIn`/`checkOut`/`isHalfDay`, individually and together
+- ✅ Clear a field via explicit `null`
+- ✅ `checkOut` before `checkIn` (same request) → `400`
+- ✅ `employeeId`/`date` in the body are silently ignored
+- ✅ `404` for nonexistent `id`
+- ✅ `403` as `EMPLOYEE` (verified live), `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 55. `DELETE /attendance/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Attendance Domain (2026-09-15, feature/21-attendance-domain)
+Endpoint:           Hard-delete an AttendanceRecord
+Description:        Permanently removes an AttendanceRecord row - no reference-count restriction, unlike Branch/Department/Designation/Shift's delete guards
+Method:             DELETE
+URL:                /api/v1/attendance/:id
+API Version:        v1
+Module:             modules/attendance
+Authentication:     Yes (Bearer access token)
+Authorization:      `attendance:delete:any` permission required (ADMIN + MANAGER, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: covers the genuine data-entry-mistake case — a
+  record created for the wrong employee or date entirely (as opposed to
+  a wrong `checkIn`/`checkOut`, which `PATCH /attendance/:id` corrects
+  in place).
+- **No reference-count restriction, unlike every prior master-data
+  domain's delete guard**: `docs/domain-attendance.md` §2/ADR-AT01 notes
+  that nothing holds a foreign key onto `AttendanceRecord` the way
+  `Employee` references `Branch`/`Department`/`Designation`/`Shift` — so
+  there is no "deactivate instead" fallback and no `409` reference-count
+  path here at all. This is a plain hard delete every time, rare and
+  audit-logged rather than a routine lifecycle step (§2).
+- **Expected callers**: `ADMIN` and `MANAGER` — same broader-than-
+  master-data scoping as `POST`/`PATCH /attendance` (ADR-AT06).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                 |
+| -------------------------------------- | -------- | ----------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `attendance:delete:any` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                    |
+| ---- | ------------- | -------- | ---------------------------------- |
+| `id` | string (UUID) | **Yes**  | The AttendanceRecord's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check and the record's existence. Unlike
+`DELETE /shifts/:id`/`DELETE /designations/:id`/etc., there is **no**
+zero-reference check to perform.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Attendance record deleted successfully"
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                                | Response (`message`)                                | When                              |
+| ------ | ------------------------------------------ | ---------------------------------------------------------- | ------------------------------------ |
+| `401`  | Missing/invalid/expired access token       | Same as every other protected endpoint                  | `authMiddleware` failure           |
+| `403`  | Caller lacks `attendance:delete:any`       | `"You do not have permission to perform this action"`   | Verified live for `EMPLOYEE`       |
+| `404`  | No such record                            | `"Attendance record not found"`                           | Invalid/nonexistent `id`           |
+
+Notably **no `409`** — see §7/§2; nothing references `AttendanceRecord`
+by foreign key.
+
+## 10. Postman Test Cases
+
+| #   | Case                       | Expected |
+| --- | ------------------------------ | -------- |
+| 1   | Delete an existing record       | `200` — verified live |
+| 2   | Delete it again (retry)         | `404`    |
+| 3   | Nonexistent `id`                | `404`    |
+| 4   | As `EMPLOYEE`/`MANAGER`* token   | `403` for `EMPLOYEE` — verified live (*`MANAGER` has this permission and succeeds*) |
+| 5   | No token                       | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                   | Expected |
+| ----------------------------- | -------- |
+| Malformed (non-UUID) `id`     | `404`    |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                                 | Expected Behavior                                                                                                             |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Deleting a record that a self-service check-in/check-out is mid-flight against | Not independently verified under true concurrency — a race could see the check-in/check-out's own update fail with a Prisma "record not found" error rather than the intended `409` semantics of the check-in flow, since delete has no locking coordination with check-in/check-out |
+| Concurrent delete requests for the same `id`                                 | One succeeds, the other sees `404` — not independently verified under true concurrency (same caveat as Branch's/Shift's equivalent case) |
+| Deleting a record that is the target of an in-flight `GET /attendance/effective-status` computation | The read either completes with the pre-delete record or (if the delete lands first) resolves as if no record ever existed for that date — no transactional isolation is guaranteed across these two independent requests |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `EMPLOYEE` cannot delete any attendance
+  record — verified live.
+- **Idempotency under retry**: a retried `DELETE` gets a safe `404` on
+  the second attempt.
+
+## 14. Database Impact
+
+- **Tables affected**: `AttendanceRecord` (delete), `AuditLog` (insert),
+  inside one `prisma.$transaction`.
+- **No cascade concerns**: nothing references `AttendanceRecord`, so
+  there is nothing else for this delete to cascade into or be blocked
+  by.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/attendance/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('attendance:delete:any')
+    ↓ (403 if not granted)
+attendance.controller.remove → attendance.service.deleteAttendanceRecord(id, actor)
+    ├─ attendanceRepository.findById(id) → not found → 404
+    └─ prisma.$transaction:
+         ├─ attendanceRepository.remove(id, tx)
+         └─ auditLogRepository.create({ action: 'DELETE', beforeData, afterData: null, ... }, tx)
+    ↓
+200 { message: "Attendance record deleted successfully" }
+```
+
+## 16. Performance Notes
+
+One indexed existence lookup, one delete, one audit-log insert — no
+reference-count query needed (unlike Branch/Department/Designation/
+Shift's delete endpoints), so this is cheaper than any of those.
+
+## 17. Interview Notes
+
+- **Q: Why does Attendance's delete have no `409`/reference-count guard
+  at all, when every prior domain's delete endpoint has one?**
+  `docs/domain-attendance.md` ADR-AT01 names this explicitly:
+  `AttendanceRecord` is a raw-fact ledger, closer in nature to
+  `AuditLog` than to Branch/Department/Designation/Shift's
+  referenced-master-data shape — nothing in the schema holds a foreign
+  key onto it (`Employee` points *at* `AttendanceRecord`'s owner, not
+  the other way around), so there is nothing for a reference count to
+  protect against.
+- **Q: Given no reference-count restriction, what stops accidental mass
+  deletion of legitimate history?** Nothing at the endpoint level beyond
+  the `attendance:delete:any` permission gate and the mandatory
+  `AuditLog` trail — `docs/domain-attendance.md` §10 names this as a
+  real, low-severity risk ("rare and audit-logged, not a routine
+  lifecycle step"), mitigated by visibility after the fact rather than
+  a pre-emptive block, consistent with corrections having no approval
+  workflow either (§6/§10).
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/attendance/$ATTENDANCE_RECORD_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this **last** for any `{{attendanceRecordId}}` created purely for
+test purposes — unlike `DELETE /shifts/:id`, there is no reference-count
+case to separately assert on here.
+
+## 20. Testing Checklist
+
+- ✅ Delete an existing record → `200` (verified live)
+- ✅ `403` as `EMPLOYEE` (verified live), `401` with no token
+- ✅ `404` for nonexistent `id`
+- ✅ `AuditLog` row created
+- ✅ No `409`/reference-count path exists (confirmed by source inspection — nothing FKs onto `AttendanceRecord`)

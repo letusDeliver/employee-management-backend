@@ -79,11 +79,12 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the two most load-
 ## Attendance — [[domain-attendance]]
 | ADR | Summary | Status |
 |---|---|---|
-| AT01 | Attendance as a raw-fact ledger, not master data | Accepted |
-| AT02 | One record per (employee, date) | Accepted |
-| AT03 | Effective status computed on read, never written by Leave (no cross-domain writes) | Accepted |
-| AT04 | Corrections tracked via generic `AuditLog` | Accepted |
-| AT05 | Single check-in/check-out; multi-punch explicitly deferred | Deferred (base accepted) |
+| AT01 | Attendance as a raw-fact ledger, not master data | Accepted; Implemented (2026-09-15) |
+| AT02 | One record per (employee, date) | Accepted; Implemented (2026-09-15) |
+| AT03 | Effective status computed on read, never written by Leave (no cross-domain writes) | Accepted; Implemented (2026-09-15) — Holiday Calendar + Shift + AttendanceRecord legs only; the Leave leg ("On Leave") is a named gap until Leave exists |
+| AT04 | Corrections tracked via generic `AuditLog` | Accepted; Implemented (2026-09-15) — every mutation logged, not just corrections |
+| AT05 | Single check-in/check-out; multi-punch explicitly deferred | Deferred (base accepted); base case Implemented (2026-09-15) |
+| AT06 | Permission scoping mirrors Employee's own/any split, not the master-data ADMIN-only pattern | Accepted; Implemented (2026-09-15) |
 
 ## Leave — [[domain-leave]]
 | ADR | Summary | Status |
@@ -149,6 +150,7 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the two most load-
 | ADR | Domain | Nature of Gap |
 |---|---|---|
 | HC05 | Holiday Calendar | Optional/restricted holiday election — boundary deferred to Leave. |
+| AT03 (Leave leg) | Attendance | "On Leave" effective status not resolvable until Leave exists and exposes an "approved leave for employee X on date Y" query — currently resolves as `ABSENT`, a named gap (§9), not a defect. |
 | LV06 | Leave | Carry-forward / encashment policy — blocks Payroll (PR05-adjacent) and Exit Management (EM05) final-settlement completeness. |
 | PR05 | Payroll | Salary period unit unverified — requires stakeholder confirmation. |
 | RC04 | Recruitment | Candidate PII retention — requires legal/compliance input. |

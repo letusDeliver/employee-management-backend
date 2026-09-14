@@ -158,6 +158,14 @@ All routes are mounted under `/api/v1`.
 | `GET`    | `/shifts/:id`                          | Access token, `shift:read` permission (every role)      | Get one Shift record                                                                                                                                                                                                   |
 | `PATCH`  | `/shifts/:id`                          | Access token, `shift:update` permission (ADMIN only)    | Update a Shift, including activating/deactivating it                                                                                                                                                                   |
 | `DELETE` | `/shifts/:id`                          | Access token, `shift:delete` permission (ADMIN only)    | Hard-delete a Shift — only when zero Employee records reference it                                                                                                                                                     |
+| `POST`   | `/attendance/check-in`                 | Access token, `attendance:checkin` permission (every role) | Self-service check-in for the caller's own Employee record (today, server time — no body)                                                                                                                          |
+| `PATCH`  | `/attendance/check-out`                | Access token, `attendance:checkin` permission (every role) | Self-service check-out for the caller's own Employee record (today, server time — no body)                                                                                                                         |
+| `POST`   | `/attendance`                          | Access token, `attendance:create:any` permission (ADMIN/MANAGER) | Administratively create an AttendanceRecord for any Employee                                                                                                                                                  |
+| `GET`    | `/attendance`                          | Access token, `attendance:read:any` permission (ADMIN/MANAGER) | List AttendanceRecords — paginated, filterable (`employeeId`, `dateFrom`/`dateTo`), sortable (no auto-scoped `:own` listing, same shape as `GET /employees`)                                                     |
+| `GET`    | `/attendance/effective-status`         | Access token, `attendance:read:any` or `:own` permission | Compute an Employee's effective daily status (`PRESENT`/`LATE`/`HALF_DAY`/`ABSENT`/`HOLIDAY`/`WEEK_OFF`) for one date — `employeeId` optional, defaults to caller's own                                          |
+| `GET`    | `/attendance/:id`                      | Access token, `attendance:read:any` or `:own` permission | Get one AttendanceRecord (own record allowed for `EMPLOYEE`)                                                                                                                                                       |
+| `PATCH`  | `/attendance/:id`                      | Access token, `attendance:update:any` permission (ADMIN/MANAGER) | Correct an AttendanceRecord's `checkIn`/`checkOut`/`isHalfDay`                                                                                                                                                |
+| `DELETE` | `/attendance/:id`                      | Access token, `attendance:delete:any` permission (ADMIN/MANAGER) | Delete an AttendanceRecord — no reference-count restriction, rare and audit-logged                                                                                                                            |
 
 `POST`/`PATCH /employees` also accept an optional `branchId`, validated
 against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
@@ -173,6 +181,20 @@ be `ACTIVE`. Absence means no fixed-hours expectation for that employee,
 never an error. Shift's `startTime`/`endTime` are 24-hour `"HH:mm"`
 strings; `endTime < startTime` is a valid, deliberately-supported
 overnight (midnight-crossing) shift, not an error (ADR-SH03).
+
+**New domain (2026-09-15):** Attendance (`docs/domain-attendance.md`) is
+the first domain that breaks the create/update/archive/hard-delete-if-
+referenced mold every prior domain followed — `AttendanceRecord` is a
+raw-fact historical ledger (one per `(employeeId, date)`), never
+"deactivated," only ever corrected (tracked via `AuditLog`, not silently
+overwritten). `GET /attendance/effective-status` is the first coordinating
+read that cross-references two other domains (Holiday Calendar + Shift)
+to compute a value that is never persisted — it does not yet resolve an
+`ON_LEAVE` status, since the Leave domain that leg depends on doesn't
+exist yet (a named gap, not an oversight). Permission scoping mirrors
+`Employee`'s own/any split (self-service `attendance:checkin` plus
+`:read:own`/`:read:any`/`:create:any`/`:update:any`/`:delete:any`), not
+the ADMIN-only-mutation shape used by every master-data domain above.
 
 **Breaking change (2026-09-13):** Employee's free-text `department`
 (`String`) field was removed and replaced by a **mandatory**

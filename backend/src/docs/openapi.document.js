@@ -14,6 +14,7 @@ import '../modules/departments/department.docs.js';
 import '../modules/designations/designation.docs.js';
 import '../modules/holidayCalendars/holidayCalendar.docs.js';
 import '../modules/shifts/shift.docs.js';
+import '../modules/attendance/attendance.docs.js';
 
 // Import order matters: every *.docs.js file must finish calling
 // registry.registerPath() (a side effect of import) before

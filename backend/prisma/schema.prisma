@@ -131,6 +131,7 @@ model Employee {
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
   documents     EmployeeDocument[]
+  attendanceRecords AttendanceRecord[]
 
   // No @unique on userId: Prisma's schema DSL can't express a *partial*
   // unique constraint (scoped to non-deleted rows), so the real
@@ -315,6 +316,42 @@ model Shift {
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
   employees   Employee[]
+}
+
+// See docs/domain-attendance.md for the full business-architecture sign-off.
+// A raw-fact historical ledger (ADR-AT01), not master data - breaks the
+// create/update/archive/hard-delete-if-unreferenced mold every prior
+// domain (Branch through Shift) followed. No status/archive field: a
+// record is never "deactivated," only ever corrected. Cascade, not
+// Restrict, on employeeId (unlike Branch/Department/Designation/Shift's
+// FKs onto Employee) - this is owned-by-Employee history, mirroring
+// EmployeeDocument's own Cascade, not referenced master data that must
+// outlive its owner.
+model AttendanceRecord {
+  id         String    @id @default(uuid())
+  employeeId String
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  // Date-only in practice (time truncated to UTC midnight by the service
+  // layer before every write/query) - enforces "one record per calendar
+  // date" (ADR-AT02) regardless of what time of day a request arrives.
+  date       DateTime
+  checkIn    DateTime?
+  checkOut   DateTime?
+  // A stored fact the admin/employee asserts, not a value derived from a
+  // time threshold - domain-attendance.md names "Half-Day" as a resulting
+  // status (§1) but never defines the business rule for it (minimum
+  // hours? missing checkout?); inventing one would be an unverified
+  // assumption, so this is a raw input instead, the same shape as
+  // Holiday.isOptional.
+  isHalfDay  Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  // Enforces ADR-AT02's mandatory invariant at the DB level, not just in
+  // the service layer.
+  @@unique([employeeId, date])
+  @@index([employeeId])
+  @@index([date])
 }
 
 model EmployeeDocument {

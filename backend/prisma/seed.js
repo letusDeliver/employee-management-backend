@@ -191,6 +191,48 @@ const PERMISSIONS = [
     scope: null,
     description: 'Hard-delete a shift with zero Employee references',
   },
+  {
+    key: 'attendance:checkin',
+    resource: 'attendance',
+    action: 'checkin',
+    scope: null,
+    description: "Self-service check-in/check-out against the caller's own Employee record",
+  },
+  {
+    key: 'attendance:read:own',
+    resource: 'attendance',
+    action: 'read',
+    scope: 'own',
+    description: "Read the caller's own attendance records only",
+  },
+  {
+    key: 'attendance:read:any',
+    resource: 'attendance',
+    action: 'read',
+    scope: 'any',
+    description: 'Read any attendance record, including listing across employees',
+  },
+  {
+    key: 'attendance:create:any',
+    resource: 'attendance',
+    action: 'create',
+    scope: 'any',
+    description: 'Administratively create an attendance record for any employee',
+  },
+  {
+    key: 'attendance:update:any',
+    resource: 'attendance',
+    action: 'update',
+    scope: 'any',
+    description: 'Correct any attendance record',
+  },
+  {
+    key: 'attendance:delete:any',
+    resource: 'attendance',
+    action: 'delete',
+    scope: 'any',
+    description: 'Delete any attendance record',
+  },
 ];
 
 const ROLE_PERMISSIONS = {
@@ -220,6 +262,12 @@ const ROLE_PERMISSIONS = {
     'shift:read',
     'shift:update',
     'shift:delete',
+    'attendance:checkin',
+    'attendance:read:own',
+    'attendance:read:any',
+    'attendance:create:any',
+    'attendance:update:any',
+    'attendance:delete:any',
   ],
   MANAGER: [
     'employee:create',
@@ -231,6 +279,12 @@ const ROLE_PERMISSIONS = {
     'designation:read',
     'holidayCalendar:read',
     'shift:read',
+    'attendance:checkin',
+    'attendance:read:own',
+    'attendance:read:any',
+    'attendance:create:any',
+    'attendance:update:any',
+    'attendance:delete:any',
   ],
   EMPLOYEE: [
     'employee:read:own',
@@ -239,6 +293,8 @@ const ROLE_PERMISSIONS = {
     'designation:read',
     'holidayCalendar:read',
     'shift:read',
+    'attendance:checkin',
+    'attendance:read:own',
   ],
 };
 
@@ -277,7 +333,7 @@ const seedRolesAndGrants = async () => {
 const main = async () => {
   await seedPermissions();
   await seedRolesAndGrants();
-  console.log('Seed complete: 3 system roles, 26 permissions, role-permission grants.');
+  console.log('Seed complete: 3 system roles, 32 permissions, role-permission grants.');
 };
 
 main()
