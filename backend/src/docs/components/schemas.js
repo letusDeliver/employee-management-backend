@@ -272,6 +272,57 @@ export const PayslipSchema = z
   })
   .meta({ id: 'Payslip' });
 
+export const ReviewCycleSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c' }),
+    name: z.string().meta({ example: 'H1 2026 Review' }),
+    startDate: z.iso.datetime().meta({ example: '2026-01-01T00:00:00.000Z' }),
+    endDate: z.iso.datetime().meta({ example: '2026-06-30T00:00:00.000Z' }),
+    status: z.enum(['OPEN', 'CLOSED']).meta({ example: 'OPEN' }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-15T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-15T10:00:00.000Z' }),
+  })
+  .meta({ id: 'ReviewCycle' });
+
+export const ReviewAddendumSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'f6a7b8c9-d0e1-4f2a-3b4c-5d6f7a8b9c0d' }),
+    performanceReviewId: z.uuid().meta({ example: 'a7b8c9d0-e1f2-4a3b-4c5d-6f7a8b9c0d1e' }),
+    authorId: z.uuid().nullable().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    comment: z.string().meta({ example: 'Follow-up: employee completed the agreed training in July.' }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-15T10:00:00.000Z' }),
+  })
+  .meta({ id: 'ReviewAddendum' });
+
+export const PerformanceReviewSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'a7b8c9d0-e1f2-4a3b-4c5d-6f7a8b9c0d1e' }),
+    employeeId: z.uuid().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    reviewerId: z.uuid().meta({ example: 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f' }),
+    reviewCycleId: z.uuid().meta({ example: 'e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c' }),
+    status: z.enum(['DRAFT', 'SUBMITTED', 'ACKNOWLEDGED']).meta({ example: 'DRAFT' }),
+    rating: z
+      .enum(['OUTSTANDING', 'EXCEEDS_EXPECTATIONS', 'MEETS_EXPECTATIONS', 'BELOW_EXPECTATIONS', 'UNSATISFACTORY'])
+      .nullable()
+      .meta({ example: null }),
+    managerComments: z.string().nullable().meta({ example: null }),
+    selfComments: z.string().nullable().meta({ example: null }),
+    departmentName: z.string().nullable().meta({
+      description: 'Snapshotted at submission time (ADR-PF03) - null while Draft',
+      example: null,
+    }),
+    designationName: z.string().nullable().meta({ example: null }),
+    branchName: z.string().nullable().meta({ example: null }),
+    submittedAt: z.iso.datetime().nullable().meta({ example: null }),
+    acknowledgedAt: z.iso.datetime().nullable().meta({ example: null }),
+    addenda: z.array(ReviewAddendumSchema).optional().meta({
+      description: 'Only present on GET /performance-reviews/:id, not the list endpoint',
+    }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-15T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-15T10:00:00.000Z' }),
+  })
+  .meta({ id: 'PerformanceReview' });
+
 export const EmployeeDocumentSchema = z
   .object({
     id: z.uuid().meta({ example: 'f1e2d3c4-b5a6-4978-8f6e-5d4c3b2a1908' }),

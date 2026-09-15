@@ -20,4 +20,7 @@ export const AUDIT_ENTITY_TYPES = Object.freeze({
   LEAVE_BALANCE: 'LeaveBalance',
   PAYROLL_RUN: 'PayrollRun',
   PAYSLIP: 'Payslip',
+  REVIEW_CYCLE: 'ReviewCycle',
+  PERFORMANCE_REVIEW: 'PerformanceReview',
+  REVIEW_ADDENDUM: 'ReviewAddendum',
 });

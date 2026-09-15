@@ -189,6 +189,20 @@ All routes are mounted under `/api/v1`.
 | `DELETE` | `/payroll-runs/:id`                    | Access token, `payrollRun:delete` permission (ADMIN only) | Delete a DRAFT PayrollRun — by construction it has zero Payslips yet                                                                                                                                            |
 | `GET`    | `/payslips`                            | Access token, `payslip:read:any` or `:own` permission | List Payslips — same own-vs-any auto-scoping as `GET /leave-requests`; filterable (`employeeId` [`:any` only], `payrollRunId`), sortable                                                                        |
 | `GET`    | `/payslips/:id`                        | Access token, `payslip:read:any` or `:own` permission | Get one Payslip, including its `lineItems` breakdown — no edit endpoint exists at any status                                                                                                                    |
+| `POST`   | `/review-cycles`                       | Access token, `reviewCycle:create` permission (ADMIN only) | Create a Review Cycle (e.g. "H1 2026 Review")                                                                                                                                                                     |
+| `GET`    | `/review-cycles`                       | Access token, `reviewCycle:read` permission (every role) | List Review Cycle records — paginated, searchable (`name`), filterable (`status`), sortable                                                                                                                     |
+| `GET`    | `/review-cycles/:id`                   | Access token, `reviewCycle:read` permission (every role) | Get one Review Cycle record                                                                                                                                                                                       |
+| `PATCH`  | `/review-cycles/:id`                   | Access token, `reviewCycle:update` permission (ADMIN only) | Update a Review Cycle, including opening/closing it                                                                                                                                                               |
+| `DELETE` | `/review-cycles/:id`                   | Access token, `reviewCycle:delete` permission (ADMIN only) | Hard-delete a Review Cycle — only when zero PerformanceReview records reference it                                                                                                                                |
+| `POST`   | `/performance-reviews`                 | Access token, `performanceReview:create:reports` or `:create:any` | Author a Draft review for a direct report (MANAGER) or any employee (ADMIN, required when the employee has no manager, with an explicit `reviewerId`)                                                    |
+| `GET`    | `/performance-reviews`                 | Access token, `performanceReview:read:any`, `:read:own`, or `:manage:reports` | List Performance Reviews — auto-scoped to own reviews and/or reports' reviews without `:any`, extending `GET /leave-requests`'s own/any shape with a manager's-reports branch |
+| `GET`    | `/performance-reviews/:id`              | Access token, any performance-review read/manage permission | Get one Performance Review, including its `addenda` breakdown                                                                                                                                                    |
+| `PATCH`  | `/performance-reviews/:id`              | Access token, `performanceReview:manage:reports` or `:manage:any` | Edit rating/managerComments — Draft only; once Submitted, use addenda instead                                                                                                                                    |
+| `PATCH`  | `/performance-reviews/:id/submit`       | Access token, `performanceReview:manage:reports` or `:manage:any` | Move Draft → Submitted — requires rating and managerComments set; snapshots department/designation/branch names at this moment                                                                                  |
+| `PATCH`  | `/performance-reviews/:id/self-assessment` | Access token, `performanceReview:selfAssess:own` | The reviewed employee sets their own self-assessment — any time before Acknowledged                                                                                                                          |
+| `PATCH`  | `/performance-reviews/:id/acknowledge`  | Access token, `performanceReview:acknowledge:own` | The reviewed employee acknowledges a Submitted review — Submitted → Acknowledged, no admin/manager override exists                                                                                              |
+| `DELETE` | `/performance-reviews/:id`              | Access token, `performanceReview:manage:reports` or `:manage:any` | Delete a Draft Performance Review — mirrors PayrollRun's Draft-only-delete convenience                                                                                                                          |
+| `POST`   | `/performance-reviews/:id/addenda`      | Access token (any read/manage permission that grants access to this review) | Append a comment — the mechanism for adding commentary once a review is Acknowledged, without editing its frozen content                                                                          |
 
 `POST`/`PATCH /employees` also accept an optional `branchId`, validated
 against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
@@ -267,6 +281,27 @@ apart as paid or unpaid for this calculation. `PayrollRun` follows the
 `ADMIN`-only-mutation pattern (no dedicated Finance/Payroll role exists);
 `Payslip` reads split own/any, but `MANAGER` gets only `:own`, not
 visibility into their reports' pay.
+
+**New domain (2026-09-15):** Performance (`docs/domain-performance.md`) —
+this review's second explicit multi-party workflow after Leave.
+`ReviewCycle` (master data, `OPEN`/`CLOSED`) and `PerformanceReview`
+(`DRAFT → SUBMITTED → ACKNOWLEDGED`), plus an append-only `ReviewAddendum`
+child for post-Acknowledgement commentary. `reviewerId` is resolved from
+`Employee.managerId` and stored at creation time — a manager's later
+reassignment never rewrites who authored a past review; `ADMIN` must
+supply `reviewerId` explicitly when the target employee has no manager.
+Org-context (department/designation/branch names) is snapshotted at
+**Submit** specifically, not at creation. `PATCH` (editing rating/
+comments) only works while `DRAFT` — once `SUBMITTED`, further commentary
+goes through addenda instead. `rating` is a closed 5-value categorical
+enum (`OUTSTANDING` … `UNSATISFACTORY`). Permission model: `ReviewCycle`
+is `ADMIN`-only; `PerformanceReview` splits authoring
+(`create:reports`/`create:any`, extending Leave's manager-plus-admin-
+fallback shape) from lifecycle management (`manage:reports`/`manage:any`)
+and the reviewed employee's own actions (`read:own`, `acknowledge:own`,
+`selfAssess:own`). Adding an addendum needs no dedicated permission —
+gated by whichever read/manage permission already grants access to that
+specific review.
 
 **Breaking change (2026-09-13):** Employee's free-text `department`
 (`String`) field was removed and replaced by a **mandatory**

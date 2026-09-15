@@ -388,6 +388,90 @@ const PERMISSIONS = [
     scope: 'any',
     description: 'Read any Payslip, including listing across employees',
   },
+  {
+    key: 'reviewCycle:create',
+    resource: 'reviewCycle',
+    action: 'create',
+    scope: null,
+    description: 'Create a review cycle',
+  },
+  {
+    key: 'reviewCycle:read',
+    resource: 'reviewCycle',
+    action: 'read',
+    scope: null,
+    description: 'Read review cycle records',
+  },
+  {
+    key: 'reviewCycle:update',
+    resource: 'reviewCycle',
+    action: 'update',
+    scope: null,
+    description: 'Update a review cycle, including opening/closing it',
+  },
+  {
+    key: 'reviewCycle:delete',
+    resource: 'reviewCycle',
+    action: 'delete',
+    scope: null,
+    description: 'Hard-delete a review cycle with zero PerformanceReview references',
+  },
+  {
+    key: 'performanceReview:create:reports',
+    resource: 'performanceReview',
+    action: 'create',
+    scope: 'reports',
+    description: "Author a Draft performance review for the caller's own direct reports (MANAGER)",
+  },
+  {
+    key: 'performanceReview:create:any',
+    resource: 'performanceReview',
+    action: 'create',
+    scope: 'any',
+    description: 'Author a Draft performance review for any employee, including a manager-less one (ADMIN)',
+  },
+  {
+    key: 'performanceReview:manage:reports',
+    resource: 'performanceReview',
+    action: 'manage',
+    scope: 'reports',
+    description: "Edit (while Draft), submit, and delete (while Draft) a performance review the caller is the reviewer of (MANAGER)",
+  },
+  {
+    key: 'performanceReview:manage:any',
+    resource: 'performanceReview',
+    action: 'manage',
+    scope: 'any',
+    description: 'Edit (while Draft), submit, and delete (while Draft) any performance review (ADMIN)',
+  },
+  {
+    key: 'performanceReview:read:own',
+    resource: 'performanceReview',
+    action: 'read',
+    scope: 'own',
+    description: "Read the caller's own performance reviews only",
+  },
+  {
+    key: 'performanceReview:read:any',
+    resource: 'performanceReview',
+    action: 'read',
+    scope: 'any',
+    description: 'Read any performance review, including listing across employees',
+  },
+  {
+    key: 'performanceReview:acknowledge:own',
+    resource: 'performanceReview',
+    action: 'acknowledge',
+    scope: 'own',
+    description: "Acknowledge the caller's own Submitted performance review",
+  },
+  {
+    key: 'performanceReview:selfAssess:own',
+    resource: 'performanceReview',
+    action: 'selfAssess',
+    scope: 'own',
+    description: "Add/update the caller's own self-assessment comments on their own review",
+  },
 ];
 
 const ROLE_PERMISSIONS = {
@@ -444,6 +528,16 @@ const ROLE_PERMISSIONS = {
     'payrollRun:delete',
     'payslip:read:own',
     'payslip:read:any',
+    'reviewCycle:create',
+    'reviewCycle:read',
+    'reviewCycle:update',
+    'reviewCycle:delete',
+    'performanceReview:create:any',
+    'performanceReview:manage:any',
+    'performanceReview:read:own',
+    'performanceReview:read:any',
+    'performanceReview:acknowledge:own',
+    'performanceReview:selfAssess:own',
   ],
   MANAGER: [
     'employee:create',
@@ -470,6 +564,12 @@ const ROLE_PERMISSIONS = {
     'leaveBalance:read:own',
     'leaveBalance:read:any',
     'payslip:read:own',
+    'reviewCycle:read',
+    'performanceReview:create:reports',
+    'performanceReview:manage:reports',
+    'performanceReview:read:own',
+    'performanceReview:acknowledge:own',
+    'performanceReview:selfAssess:own',
   ],
   EMPLOYEE: [
     'employee:read:own',
@@ -486,6 +586,10 @@ const ROLE_PERMISSIONS = {
     'leaveRequest:cancel:own',
     'leaveBalance:read:own',
     'payslip:read:own',
+    'reviewCycle:read',
+    'performanceReview:read:own',
+    'performanceReview:acknowledge:own',
+    'performanceReview:selfAssess:own',
   ],
 };
 
@@ -524,7 +628,7 @@ const seedRolesAndGrants = async () => {
 const main = async () => {
   await seedPermissions();
   await seedRolesAndGrants();
-  console.log('Seed complete: 3 system roles, 54 permissions, role-permission grants.');
+  console.log('Seed complete: 3 system roles, 66 permissions, role-permission grants.');
 };
 
 main()

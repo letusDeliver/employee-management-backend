@@ -1766,3 +1766,100 @@ updated. `handbook/API_ENDPOINTS.md` gained new endpoint docs for
 verified). `backend/README.md` updated to match.
 
 Deliberately **backend-only**, same as every prior domain.)_
+
+_(Performance Domain — 2026-09-15, on branch `feature/24-performance-domain`
+(based on `feature/23-payroll-domain`). Tenth domain from the HRMS/ERP
+Business Architecture Review (`docs/domain-performance.md`). Unlike
+Payroll, this domain's own sign-off named no genuinely blocking open
+question - "Ready. No structural blockers," confidence 88% - so
+implementation proceeded straight from recon to a plan, no stakeholder
+question needed.
+
+**Two aggregates, `ReviewCycle` (master data) and `PerformanceReview`
+(this review's second explicit multi-party workflow after Leave), plus a
+`ReviewAddendum` child (ADR-PF01):** `DRAFT → SUBMITTED → ACKNOWLEDGED`.
+`reviewerId` is resolved from `Employee.managerId` and stored at creation
+time (ADR-PF02) - not a live join, so a later manager change never
+retroactively rewrites who authored a past review. When the target
+employee has no manager, `ADMIN` must supply `reviewerId` explicitly,
+since (unlike Leave's `decide:any`) it's a stored, mandatory column, not
+a pure authorization check.
+
+**Org-context snapshot taken at Submit specifically, per the domain doc's
+own explicit wording (ADR-PF03)** - not at creation, since a Draft
+review's organizational context isn't yet meaningful. Same underlying
+insight as Payroll's ADR-PR02, calibrated to a lower enforcement level
+appropriate to a personnel record, not a financial one.
+
+**Judgment call, flagged:** `PATCH` (editing rating/comments) is
+restricted to `DRAFT` only, not also `SUBMITTED` - a deliberately
+stricter, simpler-to-reason-about checkpoint than the domain doc's own
+looser wording technically permits. Once `SUBMITTED`, further correction
+goes through addenda instead, giving "Submitted" real meaning.
+
+**Judgment call, flagged:** `rating` is a closed 5-value categorical enum
+(`OUTSTANDING` down to `UNSATISFACTORY`) rather than numeric - the domain
+doc allows either without mandating one; a closed enum needs no separate
+range-validation logic, mirroring `EmploymentType`'s precedent.
+
+**Both `employeeId` and `reviewerId` on `PerformanceReview` use
+`Restrict`, not Attendance/Leave's `Cascade`** - the domain doc itself
+analogizes Acknowledgement to Payroll's finalization rule ("a
+lighter-weight echo"), so this is treated as a personnel record with
+retention value, like a Payslip, not a pure operational fact.
+
+**Permission model (new ADR-PF05) splits three ways, the most granular
+authority shape in this review yet:** authoring (`performanceReview:
+create:reports`/`:create:any`, extending Leave's manager-plus-admin-
+fallback shape from creation itself, not just a decision on an existing
+record), lifecycle management (`manage:reports`/`manage:any`, covering
+edit-while-Draft/submit/delete-while-Draft together, rather than a
+separate permission per verb), and the reviewed employee's own actions
+(`read:own`, `acknowledge:own`, `selfAssess:own`). 12 new permissions
+(54 → 66 total). Addenda need no dedicated permission at all (new
+ADR-PF06) - gated by whichever read/manage permission already grants
+access to that specific review, avoiding a 13th key for a lightweight,
+always-available action.
+
+New modules `src/modules/reviewCycles/` (identical shape to
+`leaveTypes/`) and `src/modules/performance/` (one repository, one
+orchestrating service, mirroring Holiday Calendar/Leave/Payroll's shape).
+13 new endpoints: 5 for `/review-cycles` (full CRUD) and 9 for
+`/performance-reviews` (create/list/get/update/submit/self-assessment/
+acknowledge/delete/addenda). List/get scoping extends Leave's own/any
+shape with a third OR-branch for a manager's reports. Migration was
+purely additive (3 enums, 3 tables) - applied cleanly on the first
+attempt.
+
+New `reviewCycle.service.test.js` (5 tests) and `performance.service.test.js`
+(8 tests: manager-vs-non-report authoring authority, duplicate/closed-
+cycle rejection, the no-manager explicit-reviewerId requirement, the
+Draft-only PATCH guard plus the submit validation gate and org-context
+snapshot verified against real Branch/Department/Designation names,
+the self-assessment window and the employee-only acknowledge action,
+addenda appendable by reviewer/employee/ADMIN but not a stranger, and
+own/reports-scoped listing). All 88 tests across all ten domains pass
+together, confirmed stable across repeated runs.
+
+Verified live end-to-end against the running server with four scratch
+users (ADMIN, MANAGER, their real report, and an unrelated EMPLOYEE):
+cycle creation and MANAGER correctly blocked (403), a MANAGER creating a
+review for their own report but blocked from an unrelated employee
+(403), the submit-validation 400 before rating/comments are set, the
+org-context snapshot appearing only after submit (verified against the
+real Department/Designation names), self-assessment, the stranger-
+blocked/employee-succeeds acknowledge action, PATCH and self-assessment
+both correctly rejected (409) once Acknowledged, addenda from the
+reviewer and the reviewed employee succeeding while a stranger's is
+rejected (403), addenda embedded in `GET .../:id`, list correctly
+returning empty for an uninvolved employee, and the referenced-cycle
+delete-block (409). Audit log entries confirmed for every mutation. All
+scratch data cleaned up afterward.
+
+`docs/domain-performance.md` (ADR-PF01-06, confidence 88%→92%),
+`docs/adr-index.md`, `docs/deferred-decisions-register.md` updated.
+`handbook/API_ENDPOINTS.md` gained new endpoint docs for `/review-cycles`
+and `/performance-reviews` (delegated to a background agent, then
+verified). `backend/README.md` updated to match.
+
+Deliberately **backend-only**, same as every prior domain.)_

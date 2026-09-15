@@ -1,6 +1,6 @@
 ---
 Domain: Performance
-Status: FINAL
+Status: FINAL — Implemented (2026-09-15)
 Date: 2026-07-27
 Depends on: docs/domain-identity-employee-lifecycle.md, docs/domain-department.md, docs/domain-designation.md, docs/domain-branch.md
 ---
@@ -71,7 +71,7 @@ Performance manages **periodic evaluation of an employee's work** — review cyc
 ## 8. Open Questions
 
 1. Should performance ratings ever feed compensation decisions? Explicitly not decided here — a future dependency, not a current one (§6).
-2. Permission scoping — same unresolved pattern as prior domains, here narrowed to "manager of the reviewed employee" plus `ADMIN`, which is a more naturally self-scoping default than most prior domains' open question.
+2. ~~Permission scoping~~ — **Resolved (2026-09-15).** Implemented almost exactly as this section anticipated: `ReviewCycle` follows the `ADMIN`-only master-data pattern; `PerformanceReview` splits into `create:reports`/`create:any` (authoring authority, mirroring Leave's manager-plus-admin-fallback shape) and `manage:reports`/`manage:any` (editing while Draft, submitting, deleting while Draft), plus `read:own`/`read:any`, `acknowledge:own`, and `selfAssess:own` for the reviewed employee's own actions (ADR-PF05).
 
 ## 9. Deferred Decisions
 
@@ -105,24 +105,34 @@ This most directly constrains any future **Compensation Review** capability (not
 ## Architecture Decision Records
 
 **ADR-PF01 — ReviewCycle/PerformanceReview as Distinct Aggregates**
-Status: Accepted
+Status: Accepted; Implemented (2026-09-15)
+Summary: This review's second explicit multi-party workflow after Leave - Draft → Submitted → Acknowledged. Implementation refinement: `PATCH` (editing rating/comments) is only permitted while `DRAFT`, not also while `SUBMITTED` as the doc's own looser wording could be read to allow - a deliberately stricter, simpler-to-reason-about checkpoint, flagged as a judgment call rather than a literal reading.
 
 **ADR-PF02 — Reuses Employee.managerId as Reviewer**
-Status: Accepted
+Status: Accepted; Implemented (2026-09-15)
+Summary: `reviewerId` is resolved from `Employee.managerId` at creation time and stored (not a live join), so a later manager change never retroactively rewrites who authored a past review. When the target employee has no manager, `ADMIN` (via `create:any`) must supply `reviewerId` explicitly - the doc's own admin-fallback framing, made concrete as a required field rather than an implicit substitution, since (unlike Leave's `decide:any`) `reviewerId` is a stored, mandatory column, not a pure authorization check.
 
 **ADR-PF03 — Org-Context Snapshot at Submission (Recommended, Not Mandatory)**
-Status: Accepted (recommendation)
-Summary: Same insight as Payroll's ADR-PR02, applied at a calibrated, lower enforcement level appropriate to a personnel (not financial) record.
+Status: Accepted (recommendation); Implemented (2026-09-15)
+Summary: Same insight as Payroll's ADR-PR02, applied at a calibrated, lower enforcement level appropriate to a personnel (not financial) record. Implemented exactly as worded - the snapshot is taken at the Submit transition specifically, not at creation, since a Draft review's organizational context isn't yet meaningful.
 
 **ADR-PF04 — Goal/OKR, 360 Feedback, Competency Frameworks Deferred**
 Status: Deferred
 
+**ADR-PF05 — Permission Scoping**
+Status: Accepted; Implemented (2026-09-15)
+Summary: `ReviewCycle` follows the `ADMIN`-only master-data pattern (read for all roles). `PerformanceReview` splits authoring authority (`create:reports` for MANAGER over their own direct reports, `create:any` for ADMIN) from lifecycle management (`manage:reports`/`manage:any`, covering edit-while-Draft, submit, and delete-while-Draft) and from the reviewed employee's own actions (`read:own`, `acknowledge:own`, `selfAssess:own`) - 12 new permission keys total, `ADMIN`/`MANAGER` also holding the `:own`-suffixed self-service keys per this project's established convention (an admin/manager account is also potentially someone's report).
+
+**ADR-PF06 — Addenda Are Ungated by a Dedicated Permission**
+Status: Accepted; Implemented (2026-09-15)
+Summary: Adding an addendum comment (the mechanism §2 names for post-Acknowledgement commentary) requires no new permission key - it is gated by whichever read/manage permission already grants the caller access to that specific review (the reviewer, ADMIN, or the reviewed employee themselves). Avoids a 13th permission key for a lightweight, always-available action.
+
 ## Final Sign-off
 
-**Implementation readiness:** Ready. No structural blockers.
+**Implementation readiness:** Implemented (2026-09-15). No structural blockers were found during implementation.
 
-**Confidence score: 88%**
+**Confidence score: 92%** — up from 88%, reflecting a clean implementation with no genuinely blocking open questions (unlike Payroll's salary-unit confirmation) and permission scoping resolved exactly along the lines this section's own §8 anticipated.
 
-**Remaining blockers:** None structural. Confirm permission scoping (manager + admin) before implementation.
+**Remaining blockers:** None. Performance-to-compensation linkage (§8 item 1) remains an explicitly deferred future dependency, not a current blocker.
 
 **Recommended next domain:** Recruitment — the domain that determines how new Employee records originate in the first place, closing the loop back toward the Identity domain's onboarding entry point.

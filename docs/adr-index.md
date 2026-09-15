@@ -112,10 +112,12 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the two most load-
 ## Performance — [[domain-performance]]
 | ADR | Summary | Status |
 |---|---|---|
-| PF01 | ReviewCycle/PerformanceReview as distinct aggregates | Accepted |
-| PF02 | Reuses `Employee.managerId` as reviewer | Accepted |
-| PF03 | Org-context snapshot at submission — recommended, not mandatory (lighter than PR02) | Accepted (recommendation) |
+| PF01 | ReviewCycle/PerformanceReview as distinct aggregates | Accepted; Implemented (2026-09-15) — PATCH restricted to DRAFT only, a deliberately stricter checkpoint than the doc's own looser wording |
+| PF02 | Reuses `Employee.managerId` as reviewer | Accepted; Implemented (2026-09-15) — `reviewerId` resolved and stored at creation time; ADMIN must supply it explicitly for a manager-less employee |
+| PF03 | Org-context snapshot at submission — recommended, not mandatory (lighter than PR02) | Accepted (recommendation); Implemented (2026-09-15) |
 | PF04 | Goal/OKR, 360 feedback, competency frameworks deferred | Deferred |
+| PF05 | Permission scoping | Accepted; Implemented (2026-09-15) — `ReviewCycle` `ADMIN`-only; `PerformanceReview` splits `create:reports`/`:any`, `manage:reports`/`:any`, `read:own`/`:any`, `acknowledge:own`, `selfAssess:own` |
+| PF06 | Addenda ungated by a dedicated permission | Accepted; Implemented (2026-09-15) — gated by whichever read/manage permission already grants access to that review |
 
 ## Recruitment — [[domain-recruitment]]
 | ADR | Summary | Status |

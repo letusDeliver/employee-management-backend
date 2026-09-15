@@ -17,6 +17,8 @@ import leaveRequestRouter from '../modules/leave/leaveRequest.routes.js';
 import leaveBalanceRouter from '../modules/leave/leaveBalance.routes.js';
 import payrollRunRouter from '../modules/payroll/payrollRun.routes.js';
 import payslipRouter from '../modules/payroll/payslip.routes.js';
+import reviewCycleRouter from '../modules/reviewCycles/reviewCycle.routes.js';
+import performanceReviewRouter from '../modules/performance/performanceReview.routes.js';
 
 const router = Router();
 
@@ -34,6 +36,8 @@ router.use('/leave-requests', leaveRequestRouter);
 router.use('/leave-balances', leaveBalanceRouter);
 router.use('/payroll-runs', payrollRunRouter);
 router.use('/payslips', payslipRouter);
+router.use('/review-cycles', reviewCycleRouter);
+router.use('/performance-reviews', performanceReviewRouter);
 
 router.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });

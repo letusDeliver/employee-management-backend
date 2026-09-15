@@ -17259,3 +17259,3313 @@ as a different `EMPLOYEE` (expect `403`) in the same collection.
 - ✅ `401` with no token
 - ✅ `lineItems` present with correct `EARNING`/`DEDUCTION` entries (verified live)
 - ✅ Decimal fields serialize as strings
+
+---
+
+---
+
+# 79. `POST /review-cycles`
+
+## 1. Endpoint Information
+
+```
+Feature:            Performance Domain (2026-09-15, feature/24-performance-domain)
+Endpoint:           Create a Review Cycle
+Description:        Creates a new ReviewCycle (a named, dated evaluation window), always starting OPEN
+Method:             POST
+URL:                /api/v1/review-cycles
+API Version:        v1
+Module:             modules/reviewCycles
+Authentication:     Yes (Bearer access token)
+Authorization:      `reviewCycle:create` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the entry point into this domain's master-data
+  aggregate (`docs/domain-performance.md` §2/§5) — every
+  `PerformanceReview` references a `ReviewCycle` by id, and no review can
+  exist without one already created here.
+- **Business problem solved**: gives `ADMIN`/HR one governed place to
+  define an evaluation window (e.g. "H1 2026 Review") before a single
+  `PerformanceReview` exists — the domain doc calls this "structurally
+  identical" to Branch/Department's `ACTIVE`/`INACTIVE` master-data
+  shape, just with lifecycle states renamed `OPEN`/`CLOSED`.
+- **No dedicated HR/Performance role**: `ReviewCycle` mutation follows
+  the same `ADMIN`-only pattern as `LeaveType`/Designation/Branch/
+  PayrollRun — verified directly in `prisma/seed.js`: `MANAGER` and
+  `EMPLOYEE` both hold only `reviewCycle:read`, never `create`/`update`/
+  `delete`.
+- **Name uniqueness is case-insensitive**: `reviewCycleRepository.findByName`
+  queries with `mode: 'insensitive'`, so `"H1 2026 Review"` and `"h1 2026
+  review"` collide exactly like Branch/Department/Designation's own
+  uniqueness convention. Verified live
+  (`reviewCycle.service.test.js`'s "creates a review cycle and rejects a
+  duplicate name (case-insensitive)" case).
+- **Every new cycle starts `OPEN` unconditionally** — the Prisma schema's
+  own `@default(OPEN)`; there is no way to request a different starting
+  status, the same create-always-starts-at-the-first-state convention
+  `PayrollRun` (always `DRAFT`) and every workflow aggregate in this
+  project uses.
+- **Expected callers**: `ADMIN` only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                            |
+| --------------------------------------- | -------- | ------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `reviewCycle:create` permission |
+| `Content-Type: application/json`     | **Yes**  |                                                     |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "name": "H1 2026 Review",
+  "startDate": "2026-01-01",
+  "endDate": "2026-06-30"
+}
+```
+
+| Field       | Type                     | Required | Description                          |
+| ----------- | ------------------------ | -------- | ------------------------------------- |
+| `name`      | string                   | **Yes**  | Trimmed, minimum length 1              |
+| `startDate` | date (coerced from any Date-parseable string) | **Yes** |                          |
+| `endDate`   | date (coerced from any Date-parseable string) | **Yes** | Must not be before `startDate` |
+
+## 7. Validation Rules
+
+- `name`: `z.string().trim().min(1, 'Review cycle name is required')`.
+- `startDate` / `endDate`: `z.coerce.date()` — accepts anything
+  `new Date(...)` can parse (a full ISO timestamp works too, not just a
+  bare `YYYY-MM-DD` date), not restricted to date-only strings.
+- Cross-field `.refine`: `startDate <= endDate`, else `"startDate cannot
+  be after endDate"` attached to the `endDate` path (`400`).
+- **`status` is never an accepted field on create** —
+  `createReviewCycleSchema` has no `status` key at all; every new cycle
+  is `OPEN` via the Prisma default regardless of what the caller sends.
+- **No schema-level uniqueness check** — the case-insensitive
+  duplicate-name check happens only in the service layer
+  (`reviewCycleRepository.findByName`), not a Zod `.refine`, the same
+  shape as `PayrollRun`'s period-uniqueness check (endpoint 70).
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "cycle": {
+    "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "name": "H1 2026 Review",
+    "startDate": "2026-01-01T00:00:00.000Z",
+    "endDate": "2026-06-30T00:00:00.000Z",
+    "status": "OPEN",
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:00:00.000Z"
+  }
+}
+```
+
+No `Decimal` fields exist on this model — `startDate`/`endDate`/
+`createdAt`/`updatedAt` serialize as plain ISO datetime strings, and
+`status` as a plain string. Verified live
+(`reviewCycle.service.test.js`'s create test asserts `cycle.status ===
+'OPEN'`).
+
+## 9. Error Responses
+
+| Status | Reason                                          | Response (`message`)                                    | When                                                                 |
+| ------ | ------------------------------------------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `400`  | Validation failed                                | e.g. `"name: Review cycle name is required"`, `"endDate: startDate cannot be after endDate"` | Missing/blank `name`, or `endDate` before `startDate`                     |
+| `401`  | Missing/invalid/expired access token             | Same as every other protected endpoint                    | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks `reviewCycle:create`                | `"You do not have permission to perform this action"`     | `MANAGER`/`EMPLOYEE` token — neither holds `reviewCycle:create`          |
+| `409`  | A review cycle with this name already exists (case-insensitively) | `"A review cycle with this name already exists"` | Verified live |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                | Expected |
+| --- | ---------------------------------------------------- | -------- |
+| 1   | Valid create                                        | `201` — verified live |
+| 2   | Duplicate name, identical case                       | `409` — verified live |
+| 3   | Duplicate name, different case (`"h1 2026 review"` vs `"H1 2026 Review"`) | `409` — verified live |
+| 4   | `endDate` before `startDate`                         | `400`    |
+| 5   | Missing/blank `name`                                 | `400`    |
+| 6   | As `MANAGER`/`EMPLOYEE` token                         | `403`    |
+| 7   | No token                                             | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                    | Expected                                                                 |
+| ---------------------------------------------- | --------------------------------------------------------------------------- |
+| Malformed JSON body                            | `400` from Express's own JSON body-parser                                  |
+| `startDate`/`endDate` not parseable as a Date  | `400` — `z.coerce.date()` rejects an un-parseable value                    |
+| Whitespace-only `name` (`"   "`)               | `400` — `.trim().min(1)` rejects it after trimming                          |
+| Tampered/expired JWT                           | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `startDate === endDate` (a single-day cycle)                       | `201` — the `.refine` only rejects `startDate > endDate`; equal dates pass                                                                            |
+| **Concurrent creates with the same name**                          | `409`, not a `500` — `createReviewCycle` wraps its create transaction in `try/catch (error.code === 'P2002')`, the same defense-in-depth shape every create-with-uniqueness endpoint in this codebase uses |
+| `name` with leading/trailing whitespace (`"  H1 2026 Review  "`)   | Stored trimmed (`"H1 2026 Review"`) — `z.string().trim()` runs before the uniqueness check                                                            |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot create a cycle — `MANAGER`
+  holds only `reviewCycle:read` in `prisma/seed.js`, never
+  `reviewCycle:create`.
+- **Mass assignment**: only `name`/`startDate`/`endDate` are read from
+  the body; `status` can never be set by the caller on create.
+
+## 14. Database Impact
+
+- **Tables affected**: `ReviewCycle` (insert), `AuditLog` (insert),
+  inside one `prisma.$transaction`.
+- **Pre-check**: one case-insensitive `reviewCycle.findFirst` on `name`
+  before the transaction opens.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/review-cycles
+    ↓
+authMiddleware
+    ↓
+requirePermission('reviewCycle:create')
+    ↓ (403 if not granted)
+validateMiddleware(createReviewCycleSchema)
+    ↓ (400 if invalid)
+reviewCycle.controller.create → reviewCycle.service.createReviewCycle(data, actor)
+    ├─ reviewCycleRepository.findByName(name) [case-insensitive] → existing → 409
+    └─ try { prisma.$transaction:
+         ├─ reviewCycleRepository.create(data, tx)   [status defaults to OPEN]
+         └─ auditLogRepository.create({ action: 'CREATE', afterData, ... }, tx)
+       } catch (P2002) → 409 (race-condition fallback)
+    ↓
+201 { cycle }
+```
+
+## 16. Performance Notes
+
+One case-insensitive name lookup, one insert, one audit-log insert — no
+notable performance concerns; `ReviewCycle` grows by at most a handful
+of rows per year in realistic usage.
+
+## 17. Interview Notes
+
+- **Q: Why is `name` uniqueness case-insensitive?** The same convention
+  as every prior master-data domain (Branch/Department/Designation) —
+  `findByName` uses `mode: 'insensitive'` specifically so `"H1 2026
+  Review"` and `"h1 2026 review"` can't coexist as accidental
+  near-duplicates.
+- **Q: Why does `MANAGER` get `reviewCycle:read` but nothing else?**
+  `docs/domain-performance.md` ADR-PF05: `ReviewCycle` follows the
+  `ADMIN`-only master-data pattern for mutation, with read open to every
+  role — a `MANAGER`/`EMPLOYEE` needs to see which cycles exist and
+  their `OPEN`/`CLOSED` status even though only `ADMIN` manages them.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/review-cycles \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"H1 2026 Review","startDate":"2026-01-01","endDate":"2026-06-30"}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `cycle.id` as `{{reviewCycleId}}` — used by every
+other `/review-cycles/:id*` endpoint (80-83) and as the `reviewCycleId`
+body field for `POST /performance-reviews` (endpoint 84).
+
+## 20. Testing Checklist
+
+- ✅ Valid create → `201`, `status: "OPEN"` (verified live)
+- ✅ Duplicate name, case-insensitive → `409` (verified live)
+- ✅ `endDate` before `startDate` → `400`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`
+- ✅ `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 80. `GET /review-cycles`
+
+## 1. Endpoint Information
+
+```
+Feature:            Performance Domain (2026-09-15, feature/24-performance-domain)
+Endpoint:           List Review Cycles
+Method:             GET
+URL:                /api/v1/review-cycles
+API Version:        v1
+Module:             modules/reviewCycles
+Authentication:     Yes (Bearer access token)
+Authorization:      `reviewCycle:read` permission required (every role, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: browse/search `ReviewCycle`s by name and status —
+  the index every caller uses to discover a `reviewCycleId` before
+  creating or filtering `PerformanceReview`s against it.
+- **Every role can read**: unlike `reviewCycle:create`/`update`/`delete`
+  (`ADMIN`-only), `reviewCycle:read` is held by `ADMIN`, `MANAGER`, and
+  `EMPLOYEE` alike, verified in `prisma/seed.js` — an `EMPLOYEE` needs to
+  see which cycles are currently `OPEN` even though they can never
+  create or manage one.
+- **No auto-scoped `:own` mode** — `ReviewCycle` has no per-employee
+  ownership concept at all (it is period-level master data, like
+  `PayrollRun`); every caller sees the same unfiltered set, subject only
+  to the query parameters they supply.
+- **Expected callers**: every authenticated user.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                        |
+| --------------------------------------- | -------- | -------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `reviewCycle:read` permission |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name      | Type    | Required | Default     | Description                                                  |
+| --------- | ------- | -------- | ------------- | -------------------------------------------------------------- |
+| `page`    | integer | No       | `1`         | 1-indexed page number                                          |
+| `limit`   | integer | No       | `10` (max 100) | Page size                                                     |
+| `search`  | string  | No       | —           | Case-insensitive substring match against `name`                |
+| `status`  | enum    | No       | —           | `OPEN` or `CLOSED`                                              |
+| `sortBy`  | enum    | No       | `startDate` | `name`, `startDate`, `endDate`, `status`, or `createdAt`        |
+| `order`   | enum    | No       | `desc`      | `asc` or `desc`                                                 |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same `page`/`limit`/sort shape as every other list endpoint
+(`listReviewCyclesQuerySchema`). `search` is transformed so an
+explicitly empty string (`?search=`) becomes `undefined` (treated as "no
+filter"), rather than matching every row via an empty `contains`. There
+is **no date-range filter** on this endpoint — only `search` (name) and
+`status` are filterable; a caller cannot query "cycles overlapping
+March 2026" directly.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "cycles": [
+    {
+      "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+      "name": "H1 2026 Review",
+      "startDate": "2026-01-01T00:00:00.000Z",
+      "endDate": "2026-06-30T00:00:00.000Z",
+      "status": "OPEN",
+      "createdAt": "2026-09-15T10:00:00.000Z",
+      "updatedAt": "2026-09-15T10:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+Verified live (`reviewCycle.service.test.js`'s "lists review cycles with
+pagination and search" case).
+
+## 9. Error Responses
+
+| Status | Reason                                | Response (`message`)                                                              | When                                             |
+| ------ | -------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `400`  | A query parameter failed validation    | e.g. `"limit: Too big: expected number to be <=100"`, `"status: Invalid option"`   | Out-of-bounds `limit`, invalid `status`/`sortBy`  |
+| `401`  | Missing/invalid/expired access token   | Same as every other protected endpoint                                              | `authMiddleware` failure                          |
+| `403`  | Caller lacks `reviewCycle:read`        | `"You do not have permission to perform this action"`                              | Not expected in practice — every seeded role holds `reviewCycle:read` |
+
+## 10. Postman Test Cases
+
+| #   | Case                                    | Expected |
+| --- | ------------------------------------------ | -------- |
+| 1   | Default pagination, no filters              | `200`, all cycles |
+| 2   | `search` matching part of a `name`          | `200` — verified live |
+| 3   | `status=OPEN` filter                        | `200`, only `OPEN` cycles |
+| 4   | `sortBy=name&order=asc`                     | `200`    |
+| 5   | `limit=101`                                 | `400`    |
+| 6   | Invalid `status` value                      | `400`    |
+| 7   | No token                                    | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| `sortBy` value outside the allowlist | `400`                                                                       |
+| `status` value outside the enum    | `400`                                                                       |
+| Tampered/expired JWT               | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                     |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `page` beyond the last page                                        | `200` with an empty `cycles` array, not an error                                                       |
+| `search=` (present but empty)                                      | Treated as no filter at all — the schema's `.transform` converts `''` to `undefined` before it reaches `buildReviewCycleWhere` |
+| Two cycles with the same `startDate`, default sort                 | Sorted by `startDate` then the unconditional secondary `id ASC` tiebreaker — deterministic ordering    |
+
+## 13. Security Testing
+
+- **Authorization**: every seeded role holds `reviewCycle:read`, so a
+  `403` here is not reachable through any real seeded role — the
+  meaningful security boundary in this domain is entirely on
+  create/update/delete (endpoints 79/82/83), not on read.
+
+## 14. Database Impact
+
+Read-only — `ReviewCycle.findMany` + `ReviewCycle.count`, run in
+parallel via `Promise.all`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/review-cycles
+    ↓
+authMiddleware
+    ↓
+requirePermission('reviewCycle:read')
+    ↓ (403 if not granted)
+validateMiddleware(listReviewCyclesQuerySchema, 'query')
+    ↓ (400 if invalid)
+reviewCycle.controller.list → reviewCycle.service.listReviewCycles(query)
+    └─ Promise.all([reviewCycleRepository.findAll(...), reviewCycleRepository.count(...)])
+    ↓
+200 { cycles, pagination }
+```
+
+## 16. Performance Notes
+
+`ReviewCycle` is small, low-growth master data (at most a handful of
+rows per year) — a bare `search`/`status` filter is a full-table scan
+bounded by pagination, with no realistic performance concern at this
+table's expected size.
+
+## 17. Interview Notes
+
+- **Q: Why does every role get `reviewCycle:read` while `PayrollRun` (a
+  structurally similar master-data record) is `ADMIN`-only even for
+  read?** `docs/domain-performance.md`'s own domain doc treats a review
+  cycle's existence and `OPEN`/`CLOSED` status as something every
+  employee benefits from seeing (e.g. "is the H1 review still open for
+  my manager to submit against?"), whereas `PayrollRun` data has no
+  comparable self-service read need — an employee's own-pay visibility
+  is served entirely by `Payslip`, one layer down, not by `PayrollRun`
+  itself.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/review-cycles?status=OPEN&sortBy=name&order=asc" \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run once per `status` value to confirm both lifecycle stages are
+independently filterable; run once as `EMPLOYEE` to confirm read access
+is not restricted to `ADMIN`.
+
+## 20. Testing Checklist
+
+- ✅ Default list → `200`
+- ✅ `search`/`status` filters (verified live for `search`)
+- ✅ Sort both directions with deterministic `id ASC` tiebreaker
+- ✅ `200` as every role (`ADMIN`/`MANAGER`/`EMPLOYEE`)
+- ✅ `401` with no token
+- ✅ `400` on out-of-bounds `limit`/invalid `status`
+
+---
+
+---
+
+# 81. `GET /review-cycles/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Performance Domain (2026-09-15, feature/24-performance-domain)
+Endpoint:           Get one Review Cycle
+Method:             GET
+URL:                /api/v1/review-cycles/:id
+API Version:        v1
+Module:             modules/reviewCycles
+Authentication:     Yes (Bearer access token)
+Authorization:      `reviewCycle:read` permission required (every role, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: fetch a single `ReviewCycle`'s full detail by id —
+  same shape as every other master-data "get one" endpoint in this API.
+- **No `reviews`/count field is ever attached here** — unlike `GET
+  /payroll-runs/:id`'s extra `payslipCount`, `reviewCycle.controller.getById`
+  returns the bare `ReviewCycle` row exactly as
+  `reviewCycleRepository.findById` returns it, with no additional
+  reference-count query. To find out how many `PerformanceReview`s
+  reference a cycle, list them via `GET
+  /performance-reviews?reviewCycleId=...` (endpoint 85) instead.
+- **Expected callers**: every authenticated user.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                        |
+| --------------------------------------- | -------- | -------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `reviewCycle:read` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description             |
+| ---- | ------------- | -------- | -------------------------- |
+| `id` | string (UUID) | **Yes**  | The ReviewCycle's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No format validation on `id` — an invalid UUID or a well-formed UUID
+that doesn't exist both simply fail to match any row and produce the
+same `404`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "cycle": {
+    "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "name": "H1 2026 Review",
+    "startDate": "2026-01-01T00:00:00.000Z",
+    "endDate": "2026-06-30T00:00:00.000Z",
+    "status": "OPEN",
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:00:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                          | Response (`message`)         | When                                             |
+| ------ | -------------------------------- | ------------------------------- | ------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint | `authMiddleware` failure                    |
+| `403`  | Caller lacks `reviewCycle:read` | `"You do not have permission to perform this action"` | Not expected in practice — every seeded role holds it |
+| `404`  | No such ReviewCycle              | `"Review cycle not found"`       | Invalid/nonexistent `id`                          |
+
+## 10. Postman Test Cases
+
+| #   | Case                     | Expected |
+| --- | -------------------------- | -------- |
+| 1   | Valid `id`, any role       | `200`    |
+| 2   | Nonexistent `id`           | `404`    |
+| 3   | No token                   | `401`    |
+
+## 11. Negative Testing
+
+| Scenario               | Expected |
+| ------------------------- | -------- |
+| Malformed (non-UUID) `id` | `404`    |
+| Tampered/expired JWT      | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                | Expected Behavior                                                       |
+| ------------------------------------------ | ---------------------------------------------------------------------------- |
+| Requesting a `CLOSED` cycle                | `200` — read access has no dependency on lifecycle status                    |
+| Requesting a cycle referenced by many `PerformanceReview`s | `200` — this endpoint never joins to or counts `PerformanceReview` at all |
+
+## 13. Security Testing
+
+- No BOLA concern — `ReviewCycle` has no ownership dimension, and every
+  seeded role can read every cycle.
+
+## 14. Database Impact
+
+- **Tables affected**: `ReviewCycle` (single indexed read by primary
+  key).
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/review-cycles/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('reviewCycle:read')
+    ↓ (403 if not granted)
+reviewCycle.controller.getById → reviewCycle.service.getReviewCycleById(id)
+    └─ reviewCycleRepository.findById(id) → not found → 404
+    ↓
+200 { cycle }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup by primary key — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why doesn't this endpoint return how many PerformanceReviews
+  reference the cycle, the way `GET /payroll-runs/:id` returns
+  `payslipCount`?** No verified requirement calls for it, and
+  `DELETE /review-cycles/:id` (endpoint 83) already performs its own
+  reference count internally at delete time — duplicating that count
+  onto every `GET` would be an extra query with no consumer.
+
+## 18. cURL Examples
+
+```bash
+curl -i http://localhost:3000/api/v1/review-cycles/$REVIEW_CYCLE_ID \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Chain directly off `{{reviewCycleId}}` saved from endpoint 79's create
+response.
+
+## 20. Testing Checklist
+
+- ✅ `200` for a valid `id`, any role
+- ✅ `404` for nonexistent `id`
+- ✅ `401` with no token
+
+---
+
+---
+
+# 82. `PATCH /review-cycles/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Performance Domain (2026-09-15, feature/24-performance-domain)
+Endpoint:           Update a Review Cycle
+Description:        Partially updates name/startDate/endDate/status, including opening/closing the cycle
+Method:             PATCH
+URL:                /api/v1/review-cycles/:id
+API Version:        v1
+Module:             modules/reviewCycles
+Authentication:     Yes (Bearer access token)
+Authorization:      `reviewCycle:update` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the only way to close a cycle (or reopen a closed
+  one) or correct its name/dates after creation.
+- **Closing a cycle blocks *future* `PerformanceReview` creation but
+  never affects reviews already created against it** —
+  `reviewCycleService.assertReviewCycleAssignable` (consumed by `POST
+  /performance-reviews`, endpoint 84) is the *only* place `status`
+  is ever checked; nothing in `PerformanceReview`'s own service reads
+  its parent cycle's status again after creation. Verified live
+  (`reviewCycle.service.test.js`'s "closing a review cycle blocks future
+  assignment but keeps existing links intact" case).
+- **No restriction on the status transition direction** — `updateReviewCycle`
+  performs no state-machine check at all; `OPEN → CLOSED`, `CLOSED →
+  OPEN`, or even setting the same status again are all accepted
+  identically. This is a deliberately looser rule than every
+  `Draft → Submitted → Acknowledged`-shaped workflow aggregate in this
+  API — `ReviewCycle` is master data, not a workflow record.
+- **`updateReviewCycleSchema` has no "at least one field" refinement** —
+  unlike `updatePerformanceReviewSchema` (endpoint 87), sending `{}` is
+  valid input here; it reaches the service layer and executes a
+  Prisma `update` with an empty data object (a genuine, easy-to-overlook
+  asymmetry between the two validation schemas in this same feature,
+  worth double-checking rather than assuming symmetry).
+- **Expected callers**: `ADMIN` only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                              |
+| --------------------------------------- | -------- | -------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `reviewCycle:update` permission |
+| `Content-Type: application/json`     | **Yes**  |                                                     |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description             |
+| ---- | ------------- | -------- | -------------------------- |
+| `id` | string (UUID) | **Yes**  | The ReviewCycle's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "status": "CLOSED"
+}
+```
+
+| Field       | Type   | Required | Description                                   |
+| ----------- | ------ | -------- | ----------------------------------------------- |
+| `name`      | string | No       | Trimmed, minimum length 1 if provided            |
+| `startDate` | date (coerced) | No |                                             |
+| `endDate`   | date (coerced) | No | Must not be before the effective `startDate` |
+| `status`    | enum   | No       | `OPEN` or `CLOSED`                               |
+
+## 7. Validation Rules
+
+- Every field is optional; `{}` is valid input (see §2).
+- Cross-field `.refine`: `!startDate || !endDate || startDate <= endDate`
+  — the date-order check only runs when **both** are present in the same
+  request; supplying only a new `endDate` earlier than the *existing*
+  stored `startDate` (not sent in this request) is **not** caught by
+  this schema-level refine at all — it would only be caught if the
+  service layer separately re-validated against the stored row, which it
+  does not. This is a real gap worth flagging, not an assumption.
+- If `name` is supplied, the service re-checks case-insensitive
+  uniqueness (`reviewCycleRepository.findByName`), excluding the
+  current record's own `id` from the collision check.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "cycle": {
+    "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "name": "H1 2026 Review",
+    "startDate": "2026-01-01T00:00:00.000Z",
+    "endDate": "2026-06-30T00:00:00.000Z",
+    "status": "CLOSED",
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:10:00.000Z"
+  }
+}
+```
+
+Verified live (`reviewCycle.service.test.js`'s "closing a review cycle
+blocks future assignment but keeps existing links intact" case asserts
+`updated.status === 'CLOSED'`).
+
+## 9. Error Responses
+
+| Status | Reason                                          | Response (`message`)                                | When                                                                 |
+| ------ | ------------------------------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `400`  | Validation failed                                | e.g. `"endDate: startDate cannot be after endDate"`   | Both dates supplied with `endDate` before `startDate`                     |
+| `401`  | Missing/invalid/expired access token             | Same as every other protected endpoint                | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks `reviewCycle:update`                | `"You do not have permission to perform this action"` | `MANAGER`/`EMPLOYEE` token                                                  |
+| `404`  | No such ReviewCycle                              | `"Review cycle not found"`                             | Invalid/nonexistent `id`                                                   |
+| `409`  | Renaming to a name that already exists (case-insensitively) on a *different* cycle | `"A review cycle with this name already exists"` | Race handled the same P2002 way as create                                  |
+
+## 10. Postman Test Cases
+
+| #   | Case                                          | Expected |
+| --- | ------------------------------------------------ | -------- |
+| 1   | Close an `OPEN` cycle (`status: "CLOSED"`)        | `200` — verified live |
+| 2   | Reopen a `CLOSED` cycle (`status: "OPEN"`)        | `200` |
+| 3   | Rename to a unique name                          | `200` |
+| 4   | Rename to another cycle's existing name           | `409` |
+| 5   | `endDate` before `startDate` (both supplied)      | `400` |
+| 6   | Empty body `{}`                                  | `200`, no fields change (only `updatedAt` bumps) |
+| 7   | Nonexistent `id`                                 | `404` |
+| 8   | As `MANAGER`/`EMPLOYEE` token                     | `403` |
+| 9   | No token                                         | `401` |
+
+## 11. Negative Testing
+
+| Scenario                                    | Expected                                                                 |
+| ---------------------------------------------- | --------------------------------------------------------------------------- |
+| Only `endDate` supplied, earlier than the existing stored `startDate` | `200` — not rejected; the schema-level refine only compares fields present in the same request (see §7) |
+| Malformed JSON body                            | `400` from Express's own JSON body-parser                                  |
+| Tampered/expired JWT                           | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Closing a cycle that already has `PerformanceReview`s created against it | `200` — existing reviews are entirely unaffected; only *future* `POST /performance-reviews` calls against this `reviewCycleId` are blocked (§2) |
+| Reopening a `CLOSED` cycle                                          | `200` — no restriction prevents this; a previously-closed cycle can immediately accept new `PerformanceReview`s again                                  |
+| Renaming to the cycle's own current name (same `id`)                | `200` — the uniqueness check explicitly excludes `existing.id !== id`, so a no-op rename never false-positives as a duplicate                          |
+| **Concurrent renames to the same new name**                        | `409`, not a `500` — same `P2002` catch-and-translate pattern as create                                                                                |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot update a cycle — no
+  `reviewCycle:update` grant exists for `MANAGER` in `prisma/seed.js`.
+- **Mass assignment**: only `name`/`startDate`/`endDate`/`status` are
+  read from the body — no other `ReviewCycle` field is writable via this
+  route.
+
+## 14. Database Impact
+
+- **Tables affected**: `ReviewCycle` (update), `AuditLog` (insert),
+  inside one `prisma.$transaction`.
+- **Pre-checks**: `findById` (`404` gate) and, only when `name` is
+  supplied, one additional case-insensitive `findByName` lookup.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/review-cycles/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('reviewCycle:update')
+    ↓ (403 if not granted)
+validateMiddleware(updateReviewCycleSchema)
+    ↓ (400 if invalid)
+reviewCycle.controller.update → reviewCycle.service.updateReviewCycle(id, data, actor)
+    ├─ reviewCycleRepository.findById(id) → not found → 404
+    ├─ if data.name: reviewCycleRepository.findByName(name) → existing.id !== id → 409
+    └─ try { prisma.$transaction:
+         ├─ reviewCycleRepository.update(id, data, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', beforeData, afterData, ... }, tx)
+       } catch (P2002) → 409
+    ↓
+200 { cycle }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup, one conditional name lookup, one update, one
+audit-log insert — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why can a cycle be reopened after being closed, unlike, say, a
+  Payslip which is never "un-finalized"?** `ReviewCycle` is master data
+  with a lightweight `OPEN`/`CLOSED` toggle, not a workflow record with
+  irreversible financial consequences — `docs/domain-performance.md`
+  never names closing as a one-way action, and no invariant in §4
+  depends on `CLOSED` being permanent.
+- **Q: What happens to reviews already created against a cycle that
+  later gets closed?** Nothing — `assertReviewCycleAssignable` is only
+  ever called from `POST /performance-reviews` (endpoint 84), never
+  re-checked by any `PerformanceReview` lifecycle transition (`PATCH`,
+  `/submit`, `/acknowledge`). A review's own `Draft → Submitted →
+  Acknowledged` progression is entirely independent of its parent
+  cycle's later status changes.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/review-cycles/$REVIEW_CYCLE_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"CLOSED"}'
+```
+
+## 19. Postman Collection Notes
+
+Run once to close a cycle, then immediately attempt `POST
+/performance-reviews` (endpoint 84) against it to confirm the `400`
+"not open" rejection, then reopen it and confirm creation succeeds
+again.
+
+## 20. Testing Checklist
+
+- ✅ Close/reopen a cycle → `200` (verified live for close)
+- ✅ Rename to a unique name → `200`; to a duplicate name → `409`
+- ✅ `endDate` before `startDate` (both supplied) → `400`
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`
+- ✅ `401` with no token
+- ✅ Closing does not affect existing `PerformanceReview`s (verified live)
+
+---
+
+---
+
+# 83. `DELETE /review-cycles/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Performance Domain (2026-09-15, feature/24-performance-domain)
+Endpoint:           Delete a Review Cycle
+Description:        Hard-deletes a ReviewCycle, blocked if any PerformanceReview references it
+Method:             DELETE
+URL:                /api/v1/review-cycles/:id
+API Version:        v1
+Module:             modules/reviewCycles
+Authentication:     Yes (Bearer access token)
+Authorization:      `reviewCycle:delete` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: cleans up a cycle created in error (e.g. wrong
+  dates, duplicate intent) before it has ever been used.
+- **Mandatory invariant enforced here**: `docs/domain-performance.md` §4
+  — "A `ReviewCycle` cannot be hard-deleted while any review references
+  it." `reviewCycleRepository.countReferencesForReviewCycle` counts
+  **every** `PerformanceReview` row with this `reviewCycleId`,
+  regardless of that review's own `status` — even a single `DRAFT`
+  review blocks the delete just as much as an `ACKNOWLEDGED` one.
+- **The prescribed alternative is `PATCH .../id` with `status: "CLOSED"`**
+  (endpoint 82), not delete — the error message says so explicitly.
+  Closing is reversible and non-destructive; deleting is not.
+- **Expected callers**: `ADMIN` only, and in practice only for a cycle
+  created by mistake with zero reviews against it yet.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                              |
+| --------------------------------------- | -------- | -------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `reviewCycle:delete` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description             |
+| ---- | ------------- | -------- | -------------------------- |
+| `id` | string (UUID) | **Yes**  | The ReviewCycle's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body to validate. The service layer, in order:
+
+1. `reviewCycleRepository.findById(id)` → `404` if missing.
+2. `reviewCycleRepository.countReferencesForReviewCycle(id)` → any count
+   `> 0` → `409`.
+3. Hard-delete inside one `prisma.$transaction`, with an `AuditLog` row
+   recording the full `beforeData` (the only place this cycle's data
+   survives once deleted).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Review cycle deleted successfully"
+}
+```
+
+Verified live (`reviewCycle.service.test.js`'s "deleting a review cycle
+with zero PerformanceReview references succeeds" case, which confirms
+the row is actually gone via a direct `prisma.reviewCycle.findUnique`
+afterward).
+
+## 9. Error Responses
+
+| Status | Reason                                          | Response (`message`)                                                                                       | When                                                                 |
+| ------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token             | Same as every other protected endpoint                                                                       | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks `reviewCycle:delete`                | `"You do not have permission to perform this action"`                                                       | `MANAGER`/`EMPLOYEE` token                                                  |
+| `404`  | No such ReviewCycle                              | `"Review cycle not found"`                                                                                    | Invalid/nonexistent `id`                                                   |
+| `409`  | One or more PerformanceReviews reference this cycle | `"This review cycle has PerformanceReview records referencing it and cannot be deleted - close it instead"` | At least one `PerformanceReview` row (any status) has this `reviewCycleId` |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                | Expected |
+| --- | ------------------------------------------------------ | -------- |
+| 1   | Delete an unreferenced cycle                            | `200` — verified live |
+| 2   | Delete a cycle with a `DRAFT` review against it         | `409`    |
+| 3   | Delete a cycle with an `ACKNOWLEDGED` review against it | `409`    |
+| 4   | Nonexistent `id`                                        | `404`    |
+| 5   | As `MANAGER`/`EMPLOYEE` token                            | `403`    |
+| 6   | No token                                                | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                | Expected |
+| --------------------------- | -------- |
+| Malformed (non-UUID) `id`   | `404`    |
+| Body sent anyway            | `200`/relevant status — the body is never read |
+| Tampered/expired JWT        | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Exactly one `PerformanceReview` references the cycle, in any status | `409` — the count check has no status filter at all; `DRAFT` blocks a delete exactly as strongly as `ACKNOWLEDGED`                                     |
+| A `PerformanceReview` that referenced this cycle was itself already deleted (endpoint 91, `DRAFT`-only) | `200` — the reference count is a live query at delete time; once the referencing review is gone, the cycle becomes deletable again |
+| Deleting a `CLOSED` cycle with zero references                     | `200` — `status` has no bearing on deletability, only the reference count does                                                                        |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot delete a cycle — no
+  `reviewCycle:delete` grant exists for `MANAGER`.
+- **Referential integrity**: this endpoint is the only guard preventing
+  an orphaned `PerformanceReview.reviewCycleId` — the Prisma relation
+  itself uses `onDelete: Restrict`, so even a hypothetical bypass of the
+  service-layer count check would still fail at the database level with
+  a foreign-key violation, not silently orphan rows.
+
+## 14. Database Impact
+
+- **Tables affected**: `ReviewCycle` (delete), `AuditLog` (insert),
+  inside one `prisma.$transaction`.
+- **Pre-checks**: `findById` (`404` gate), then one
+  `PerformanceReview.count` on `reviewCycleId` (`409` gate) — both
+  outside the transaction, before it opens.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/review-cycles/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('reviewCycle:delete')
+    ↓ (403 if not granted)
+reviewCycle.controller.remove → reviewCycle.service.deleteReviewCycle(id, actor)
+    ├─ reviewCycleRepository.findById(id) → not found → 404
+    ├─ reviewCycleRepository.countReferencesForReviewCycle(id) → > 0 → 409
+    └─ prisma.$transaction:
+         ├─ reviewCycleRepository.remove(id, tx)
+         └─ auditLogRepository.create({ action: 'DELETE', beforeData, afterData: null, ... }, tx)
+    ↓
+200 { message }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup, one `count` query, one delete, one audit-log
+insert — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why does the reference count ignore `PerformanceReview.status`
+  entirely, instead of only blocking on non-`DRAFT` reviews?**
+  `docs/domain-performance.md` §4 states the invariant as "cannot be
+  hard-deleted **while any review references it**," with no
+  status-based carve-out — a stricter, simpler-to-reason-about rule than
+  it could have been, matching the same "never hard-deleted while
+  referenced" pattern every prior master-data domain in this project
+  uses (Department/Designation/Branch/LeaveType against their own
+  dependents).
+- **Q: Why offer `DELETE` at all, given `PATCH .../id` with `status:
+  "CLOSED"` covers the "retire this cycle" use case non-destructively?**
+  Delete exists specifically for the mistake-correction case — a cycle
+  created with a wrong name/date range and never actually used. Closing
+  is the right tool once a cycle has real reviews against it; deleting
+  is for before that point.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/review-cycles/$REVIEW_CYCLE_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this **last** in any collection that also creates
+`PerformanceReview`s against `{{reviewCycleId}}` — attempting it earlier
+against a cycle with reviews already created will correctly fail with
+`409`, which is expected behavior, not a collection bug.
+
+## 20. Testing Checklist
+
+- ✅ Delete an unreferenced cycle → `200` (verified live)
+- ✅ Delete a referenced cycle (any status) → `409`
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`
+- ✅ `401` with no token
+- ✅ `AuditLog` row records `beforeData` with `afterData: null`
+
+---
+
+---
+
+# 84. `POST /performance-reviews`
+
+## 1. Endpoint Information
+
+```
+Feature:            Performance Domain (2026-09-15, feature/24-performance-domain)
+Endpoint:           Author a Draft Performance Review
+Description:        Creates a new PerformanceReview in DRAFT status for one (employeeId, reviewCycleId) pair
+Method:             POST
+URL:                /api/v1/performance-reviews
+API Version:        v1
+Module:             modules/performance
+Authentication:     Yes (Bearer access token)
+Authorization:      `performanceReview:create:reports` (MANAGER, own direct reports only) OR `performanceReview:create:any` (ADMIN, any employee)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the only creation path for a `PerformanceReview` —
+  `docs/domain-performance.md` §2: one review per `(employeeId,
+  reviewCycleId)`, moving through `Draft → Submitted → Acknowledged`.
+- **Authority is asymmetric between the two permissions — this is the
+  single most important nuance in this domain, and it is easy to
+  oversimplify:**
+  - **`ADMIN` (via `performanceReview:create:any`)** may author a review
+    for *any* employee. `reviewerId` resolves as `data.reviewerId ??
+    employee.managerId` — an explicit `reviewerId` in the body is
+    honored, but only actually *needed* when the target employee has no
+    manager (`Employee.managerId` is `null`); if it's omitted and the
+    employee genuinely has no manager, the request is rejected with
+    `400`. If the employee *does* have a manager, ADMIN's explicit
+    `reviewerId` (if supplied) still wins over the employee's real
+    manager — nothing forces ADMIN's override to match `managerId`.
+  - **`MANAGER` (via `performanceReview:create:reports`)** has **no
+    ability to choose a reviewer at all** — any `reviewerId` they supply
+    in the body is **silently ignored** (`resolveReviewerId` never even
+    reads `data.reviewerId` on this branch). Their own resolved
+    `Employee.id` (looked up via `employeeRepository.findByUserId`) is
+    forced as `reviewerId`, and the request is rejected with `403`
+    unless the target employee's own `managerId` already equals that
+    manager's `Employee.id`. A `MANAGER` can therefore never author a
+    review naming someone else as the reviewer, nor a review for an
+    employee who isn't their direct report — verified live
+    (`performance.service.test.js`'s "a MANAGER (create:reports) can
+    author a review for their own report but not another employee"
+    case).
+  - This mirrors the deliberately narrower-than-":any" authority shape
+    Leave's `decide:reports` established (ADR-LV02) — a scope
+    permission's authority is resolved server-side from data, never
+    trusted from client input.
+- **The target ReviewCycle must be `OPEN`** —
+  `reviewCycleService.assertReviewCycleAssignable` is called for every
+  create, regardless of which permission is used.
+- **One review per `(employeeId, reviewCycleId)`** — enforced by
+  `@@unique([employeeId, reviewCycleId])` on the Prisma model, with the
+  same pre-check-plus-`P2002`-catch defense-in-depth every
+  create-with-uniqueness endpoint in this codebase uses.
+- **Expected callers**: `MANAGER` (for their own reports) or `ADMIN`
+  (for anyone). `EMPLOYEE` holds neither `create:reports` nor
+  `create:any` and is rejected at the middleware layer.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                                          |
+| --------------------------------------- | -------- | ---------------------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `performanceReview:create:reports` or `performanceReview:create:any` |
+| `Content-Type: application/json`     | **Yes**  |                                                                                 |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  "reviewCycleId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+  "reviewerId": null
+}
+```
+
+| Field           | Type          | Required | Description                                                                                     |
+| --------------- | ------------- | -------- | ------------------------------------------------------------------------------------------------- |
+| `employeeId`    | string (UUID) | **Yes**  | The employee being reviewed                                                                       |
+| `reviewCycleId` | string (UUID) | **Yes**  | Must reference an `OPEN` cycle                                                                    |
+| `reviewerId`    | string (UUID) | No       | Only ever honored for an ADMIN (`create:any`) caller, and only actually required when the employee has no manager. Ignored entirely for a MANAGER (`create:reports`) caller. |
+
+## 7. Validation Rules
+
+- `employeeId` / `reviewCycleId`: `z.string().uuid()`, required.
+- `reviewerId`: `z.string().uuid()`, optional.
+- **No schema-level cross-check** ties `reviewerId` to the caller's
+  permission at all — every authority rule described in §2 is enforced
+  entirely in the service layer (`resolveReviewerId`), not by Zod.
+- Service-layer order of checks (all before the record is created):
+  1. `employeeRepository.findById(employeeId)` → `400` if missing.
+  2. `reviewCycleService.assertReviewCycleAssignable(reviewCycleId)` →
+     `400` if the cycle doesn't exist or isn't `OPEN`.
+  3. `resolveReviewerId` (the authority check, §2) → `400` (no manager,
+     ADMIN path) or `403` (mismatch, MANAGER path).
+  4. `performanceReviewRepository.findByEmployeeAndCycle` → `409` if a
+     review already exists for this pair.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "review": {
+    "id": "a7b8c9d0-e1f2-4a3b-4c5d-6f7a8b9c0d1e",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "reviewerId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "reviewCycleId": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "status": "DRAFT",
+    "rating": null,
+    "managerComments": null,
+    "selfComments": null,
+    "departmentName": null,
+    "designationName": null,
+    "branchName": null,
+    "submittedAt": null,
+    "acknowledgedAt": null,
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:00:00.000Z"
+  }
+}
+```
+
+`addenda` is never present on this response — it is only ever attached
+by `GET /performance-reviews/:id` (endpoint 86). Every org-context
+field (`departmentName`/`designationName`/`branchName`) is `null` at
+creation — they are only populated at `/submit` (endpoint 88), per
+ADR-PF03. No `Decimal` fields exist on this model; every value
+serializes as plain JSON. Verified live
+(`performance.service.test.js`'s create tests assert `review.status ===
+'DRAFT'` and the resolved `reviewerId`).
+
+## 9. Error Responses
+
+| Status | Reason                                                                 | Response (`message`)                                                             | When                                                                 |
+| ------ | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `400`  | Validation failed                                                        | e.g. `"employeeId: Invalid uuid"`                                                    | Malformed/missing `employeeId`/`reviewCycleId`                            |
+| `400`  | `employeeId` doesn't reference a real Employee                          | `"employeeId: references a record that does not exist"`                             |                                                                             |
+| `400`  | `reviewCycleId` doesn't exist                                            | `"reviewCycleId: references a record that does not exist"`                          |                                                                             |
+| `400`  | `reviewCycleId` exists but isn't `OPEN`                                  | `"reviewCycleId: this review cycle is not open and cannot be assigned"`             | Verified live                                                              |
+| `400`  | ADMIN (`create:any`) omitted `reviewerId` and the employee has no manager | `"reviewerId: this employee has no manager - reviewerId must be provided explicitly"` | Verified live                                                              |
+| `401`  | Missing/invalid/expired access token                                     | Same as every other protected endpoint                                              | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks both create permissions at the middleware layer             | `"You do not have permission to perform this action"`                              | `EMPLOYEE` token — holds neither `create:reports` nor `create:any`        |
+| `403`  | MANAGER (`create:reports`) targets an employee who isn't their direct report | `"You do not have permission to author a review for this employee"`             | Verified live                                                              |
+| `409`  | A review already exists for this `(employeeId, reviewCycleId)` pair      | `"A performance review already exists for this employee and cycle"`                | Verified live                                                              |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                                   | Expected |
+| --- | --------------------------------------------------------------------------- | -------- |
+| 1   | `ADMIN`, employee with a manager, no `reviewerId` supplied                   | `201`, `reviewerId` = employee's `managerId` |
+| 2   | `ADMIN`, employee with **no** manager, no `reviewerId`                        | `400` — verified live |
+| 3   | `ADMIN`, employee with no manager, explicit `reviewerId` supplied             | `201`, `reviewerId` = the supplied value — verified live |
+| 4   | `MANAGER`, own direct report                                                  | `201`, `reviewerId` forced to the manager's own `Employee.id` — verified live |
+| 5   | `MANAGER`, a non-report employee                                              | `403` — verified live |
+| 6   | `MANAGER`, own direct report, with a `reviewerId` supplied naming someone else | `201` — the supplied `reviewerId` is silently ignored, the manager's own id wins |
+| 7   | Duplicate `(employeeId, reviewCycleId)`                                       | `409` — verified live |
+| 8   | Target `reviewCycleId` is `CLOSED`                                            | `400` — verified live |
+| 9   | As `EMPLOYEE` token                                                           | `403`    |
+| 10  | No token                                                                      | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                    | Expected                                                                 |
+| ---------------------------------------------- | --------------------------------------------------------------------------- |
+| Malformed (non-UUID) `employeeId`/`reviewCycleId`/`reviewerId` | `400`                                                    |
+| Nonexistent `reviewCycleId`                    | `400` — `"reviewCycleId: references a record that does not exist"`, not `404` (this is a body-field reference check, not a path-parameter lookup) |
+| Tampered/expired JWT                           | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Target employee has no manager **and** caller is `MANAGER` (`create:reports`) | `403`, not `400` — `resolveReviewerId`'s `MANAGER` branch compares `employee.managerId` (`null`) to the manager's own id; a `null` `managerId` simply never equals any manager's id, so this surfaces as the ownership-mismatch `403`, not the ADMIN branch's `400` "no manager" message |
+| Cycle is nonexistent **and** the target employee also isn't the caller's report (MANAGER caller) | `400` — `assertReviewCycleAssignable` runs *before* `resolveReviewerId` in `createPerformanceReview`'s own order, so the cycle check wins regardless of what the reviewer-authority outcome would have been |
+| `employeeId` refers to the caller's own `Employee` record (self-review authored by their own manager) | `201` — nothing prevents a manager from authoring their own direct report's review even if, coincidentally, the target *is* the caller (not a real scenario given the `managerId` check, but no explicit self-authorship guard exists either) |
+| **Concurrent creates for the same `(employeeId, reviewCycleId)`**  | `409`, not a `500` — the create transaction catches `P2002` the same way every other create-with-uniqueness endpoint does                              |
+
+## 13. Security Testing
+
+- **BOLA / privilege escalation**: the primary test for this endpoint —
+  confirm a `MANAGER` cannot author a review naming a `reviewerId` other
+  than their own resolved `Employee.id`, and cannot target an employee
+  outside `Employee.managerId` — both verified live.
+- **Authorization**: confirm `EMPLOYEE` cannot create at all — holds
+  neither `create:reports` nor `create:any`.
+- **Mass assignment**: only `employeeId`/`reviewCycleId`/`reviewerId`
+  are read from the body; `status` can never be set (always `DRAFT`),
+  and `rating`/`managerComments`/`selfComments`/the org-context snapshot
+  fields are not settable at creation at all — they exist only via
+  `PATCH` (endpoint 87), `/submit` (endpoint 88), and
+  `/self-assessment` (endpoint 90) respectively.
+
+## 14. Database Impact
+
+- **Tables affected**: `PerformanceReview` (insert), `AuditLog`
+  (insert), inside one `prisma.$transaction`.
+- **Pre-checks (outside the transaction)**: `Employee.findById`,
+  `ReviewCycle.findById`, conditionally `Employee.findByUserId` (MANAGER
+  branch), `PerformanceReview.findUnique` on the composite key.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/performance-reviews
+    ↓
+authMiddleware
+    ↓
+requirePermission('performanceReview:create:reports', 'performanceReview:create:any')
+    ↓ (403 if neither granted)
+validateMiddleware(createPerformanceReviewSchema)
+    ↓ (400 if invalid)
+performance.controller.create → performance.service.createPerformanceReview(data, actor)
+    ├─ employeeRepository.findById(employeeId) → missing → 400
+    ├─ reviewCycleService.assertReviewCycleAssignable(reviewCycleId) → missing/not-OPEN → 400
+    ├─ resolveReviewerId(employee, data, actor)
+    │    ├─ has create:any → reviewerId = data.reviewerId ?? employee.managerId → null → 400
+    │    ├─ has create:reports → managerEmployee = employeeRepository.findByUserId(actor.id)
+    │    │      → employee.managerId !== managerEmployee.id → 403
+    │    └─ neither → 403 (unreachable via this route in practice)
+    ├─ performanceReviewRepository.findByEmployeeAndCycle(employeeId, reviewCycleId) → existing → 409
+    └─ try { prisma.$transaction:
+         ├─ performanceReviewRepository.create({ employeeId, reviewCycleId, reviewerId }, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', afterData, ... }, tx)
+       } catch (P2002) → 409
+    ↓
+201 { review }
+```
+
+## 16. Performance Notes
+
+At most four sequential lookups before the transaction (`Employee`,
+`ReviewCycle`, conditionally a second `Employee` lookup by `userId`, and
+the composite-key uniqueness check) plus one insert and one audit-log
+insert — no notable performance concerns; nothing here approaches the
+scale of Payroll's `/process` (endpoint 73).
+
+## 17. Interview Notes
+
+- **Q: Why can't a MANAGER choose who reviews their report?** By design
+  — `resolveReviewerId`'s `create:reports` branch never reads
+  `data.reviewerId` at all. The only reviewer a `MANAGER` can ever
+  produce is themselves, verified against the target's own
+  `Employee.managerId`. This mirrors Leave's `decide:reports`
+  precedent (ADR-LV02): a scope-limited permission's authority is always
+  resolved from stored data, never accepted as client input.
+- **Q: Why does ADMIN's `create:any` require an explicit `reviewerId`
+  only when the employee has no manager, rather than always?** Reusing
+  `Employee.managerId` automatically when it exists (ADR-PF02) avoids
+  forcing ADMIN to always specify a value that's already knowable from
+  the org chart — the explicit field only becomes load-bearing in the
+  one case where there is nothing to default to.
+- **Q: Why is `reviewerId` a stored, mandatory column rather than a
+  pure authorization check?** ADR-PF02: unlike Leave's `decide:any`,
+  which is a pure permission check with no stored "who could have
+  decided" column, `PerformanceReview.reviewerId` is resolved once at
+  creation time and never re-derived — a later change to
+  `Employee.managerId` never retroactively rewrites who authored a past
+  review.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/performance-reviews \
+  -H "Authorization: Bearer $MANAGER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"employeeId":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","reviewCycleId":"e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c"}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `review.id` as `{{performanceReviewId}}` — used by
+every other `/performance-reviews/:id*` endpoint (86-92). Run the
+MANAGER-non-report and ADMIN-no-manager-no-reviewerId cases early in any
+collection to confirm the authority asymmetry before moving on to the
+lifecycle endpoints.
+
+## 20. Testing Checklist
+
+- ✅ `MANAGER` creates for own report → `201`, `reviewerId` forced to
+  manager's own id (verified live)
+- ✅ `MANAGER` targeting a non-report → `403` (verified live)
+- ✅ `ADMIN`, no manager, no `reviewerId` → `400` (verified live)
+- ✅ `ADMIN`, no manager, explicit `reviewerId` → `201` (verified live)
+- ✅ Duplicate `(employeeId, reviewCycleId)` → `409` (verified live)
+- ✅ Non-`OPEN` cycle → `400` (verified live)
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 85. `GET /performance-reviews`
+
+## 1. Endpoint Information
+
+```
+Feature:            Performance Domain (2026-09-15, feature/24-performance-domain)
+Endpoint:           List Performance Reviews
+Method:             GET
+URL:                /api/v1/performance-reviews
+API Version:        v1
+Module:             modules/performance
+Authentication:     Yes (Bearer access token)
+Authorization:      `performanceReview:read:any` OR `performanceReview:read:own` OR `performanceReview:manage:reports`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: browse/search `PerformanceReview`s across
+  employees, cycles, and statuses — the administrative index for
+  `ADMIN`, and the own/reports history view for everyone else.
+- **Auto-scoping with a three-way OR, not just own-vs-any** — a caller
+  **without** `read:any` is scoped to the union of whichever of these
+  they hold:
+  - `read:own` → their own reviews (`{ employeeId: ownEmployee.id }`)
+  - `manage:reports` → reviews where they are the reviewer
+    (`{ reviewerId: ownEmployee.id }`)
+
+  Both conditions are combined with `OR` when both are held (e.g. a
+  `MANAGER` sees both their own reviews *and* their reports' reviews in
+  one list). Verified live
+  (`performance.service.test.js`'s "listPerformanceReviews scopes to own
+  reviews and/or reports' reviews without :read:any" case).
+- **A caller with no `Employee` record and no `read:any`** — or one who
+  simply holds none of the three permissions — gets `{ reviews: [],
+  pagination: { total: 0, totalPages: 0, ... } }`, a clean empty page,
+  **not** a `403`. The `403` for this endpoint is reserved for the
+  middleware layer only (missing all three permission keys entirely),
+  which every seeded role already clears since `ADMIN`/`MANAGER`/
+  `EMPLOYEE` all hold at least `read:own`.
+- **Any `employeeId` filter a non-`:any` caller supplies is folded into
+  their scope, not honored verbatim** — the final `where` clause `AND`s
+  the supplied filters (`employeeId`/`reviewCycleId`/`status`) together
+  with the scope `OR`, so a `MANAGER` cannot use `?employeeId=...` to
+  peek at an employee outside their own scope; it simply narrows within
+  it (mirrors Leave's own list-scoping precedent).
+- **List items never include `addenda`** — `findAll` performs no
+  `include` at all; the full addenda breakdown is exclusively a `GET
+  /performance-reviews/:id` (endpoint 86) addition.
+- **Expected callers**: every authenticated user, each seeing a
+  different effective scope.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                                                          |
+| --------------------------------------- | -------- | -------------------------------------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `performanceReview:read:any`, `:read:own`, or `:manage:reports`                    |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name            | Type          | Required | Default     | Description                                                                                   |
+| ----------------- | ------------- | -------- | ------------- | ------------------------------------------------------------------------------------------------ |
+| `page`          | integer       | No       | `1`         | 1-indexed page number                                                                            |
+| `limit`         | integer       | No       | `10` (max 100) | Page size                                                                                       |
+| `employeeId`    | string (UUID) | No       | —           | Only meaningfully honored (i.e. widens rather than merely narrows nothing) for `read:any` callers |
+| `reviewCycleId` | string (UUID) | No       | —           |                                                                                                    |
+| `status`        | enum          | No       | —           | `DRAFT`, `SUBMITTED`, or `ACKNOWLEDGED`                                                           |
+| `sortBy`        | enum          | No       | `createdAt` | `createdAt`, `submittedAt`, `acknowledgedAt`, or `status`                                         |
+| `order`         | enum          | No       | `desc`      | `asc` or `desc`                                                                                   |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same `page`/`limit`/sort shape as every other list endpoint
+(`listPerformanceReviewsQuerySchema`). All filter fields are optional;
+`employeeId`/`reviewCycleId` require a valid UUID format if supplied
+(no existence check — an invalid but well-formed UUID simply matches
+zero rows). Auto-scoping (§2) happens entirely in the service layer,
+not in this schema.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "reviews": [
+    {
+      "id": "a7b8c9d0-e1f2-4a3b-4c5d-6f7a8b9c0d1e",
+      "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "reviewerId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+      "reviewCycleId": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+      "status": "DRAFT",
+      "rating": null,
+      "managerComments": null,
+      "selfComments": null,
+      "departmentName": null,
+      "designationName": null,
+      "branchName": null,
+      "submittedAt": null,
+      "acknowledgedAt": null,
+      "createdAt": "2026-09-15T10:00:00.000Z",
+      "updatedAt": "2026-09-15T10:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                | Response (`message`)                                                              | When                                             |
+| ------ | -------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `400`  | A query parameter failed validation    | e.g. `"limit: Too big: expected number to be <=100"`, `"status: Invalid option"`   | Out-of-bounds `limit`, invalid `status`/`sortBy`  |
+| `401`  | Missing/invalid/expired access token   | Same as every other protected endpoint                                              | `authMiddleware` failure                          |
+| `403`  | Caller lacks all three read/manage permissions | `"You do not have permission to perform this action"`                       | Not expected in practice — every seeded role holds at least `read:own` |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                          | Expected |
+| --- | ------------------------------------------------------------------ | -------- |
+| 1   | `ADMIN` (`read:any`), no filters                                    | `200`, every review — verified live |
+| 2   | `MANAGER` (`read:own` + `manage:reports`)                            | `200`, own reviews + reports' reviews combined — verified live |
+| 3   | `EMPLOYEE` (`read:own` only)                                         | `200`, only their own review(s) |
+| 4   | Caller with none of the three (hypothetical, e.g. lacking an `Employee` record entirely) | `200`, empty `reviews` array — verified live ("strangerView" case) |
+| 5   | `status=SUBMITTED` filter                                           | `200`, filtered within scope |
+| 6   | `limit=101`                                                         | `400`    |
+| 7   | No token                                                            | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| `sortBy`/`status` outside their allowlists | `400`                                                                  |
+| A non-`:any` caller passes `employeeId` for someone else's record | `200`, but the result is still confined to their own scope — the filter is `AND`ed with scope, never a bypass |
+| Tampered/expired JWT               | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                        |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MANAGER` holding `manage:reports` but with **no** `Employee` record of their own | `200`, empty `reviews` — `ownEmployee` resolves to `null`, so neither scope condition can be built, and `scopeConditions.length === 0` short-circuits to an empty page |
+| `MANAGER` holding only `read:own` (no `manage:reports` grant — not a seeded combination, but structurally possible) | `200`, sees only their own reviews as the reviewed employee, none of their reports' |
+| `page` beyond the last page                                        | `200` with an empty `reviews` array, not an error                                                                                              |
+
+## 13. Security Testing
+
+- **BOLA**: the primary test — confirm a non-`:any` caller's `employeeId`
+  filter cannot widen their result set beyond their own scope OR
+  condition, verified live via the "strangerView" zero-result case.
+- **Authorization**: every seeded role holds at least `read:own`, so a
+  middleware-level `403` is not reachable through any real seeded role
+  — the meaningful security boundary is entirely the service-layer
+  scoping logic, not the route guard.
+
+## 14. Database Impact
+
+Read-only — `PerformanceReview.findMany` + `.count`, run in parallel via
+`Promise.all`; one additional `Employee.findByUserId` lookup for any
+caller without `read:any`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/performance-reviews
+    ↓
+authMiddleware
+    ↓
+requirePermission('performanceReview:read:any', 'performanceReview:read:own', 'performanceReview:manage:reports')
+    ↓ (403 if none granted)
+validateMiddleware(listPerformanceReviewsQuerySchema, 'query')
+    ↓ (400 if invalid)
+performance.controller.list → performance.service.listPerformanceReviews(query, requester)
+    ├─ if !read:any:
+    │    ├─ employeeRepository.findByUserId(requester.id)
+    │    ├─ read:own? → scopeConditions += { employeeId: ownEmployee.id }
+    │    ├─ manage:reports? → scopeConditions += { reviewerId: ownEmployee.id }
+    │    └─ scopeConditions empty → return { reviews: [], pagination: {...0} }
+    └─ Promise.all([performanceReviewRepository.findAll({ where: { ...filters, OR: scopeConditions } }), .count(...)])
+    ↓
+200 { reviews, pagination }
+```
+
+## 16. Performance Notes
+
+One conditional `Employee` lookup by `userId` plus the standard
+`findMany`/`count` pair — no notable performance concerns at this
+domain's expected scale (bounded by employee count × review-cycle
+count, far smaller than Attendance's per-day-per-employee growth).
+
+## 17. Interview Notes
+
+- **Q: Why a three-way OR instead of Leave's simpler own-vs-any split?**
+  Performance has a genuine third party the other domains' list
+  endpoints don't: the reviewer, who is neither the "owner" (reviewed
+  employee) nor an unconditional "any" caller. `docs/domain-performance.md`
+  ADR-PF05 names this explicitly — `manage:reports` covers the
+  reviewer's own visibility need, distinct from `read:own`.
+- **Q: What happens to a `MANAGER`'s list view if they are removed as a
+  reviewer from `Employee.managerId` after authoring reviews?** Nothing
+  retroactive — `reviewerId` was resolved and stored once at creation
+  time (ADR-PF02); a later `managerId` change never changes which
+  reviews an existing `reviewerId` scope condition matches.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/performance-reviews?status=SUBMITTED&sortBy=submittedAt&order=desc" \
+  -H "Authorization: Bearer $MANAGER_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run once as `ADMIN` (expect every review), once as the reviewing
+`MANAGER` (expect own + reports' reviews), and once as the reviewed
+`EMPLOYEE` (expect only their own) in the same collection to exercise
+all three scope combinations.
+
+## 20. Testing Checklist
+
+- ✅ `ADMIN` sees every review (verified live)
+- ✅ `MANAGER` sees own + reports' reviews combined (verified live)
+- ✅ Caller with no matching scope → empty array, not `403` (verified live)
+- ✅ `employeeId` filter cannot widen a non-`:any` caller's scope
+- ✅ `401` with no token
+- ✅ `400` on out-of-bounds `limit`/invalid `status`
+
+---
+
+---
+
+# 86. `GET /performance-reviews/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Performance Domain (2026-09-15, feature/24-performance-domain)
+Endpoint:           Get one Performance Review
+Description:        Returns a single PerformanceReview including its full addenda breakdown, subject to an ownership check
+Method:             GET
+URL:                /api/v1/performance-reviews/:id
+API Version:        v1
+Module:             modules/performance
+Authentication:     Yes (Bearer access token)
+Authorization:      `performanceReview:read:any` OR `performanceReview:read:own` OR `performanceReview:manage:reports` OR `performanceReview:manage:any`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the one place any of the four related parties — an
+  `ADMIN`, the reviewer, or the reviewed employee — can see a specific
+  review's full detail, including every addendum ever appended to it.
+- **`addenda` is only present here**, not on the list endpoint
+  (`PerformanceReviewSchema`'s own `.meta()` note) —
+  `performanceReviewRepository.findById` is the only repository method
+  that `include`s the `addenda` relation, ordered `createdAt: 'asc'`
+  (oldest first).
+- **Access check is a four-way OR (`canAccessReview`), the most complex
+  authorization logic in this domain**:
+  1. `read:any` → always true.
+  2. `manage:any` → always true (manage implies view — an ADMIN
+     managing reviews doesn't need a separate read grant).
+  3. `read:own` **and** the caller's own `Employee.id` equals
+     `review.employeeId` → true.
+  4. `manage:reports` **and** the caller's own `Employee.id` equals
+     `review.reviewerId` → true.
+  5. Otherwise → false → `403`.
+
+  Note this route's own middleware permission list is slightly *broader*
+  than `GET /performance-reviews` (endpoint 85)'s — it explicitly
+  includes `manage:any` in addition to the three the list route checks
+  — though in practice every seeded role holding `manage:any` (`ADMIN`)
+  also holds `read:any`, so this difference is not currently observable
+  through any seeded role's actual behavior.
+- **Expected callers**: `ADMIN`, the review's reviewer, or the reviewed
+  employee.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                                                                          |
+| --------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `performanceReview:read:any`, `:read:own`, `:manage:reports`, or `:manage:any`                    |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                  |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The PerformanceReview's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No format validation on `id` — an invalid UUID or a well-formed UUID
+that doesn't exist both simply fail to match any row and produce the
+same `404`. Two-layer authorization: middleware checks for any of the
+four permission keys, then the service (`getPerformanceReviewById` →
+`assertCanView` → `canAccessReview`, §2) fetches the record (`404` if
+missing) and, for non-`:any` callers, resolves the caller's own
+`Employee` record and compares it against `employeeId`/`reviewerId`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "review": {
+    "id": "a7b8c9d0-e1f2-4a3b-4c5d-6f7a8b9c0d1e",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "reviewerId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "reviewCycleId": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "status": "SUBMITTED",
+    "rating": "MEETS_EXPECTATIONS",
+    "managerComments": "Consistently meets deadlines and collaborates well with the team.",
+    "selfComments": "I delivered the Q2 migration project ahead of schedule.",
+    "departmentName": "Engineering",
+    "designationName": "Senior Software Engineer",
+    "branchName": "Bengaluru HQ",
+    "submittedAt": "2026-09-15T10:05:00.000Z",
+    "acknowledgedAt": null,
+    "addenda": [
+      {
+        "id": "f6a7b8c9-d0e1-4f2a-3b4c-5d6f7a8b9c0d",
+        "performanceReviewId": "a7b8c9d0-e1f2-4a3b-4c5d-6f7a8b9c0d1e",
+        "authorId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+        "comment": "Following up after our 1:1.",
+        "createdAt": "2026-09-15T10:06:00.000Z"
+      }
+    ],
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:06:00.000Z"
+  }
+}
+```
+
+`addenda` is ordered oldest-first (`createdAt: 'asc'`) and is an empty
+array (not omitted) when no addendum has ever been added. No `Decimal`
+fields exist on either model — every field serializes as plain JSON.
+Verified live (`performance.service.test.js`'s addenda test asserts
+`full.addenda.length === 2` after two addenda were added).
+
+## 9. Error Responses
+
+| Status | Reason                                                       | Response (`message`)                                                    | When                                                                 |
+| ------ | ---------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token                             | Same as every other protected endpoint                                      | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks all four permissions at the middleware layer        | `"You do not have permission to perform this action"`                      | Not expected in practice — every seeded role holds at least `read:own`    |
+| `403`  | Caller holds only `read:own`/`manage:reports` and fails `canAccessReview` | `"You do not have permission to view this performance review"`     | Neither the reviewed employee nor the reviewer, and not `:any`             |
+| `404`  | No such PerformanceReview                                        | `"Performance review not found"`                                            | Invalid/nonexistent `id`                                                   |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                      | Expected |
+| --- | ---------------------------------------------------------------- | -------- |
+| 1   | `ADMIN`, any valid `id`                                          | `200` — verified live |
+| 2   | The review's own reviewer (`manage:reports`)                      | `200`    |
+| 3   | The reviewed `EMPLOYEE` (`read:own`)                               | `200`    |
+| 4   | An unrelated `EMPLOYEE`/`MANAGER`                                  | `403` — verified live (via the addenda-access "stranger" case) |
+| 5   | Nonexistent `id`                                                  | `404`    |
+| 6   | No token                                                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                     | Expected |
+| -------------------------------- | -------- |
+| Malformed (non-UUID) `id`        | `404`    |
+| Tampered/expired JWT             | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                                                      | Expected Behavior                                                                                                                        |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Caller has no `Employee` record at all, holding only `read:own`                               | `403` — `canAccessReview` resolves `ownEmployee` as `null`, which never equals `review.employeeId`                                        |
+| The reviewer requests a review where they are the `reviewerId` but hold only `read:own` (not `manage:reports`, not a seeded combination) | `403` — `read:own` alone only matches on `employeeId`, never `reviewerId`                                                                  |
+| Requesting an `ACKNOWLEDGED` review                                                             | `200` — read access has no dependency on lifecycle status; a fully acknowledged review remains permanently readable to the same parties  |
+| Review has zero addenda                                                                        | `addenda: []`, not omitted from the response                                                                                              |
+
+## 13. Security Testing
+
+- **BOLA**: the primary test — confirm a `read:own`-only caller cannot
+  read another employee's review by id, and confirm a `manage:reports`
+  caller cannot read a review they don't personally review, both via
+  `canAccessReview`'s explicit `ownEmployee.id === review.*` comparisons.
+- **Sensitive-data exposure**: this endpoint returns full review
+  content — `managerComments`, `selfComments`, `rating`, and every
+  addendum — the access check here is the only thing standing between
+  an authenticated token and someone else's personnel evaluation.
+
+## 14. Database Impact
+
+- **Tables affected**: `PerformanceReview` (read, with a joined
+  `addenda` fetch); an additional `Employee` lookup by `userId` for any
+  non-`:any` caller.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/performance-reviews/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('performanceReview:read:any', 'performanceReview:read:own', 'performanceReview:manage:reports', 'performanceReview:manage:any')
+    ↓ (403 if none granted)
+performance.controller.getById → performance.service.getPerformanceReviewById(id, requester)
+    ├─ performanceReviewRepository.findById(id) [includes addenda] → not found → 404
+    └─ assertCanView(review, requester) → canAccessReview(review, requester)
+         ├─ read:any or manage:any? → pass
+         └─ else → employeeRepository.findByUserId(requester.id)
+              ├─ read:own && ownEmployee.id === review.employeeId → pass
+              ├─ manage:reports && ownEmployee.id === review.reviewerId → pass
+              └─ else → 403
+    ↓
+200 { review }
+```
+
+## 16. Performance Notes
+
+Single indexed `PerformanceReview.findUnique` by primary key with a
+joined `addenda` fetch (typically a handful of rows per review — this is
+an append-only comment thread, not a high-volume log), plus one
+additional indexed `Employee` lookup by `userId` only when the
+ownership-check path runs.
+
+## 17. Interview Notes
+
+- **Q: Why does this route's permission list include `manage:any` while
+  the list endpoint's doesn't?** Both are consistent in outcome for
+  every seeded role — `ADMIN` holds both `read:any` and `manage:any`
+  together, so it never actually diverges in this codebase's current
+  seed data — but the `GET /:id` route was written to be self-contained
+  ("can I manage it? then I can certainly view it") rather than relying
+  on `ADMIN` also happening to hold `read:any`. It is a defensive
+  broadening, not a currently load-bearing difference.
+- **Q: Why does `canAccessReview` fold in `manage:*`, not just `read:*`?**
+  `performance.service.js`'s own comment: "manage implies view" — it
+  would be a strange gap if an `ADMIN`/`MANAGER` who is explicitly
+  authorized to edit, submit, or delete a review couldn't even read it
+  in the first place.
+
+## 18. cURL Examples
+
+```bash
+curl -i http://localhost:3000/api/v1/performance-reviews/$PERFORMANCE_REVIEW_ID \
+  -H "Authorization: Bearer $MANAGER_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Save `{{performanceReviewId}}` from endpoint 84's create response. Run
+once as the reviewer (expect `200`), once as the reviewed employee
+(expect `200`), and once as an unrelated employee (expect `403`) in the
+same collection.
+
+## 20. Testing Checklist
+
+- ✅ `200` as `ADMIN` for any review (verified live)
+- ✅ `200` as the review's reviewer or the reviewed employee
+- ✅ `403` for an unrelated caller (verified live)
+- ✅ `404` for nonexistent `id`
+- ✅ `401` with no token
+- ✅ `addenda` present, oldest-first, empty array when none exist (verified live)
+
+---
+
+---
+
+# 87. `PATCH /performance-reviews/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Performance Domain (2026-09-15, feature/24-performance-domain)
+Endpoint:           Edit a Draft Performance Review
+Description:        Updates rating and/or managerComments; only permitted while the review is DRAFT
+Method:             PATCH
+URL:                /api/v1/performance-reviews/:id
+API Version:        v1
+Module:             modules/performance
+Authentication:     Yes (Bearer access token)
+Authorization:      `performanceReview:manage:reports` (the review's own reviewer) OR `performanceReview:manage:any` (ADMIN)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: lets the reviewer (or `ADMIN`) fill in the rating
+  and manager commentary before submitting.
+- **`DRAFT`-only, by deliberate implementation refinement, not the
+  domain doc's own literal wording** — `docs/domain-performance.md`
+  ADR-PF01 explicitly flags this: the doc's own looser wording could be
+  read to also allow editing while `SUBMITTED`, but the implementation
+  chose a stricter, simpler-to-reason-about checkpoint — once
+  `SUBMITTED`, further correction goes through an addendum (endpoint 92)
+  instead of an edit.
+- **Authority check (`assertCanManage`) is shared verbatim with
+  `/submit` (endpoint 88) and `DELETE` (endpoint 91)** — confirmed by
+  reading the route file: all three routes list the identical
+  permission pair, `performanceReview:manage:reports` and
+  `performanceReview:manage:any`, in the identical order. A `MANAGER`
+  who holds `manage:reports` but isn't the review's own `reviewerId`
+  passes the middleware but is rejected by the service layer with a
+  distinct, more specific message (§9).
+- **Uses this domain's own `Employee.id` comparison, not the caller's
+  `User.id`** — `assertCanManage`'s `manage:reports` branch resolves
+  `employeeRepository.findByUserId(actor.id)` and compares that
+  `Employee.id` to `review.reviewerId` — `reviewerId` is always an
+  `Employee.id`, never a `User.id`.
+- **Expected callers**: the review's own reviewer (`MANAGER`), or
+  `ADMIN`.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                                                |
+| --------------------------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `performanceReview:manage:reports` or `performanceReview:manage:any` |
+| `Content-Type: application/json`     | **Yes**  |                                                                                       |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                  |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The PerformanceReview's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "rating": "MEETS_EXPECTATIONS",
+  "managerComments": "Consistently meets deadlines and collaborates well with the team."
+}
+```
+
+| Field             | Type   | Required                                | Description                                                                                             |
+| ----------------- | ------ | ---------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `rating`          | enum   | At least one of the two fields required | `OUTSTANDING`, `EXCEEDS_EXPECTATIONS`, `MEETS_EXPECTATIONS`, `BELOW_EXPECTATIONS`, `UNSATISFACTORY`       |
+| `managerComments` | string | At least one of the two fields required | Trimmed, minimum length 1                                                                                 |
+
+## 7. Validation Rules
+
+- `rating`: `z.enum([...5 values])`, optional.
+- `managerComments`: `z.string().trim().min(1)`, optional.
+- Object-level `.refine`: `rating !== undefined || managerComments !==
+  undefined`, else `"At least one of rating or managerComments must be
+  provided"` — **this refine has no explicit `path` option**, so Zod
+  attaches the issue to the root (empty `path: []`). Because
+  `validateMiddleware` builds its message as `` `${issue.path.join('.')}:
+  ${issue.message}` ``, an empty path joins to an empty string, so the
+  **actual wire message carries a leading `": "`**:
+  `": At least one of rating or managerComments must be provided"` —
+  worth verifying directly rather than assuming a clean message, since
+  every other cross-field `.refine` in this same feature (`ReviewCycle`'s
+  date-order checks) *does* supply an explicit `path`.
+- `employeeId`/`reviewerId`/`reviewCycleId`/`status` are never accepted
+  fields on this schema — none of them are settable via `PATCH` at all.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "review": {
+    "id": "a7b8c9d0-e1f2-4a3b-4c5d-6f7a8b9c0d1e",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "reviewerId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "reviewCycleId": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "status": "DRAFT",
+    "rating": "MEETS_EXPECTATIONS",
+    "managerComments": "Consistently meets deadlines and collaborates well with the team.",
+    "selfComments": null,
+    "departmentName": null,
+    "designationName": null,
+    "branchName": null,
+    "submittedAt": null,
+    "acknowledgedAt": null,
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:03:00.000Z"
+  }
+}
+```
+
+`status` remains `DRAFT` after this call — this endpoint never
+transitions status; that is `/submit`'s job (endpoint 88). Verified live
+(`performance.service.test.js`'s "PATCH is Draft-only; submit requires
+rating and managerComments" case asserts `updated.status === 'DRAFT'`
+after this call).
+
+## 9. Error Responses
+
+| Status | Reason                                                   | Response (`message`)                                       | When                                                                 |
+| ------ | ----------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `400`  | Validation failed                                            | `": At least one of rating or managerComments must be provided"` (leading `": "` — see §7), or e.g. `"rating: Invalid option"` |                                                                             |
+| `401`  | Missing/invalid/expired access token                         | Same as every other protected endpoint                             | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks both manage permissions at the middleware layer | `"You do not have permission to perform this action"`             | `EMPLOYEE` token — holds neither `manage:reports` nor `manage:any`        |
+| `403`  | `MANAGER` (`manage:reports`) is not this review's `reviewerId` | `"You do not have permission to manage this performance review"` | Verified live via `assertCanManage`'s shared rejection path               |
+| `404`  | No such PerformanceReview                                    | `"Performance review not found"`                                    | Invalid/nonexistent `id`                                                   |
+| `409`  | Review is not `DRAFT`                                        | `"Only a Draft performance review can be edited"`                  | Already `SUBMITTED`/`ACKNOWLEDGED` — verified live                          |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                       | Expected |
+| --- | ----------------------------------------------------------------- | -------- |
+| 1   | Reviewer sets both `rating` and `managerComments` on a `DRAFT` review | `200` — verified live |
+| 2   | Reviewer sets only `rating`                                        | `200`    |
+| 3   | Reviewer sets only `managerComments`                                | `200`    |
+| 4   | Neither field supplied (`{}`)                                       | `400`    |
+| 5   | `ADMIN` edits any review                                            | `200`    |
+| 6   | `MANAGER` who is not this review's reviewer                         | `403`    |
+| 7   | Editing an already-`SUBMITTED` review                               | `409` — verified live |
+| 8   | Nonexistent `id`                                                    | `404`    |
+| 9   | As `EMPLOYEE` token                                                  | `403`    |
+| 10  | No token                                                            | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                    | Expected                                                                 |
+| ---------------------------------------------- | --------------------------------------------------------------------------- |
+| `rating` value outside the 5-value enum        | `400`                                                                       |
+| `managerComments` as a whitespace-only string  | `400` — `.trim().min(1)` rejects it after trimming                          |
+| Attempting to set `status`/`employeeId`/`reviewerId` in the body | Silently ignored — not in the schema, never reaches the service layer |
+| Tampered/expired JWT                           | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Editing repeatedly while still `DRAFT` (e.g. setting `rating` first, `managerComments` later in a separate call) | `200` each time — no restriction on how many times a `DRAFT` review can be edited before submission                                                    |
+| Overwriting a previously-set `rating`/`managerComments` with a new value, still `DRAFT` | `200` — full overwrite, not merge-only; the old value is simply replaced (no history of prior edits is kept)                                          |
+| `MANAGER` was the `reviewerId` at creation but is no longer the employee's current `Employee.managerId` (org change after creation) | `200` — still succeeds; `assertCanManage` checks `review.reviewerId` (the stored value, per ADR-PF02), never the employee's *current* `managerId` again |
+
+## 13. Security Testing
+
+- **BOLA**: confirm a `MANAGER` holding `manage:reports` cannot edit a
+  review where they are not `reviewerId`, verified live.
+- **Authorization**: confirm `EMPLOYEE` cannot call this at all — holds
+  neither `manage:reports` nor `manage:any`.
+- **Mass assignment**: only `rating`/`managerComments` are ever read
+  from the body — `status`, `submittedAt`, `acknowledgedAt`, the
+  org-context snapshot fields, and `selfComments` are all untouchable
+  via this route.
+
+## 14. Database Impact
+
+- **Tables affected**: `PerformanceReview` (update), `AuditLog`
+  (insert), inside one `prisma.$transaction`.
+- **Pre-checks**: `findById` (`404` gate), conditionally `Employee.findByUserId`
+  (the `manage:reports` ownership check).
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/performance-reviews/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('performanceReview:manage:reports', 'performanceReview:manage:any')
+    ↓ (403 if neither granted)
+validateMiddleware(updatePerformanceReviewSchema)
+    ↓ (400 if invalid)
+performance.controller.update → performance.service.updatePerformanceReview(id, data, actor)
+    ├─ performanceReviewRepository.findById(id) → not found → 404
+    ├─ assertCanManage(review, actor) → not manage:any and (not manage:reports or reviewerId mismatch) → 403
+    ├─ review.status !== 'DRAFT' → 409
+    └─ prisma.$transaction:
+         ├─ performanceReviewRepository.update(id, data, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', beforeData, afterData, ... }, tx)
+    ↓
+200 { review }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup, one conditional `Employee` lookup, one update,
+one audit-log insert — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why is editing blocked once a review is `SUBMITTED`, if the
+  domain doc's own wording is looser?** ADR-PF01's own summary calls
+  this out directly as a deliberate, stricter implementation choice — a
+  clean `DRAFT`-only edit window gives "Submitted" real meaning as a
+  checkpoint, rather than an edit-anytime label that would blur the
+  distinction between "still being drafted" and "finalized and shared."
+- **Q: What is the intended path to correct a mistake after
+  submission?** An addendum (endpoint 92) — a new, append-only comment,
+  never an edit to the frozen `rating`/`managerComments` fields
+  themselves. This mirrors Payroll's "adjustment entry, never edit
+  history" principle (ADR-PR01) at Performance's own, explicitly lower
+  enforcement stakes (ADR-PF03's framing: a personnel record, not a
+  financial one).
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/performance-reviews/$PERFORMANCE_REVIEW_ID \
+  -H "Authorization: Bearer $MANAGER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"rating":"MEETS_EXPECTATIONS","managerComments":"Solid, consistent contributor."}'
+```
+
+## 19. Postman Collection Notes
+
+Always run this before `/submit` (endpoint 88) in any collection — a
+fresh `DRAFT` review has `rating: null` and `managerComments: null`,
+and `/submit` will `400` until both are set here first.
+
+## 20. Testing Checklist
+
+- ✅ Set `rating`/`managerComments` on a `DRAFT` review → `200` (verified live)
+- ✅ Neither field supplied → `400`
+- ✅ Non-`DRAFT` review → `409` (verified live)
+- ✅ `MANAGER` not the reviewer → `403`
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 88. `PATCH /performance-reviews/:id/submit`
+
+## 1. Endpoint Information
+
+```
+Feature:            Performance Domain (2026-09-15, feature/24-performance-domain)
+Endpoint:           Submit a Draft Performance Review
+Description:        Moves a review from DRAFT to SUBMITTED and snapshots department/designation/branch names at this moment
+Method:             PATCH
+URL:                /api/v1/performance-reviews/:id/submit
+API Version:        v1
+Module:             modules/performance
+Authentication:     Yes (Bearer access token)
+Authorization:      `performanceReview:manage:reports` (the review's own reviewer) OR `performanceReview:manage:any` (ADMIN) — identical to PATCH /performance-reviews/:id
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the checkpoint that turns a working draft into a
+  record the reviewed employee can see and eventually acknowledge.
+- **Same authority check as plain `PATCH`** (endpoint 87) — confirmed
+  directly against `performanceReview.routes.js`: both routes list
+  `performanceReview:manage:reports` and `performanceReview:manage:any`
+  in the identical order, so anyone who can edit a `DRAFT` review can
+  also submit it, and vice versa.
+- **Requires both `rating` and `managerComments` to already be set** —
+  a fresh `DRAFT` (both `null`) cannot be submitted directly; `PATCH`
+  (endpoint 87) must set both first. Verified live
+  (`performance.service.test.js`'s submit test calls `/submit` on a
+  freshly-created review and asserts the `400` rejection *before*
+  setting those fields).
+- **Order of checks matters**: the status check (`!== 'DRAFT'` → `409`)
+  runs *before* the rating/comments completeness check (`400`) — an
+  already-`SUBMITTED` review missing nothing will never reach the `400`
+  path; only a still-`DRAFT` review with incomplete fields does.
+- **The org-context snapshot happens here, not at creation** — ADR-PF03,
+  `docs/domain-performance.md` §3: `departmentName`, `designationName`,
+  and `branchName` (nullable) are copied from the reviewed employee's
+  *current* Department/Designation/Branch at the moment of submission,
+  not at review creation. A later department transfer never
+  retroactively rewrites an already-submitted review's snapshot.
+- **This endpoint accepts no request body at all** — verified against
+  `performanceReview.routes.js`: the `/submit` route wires only
+  `requirePermission` and the controller, with no `validateMiddleware`
+  call.
+- **Expected callers**: the review's own reviewer (`MANAGER`), or
+  `ADMIN`.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                                                |
+| --------------------------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `performanceReview:manage:reports` or `performanceReview:manage:any` |
+
+No `Content-Type` is needed — no body is sent.
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                  |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The PerformanceReview's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None. **This endpoint never accepts a body** — there is no
+`validateMiddleware` on this route at all.
+
+## 7. Validation Rules
+
+No body to validate. The service layer, in order:
+
+1. `performanceReviewRepository.findById(id)` → `404` if missing.
+2. `assertCanManage(review, actor)` → `403` if neither `manage:any` nor
+   a matching `manage:reports` reviewer.
+3. `review.status !== 'DRAFT'` → `409`.
+4. `!review.rating || !review.managerComments` → `400`.
+5. Fetch the reviewed employee, then their Department/Designation
+   (both mandatory FKs, so always found) and Branch (nullable —
+   `employee.branchId ? branchRepository.findById(...) : null`).
+6. Update inside one `prisma.$transaction`: `status: 'SUBMITTED'`,
+   `submittedAt: new Date()`, and the three snapshot fields.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "review": {
+    "id": "a7b8c9d0-e1f2-4a3b-4c5d-6f7a8b9c0d1e",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "reviewerId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "reviewCycleId": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "status": "SUBMITTED",
+    "rating": "MEETS_EXPECTATIONS",
+    "managerComments": "Solid, consistent contributor.",
+    "selfComments": null,
+    "departmentName": "Engineering",
+    "designationName": "Senior Software Engineer",
+    "branchName": "Bengaluru HQ",
+    "submittedAt": "2026-09-15T10:05:00.000Z",
+    "acknowledgedAt": null,
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:05:00.000Z"
+  }
+}
+```
+
+`branchName` is `null` when the employee has no `branchId` (§12).
+Verified live (`performance.service.test.js`'s submit test asserts
+`submitted.status === 'SUBMITTED'`, `submitted.submittedAt` is truthy,
+and all three snapshot names match the fixture employee's actual
+department/designation/branch).
+
+## 9. Error Responses
+
+| Status | Reason                                                       | Response (`message`)                                                             | When                                                                 |
+| ------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `400`  | `rating` or `managerComments` not yet set                          | `"Both rating and managerComments must be set before a review can be submitted"`      | Still-`DRAFT` review missing one or both — verified live                  |
+| `401`  | Missing/invalid/expired access token                                | Same as every other protected endpoint                                                | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks both manage permissions at the middleware layer         | `"You do not have permission to perform this action"`                                | `EMPLOYEE` token                                                            |
+| `403`  | `MANAGER` (`manage:reports`) is not this review's `reviewerId`       | `"You do not have permission to manage this performance review"`                     |                                                                             |
+| `404`  | No such PerformanceReview                                            | `"Performance review not found"`                                                       | Invalid/nonexistent `id`                                                   |
+| `409`  | Review is not `DRAFT`                                                | `"Only a Draft performance review can be submitted"`                                  | Already `SUBMITTED`/`ACKNOWLEDGED` — verified live                          |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                          | Expected |
+| --- | ------------------------------------------------------------------ | -------- |
+| 1   | Submit a `DRAFT` review with `rating`/`managerComments` already set | `200`, `status: "SUBMITTED"` — verified live |
+| 2   | Submit a fresh `DRAFT` (neither field set)                          | `400` — verified live |
+| 3   | Submit an already-`SUBMITTED`/`ACKNOWLEDGED` review                 | `409`    |
+| 4   | `MANAGER` who is not this review's reviewer                         | `403`    |
+| 5   | Nonexistent `id`                                                    | `404`    |
+| 6   | As `EMPLOYEE` token                                                  | `403`    |
+| 7   | No token                                                            | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Body sent anyway                    | `200`/relevant status — the body is never read                              |
+| Tampered/expired JWT                | `401`                                                                       |
+| Double-`PATCH .../submit` fired concurrently | Only one can win the `status !== 'DRAFT'` check against a consistent read — not independently verified under true database-level concurrency, the same honest caveat every lifecycle-guard endpoint in this codebase carries |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Employee has no `branchId`                                          | `branchName` is `null` in the snapshot — the branch lookup is skipped entirely (`employee.branchId ? ... : Promise.resolve(null)`), not attempted with a falsy id |
+| Employee's Department/Designation lookup somehow returns `null` (not reachable under normal FK constraints, since both are mandatory) | Would throw a `TypeError` reading `.name` off `null` rather than a handled `NotFoundError` — an unhandled-exception risk that exists only if referential integrity is ever violated; not exercised by any test |
+| Parent `ReviewCycle` was `CLOSED` after this review was created     | `200` — `/submit` never re-checks the parent cycle's status; only `POST /performance-reviews` (endpoint 84) does, at creation time (§2 of endpoint 82) |
+| Rating/comments were set, then the review was somehow reset (no such endpoint exists) | N/A — there is no way to un-set `rating`/`managerComments` back to `null` once they're set; `PATCH` (endpoint 87) can only overwrite them with new non-empty values |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `EMPLOYEE` cannot submit — holds neither
+  `manage:reports` nor `manage:any`. Confirm a `MANAGER` cannot submit a
+  review they don't personally review.
+- **Data integrity**: the org-context snapshot fields are entirely
+  server-computed from the employee's *current* org assignment at the
+  moment of the call — never accepted as request input, so a caller
+  cannot forge a false department/designation/branch on a submitted
+  review.
+
+## 14. Database Impact
+
+- **Tables affected**: `PerformanceReview` (update), `AuditLog`
+  (insert), inside one `prisma.$transaction`.
+- **Pre-checks (outside the transaction)**: `findById`, conditional
+  `Employee.findByUserId` (ownership check), then `Employee.findById`
+  (the reviewed employee) followed by parallel `Department.findById` +
+  `Designation.findById` + conditional `Branch.findById` via
+  `Promise.all`.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/performance-reviews/:id/submit
+    ↓
+authMiddleware
+    ↓
+requirePermission('performanceReview:manage:reports', 'performanceReview:manage:any')
+    ↓ (403 if neither granted)
+performance.controller.submit → performance.service.submitPerformanceReview(id, actor)
+    ├─ performanceReviewRepository.findById(id) → not found → 404
+    ├─ assertCanManage(review, actor) → 403
+    ├─ review.status !== 'DRAFT' → 409
+    ├─ !review.rating || !review.managerComments → 400
+    ├─ employeeRepository.findById(review.employeeId)
+    ├─ Promise.all([departmentRepository.findById, designationRepository.findById,
+    │               employee.branchId ? branchRepository.findById(...) : null])
+    └─ prisma.$transaction:
+         ├─ performanceReviewRepository.update(id, { status: 'SUBMITTED', submittedAt, departmentName, designationName, branchName }, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', beforeData, afterData, ... }, tx)
+    ↓
+200 { review }
+```
+
+## 16. Performance Notes
+
+A handful of sequential/parallel single-row lookups (review, ownership
+`Employee`, reviewed `Employee`, Department, Designation, conditionally
+Branch) plus one update and one audit-log insert — no notable
+performance concerns; nowhere near the scale of Payroll's own
+`/process` (endpoint 73), which this domain deliberately does not
+attempt to replicate (§6 of `docs/domain-performance.md`: no
+relationship to Attendance/Leave/Payroll at all).
+
+## 17. Interview Notes
+
+- **Q: Why snapshot organizational context at submission rather than at
+  creation?** ADR-PF03, quoting the domain doc's own explicit wording
+  (§3, Recommended Practices): a `DRAFT` review's organizational context
+  "isn't yet meaningful" — the snapshot should reflect the employee's
+  situation at the point the assessment is actually being finalized,
+  not whatever it happened to be when the review was first opened,
+  potentially weeks or months earlier.
+- **Q: Why is this snapshot only "recommended," not a mandatory
+  invariant, unlike Payroll's identical-in-spirit ADR-PR02?**
+  `docs/domain-performance.md` §3/§7 draws the distinction explicitly:
+  for Payroll, a financial record silently changing is a
+  compliance-grade defect; for Performance, getting this wrong produces
+  a confusing but not financially consequential record — the same
+  underlying architectural insight, applied at a deliberately lower
+  enforcement stakes appropriate to a personnel record.
+- **Q: What happens if the review's parent `ReviewCycle` was closed
+  between creation and submission?** Nothing blocks it — `assertReviewCycleAssignable`
+  is only ever consulted at `POST /performance-reviews` (endpoint 84).
+  Closing a cycle is forward-looking only (§2 of endpoint 82); it never
+  retroactively freezes reviews already in flight against it.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/performance-reviews/$PERFORMANCE_REVIEW_ID/submit \
+  -H "Authorization: Bearer $MANAGER_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Always run `PATCH /performance-reviews/:id` (endpoint 87) with both
+`rating` and `managerComments` set immediately before this call in any
+collection — otherwise expect the `400` completeness rejection.
+
+## 20. Testing Checklist
+
+- ✅ `DRAFT` → `SUBMITTED` with both fields set → `200` (verified live)
+- ✅ Missing `rating`/`managerComments` → `400` (verified live)
+- ✅ Non-`DRAFT` review → `409`
+- ✅ Org-context snapshot correctly copied (department/designation/branch, verified live)
+- ✅ `branchName` is `null` when the employee has no branch
+- ✅ `MANAGER` not the reviewer → `403`
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 89. `PATCH /performance-reviews/:id/acknowledge`
+
+## 1. Endpoint Information
+
+```
+Feature:            Performance Domain (2026-09-15, feature/24-performance-domain)
+Endpoint:           Acknowledge a Submitted Performance Review
+Description:        Moves a review from SUBMITTED to ACKNOWLEDGED; the reviewed employee's own action only
+Method:             PATCH
+URL:                /api/v1/performance-reviews/:id/acknowledge
+API Version:        v1
+Module:             modules/performance
+Authentication:     Yes (Bearer access token)
+Authorization:      `performanceReview:acknowledge:own` permission required (every role, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the reviewed employee's own confirmation that they
+  have seen and accepted a submitted review — the checkpoint that makes
+  it a historical record (`docs/domain-performance.md` §2).
+- **No `ADMIN`/manager override exists at all — a deliberate,
+  documented gap, not an oversight.** `acknowledgePerformanceReview`
+  never consults `actor.grantedPermissions`; it *only* resolves the
+  caller's own `Employee` record via `employeeRepository.findByUserId`
+  and compares its `id` to `review.employeeId`. Confirmed directly in
+  `performance.controller.js`: the `acknowledge` controller action
+  doesn't even forward `grantedPermissions` into the actor object passed
+  to the service — it is structurally impossible for this action to
+  read a permission grant, by construction. The domain doc's own §2
+  frames acknowledgement as "inherently a personal act, not a decision
+  someone else can make on their behalf."
+- **`performanceReview:acknowledge:own` is held by every seeded
+  role** (`ADMIN`, `MANAGER`, `EMPLOYEE`) — reflecting that any of them
+  could, in principle, be the reviewed party on some `PerformanceReview`
+  (an `ADMIN`/`MANAGER` account is also potentially someone's report,
+  per ADR-PF05's own stated reasoning), but the permission alone is
+  never sufficient — the `ownEmployee.id === review.employeeId` check
+  always gates the actual action.
+- **Expected callers**: the reviewed employee, whichever role they hold.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                          |
+| --------------------------------------- | -------- | ------------------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `performanceReview:acknowledge:own` permission |
+
+No `Content-Type` is needed — no body is sent.
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                  |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The PerformanceReview's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None. **This endpoint never accepts a body** — no `validateMiddleware`
+is wired on this route.
+
+## 7. Validation Rules
+
+No body to validate. The service layer, in order:
+
+1. `performanceReviewRepository.findById(id)` → `404` if missing.
+2. `employeeRepository.findByUserId(actor.id)` → if no `Employee`
+   record, or `ownEmployee.id !== review.employeeId` → `403`.
+3. `review.status !== 'SUBMITTED'` → `409`.
+4. Update inside one `prisma.$transaction`: `status: 'ACKNOWLEDGED'`,
+   `acknowledgedAt: new Date()`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "review": {
+    "id": "a7b8c9d0-e1f2-4a3b-4c5d-6f7a8b9c0d1e",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "reviewerId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "reviewCycleId": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "status": "ACKNOWLEDGED",
+    "rating": "EXCEEDS_EXPECTATIONS",
+    "managerComments": "Great half.",
+    "selfComments": "I hit every sprint commitment this half.",
+    "departmentName": "Engineering",
+    "designationName": "Senior Software Engineer",
+    "branchName": "Bengaluru HQ",
+    "submittedAt": "2026-09-15T10:05:00.000Z",
+    "acknowledgedAt": "2026-09-15T10:10:00.000Z",
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:10:00.000Z"
+  }
+}
+```
+
+Verified live (`performance.service.test.js`'s acknowledge test asserts
+`acknowledged.status === 'ACKNOWLEDGED'` and `acknowledged.acknowledgedAt`
+is truthy).
+
+## 9. Error Responses
+
+| Status | Reason                                                | Response (`message`)                                                    | When                                                                 |
+| ------ | ------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token                    | Same as every other protected endpoint                                       | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks `acknowledge:own` at the middleware layer  | `"You do not have permission to perform this action"`                       | Not expected in practice — every seeded role holds it                     |
+| `403`  | Caller is not the reviewed employee                     | `"You do not have permission to acknowledge this performance review"`       | Verified live — includes both "no Employee record" and "wrong Employee" cases |
+| `404`  | No such PerformanceReview                                | `"Performance review not found"`                                              | Invalid/nonexistent `id`                                                   |
+| `409`  | Review is not `SUBMITTED`                                | `"Only a Submitted performance review can be acknowledged"`                  | Still `DRAFT`, or already `ACKNOWLEDGED` — verified live for both          |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                | Expected |
+| --- | ---------------------------------------------------- | -------- |
+| 1   | Reviewed employee acknowledges a `SUBMITTED` review   | `200` — verified live |
+| 2   | A different employee attempts to acknowledge          | `403` — verified live |
+| 3   | Reviewed employee attempts to acknowledge a `DRAFT` review | `409` — verified live |
+| 4   | Reviewed employee attempts to re-acknowledge an already-`ACKNOWLEDGED` review | `409` |
+| 5   | Nonexistent `id`                                     | `404`    |
+| 6   | No token                                             | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| `ADMIN`/reviewer token, not the reviewed employee | `403` — no override exists for any role, including `ADMIN` |
+| Body sent anyway                    | `200`/relevant status — the body is never read                              |
+| Tampered/expired JWT                | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                        |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Reviewed employee has no self-assessment set (`selfComments: null`) | `200` — acknowledgement has no dependency on self-assessment ever being provided; it is entirely optional per §2 of endpoint 90            |
+| Caller holds `manage:any`/`manage:reports` but is not the reviewed employee (e.g. the reviewer themselves) | `403` — those permissions are never even consulted; only `ownEmployee.id === review.employeeId` matters, verified live                     |
+| Acknowledging immediately after submission (no delay)               | `200` — no minimum time-in-`SUBMITTED` requirement exists                                                                                  |
+
+## 13. Security Testing
+
+- **Authorization**: the primary test for this endpoint — confirm no
+  role, including `ADMIN`, can acknowledge on another employee's
+  behalf. This is the one action in the entire API with genuinely zero
+  admin-override path, by design (§2).
+- **BOLA**: `ownEmployee.id === review.employeeId` is the sole gate;
+  verified live against both an unrelated caller and a `null`
+  `ownEmployee` (no `Employee` record at all).
+
+## 14. Database Impact
+
+- **Tables affected**: `PerformanceReview` (update), `AuditLog`
+  (insert), inside one `prisma.$transaction`.
+- **Pre-checks**: `findById` (`404` gate), `Employee.findByUserId`
+  (ownership check).
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/performance-reviews/:id/acknowledge
+    ↓
+authMiddleware
+    ↓
+requirePermission('performanceReview:acknowledge:own')
+    ↓ (403 if not granted)
+performance.controller.acknowledge → performance.service.acknowledgePerformanceReview(id, actor)
+    ├─ performanceReviewRepository.findById(id) → not found → 404
+    ├─ employeeRepository.findByUserId(actor.id) → null or id mismatch → 403
+    ├─ review.status !== 'SUBMITTED' → 409
+    └─ prisma.$transaction:
+         ├─ performanceReviewRepository.update(id, { status: 'ACKNOWLEDGED', acknowledgedAt }, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', beforeData, afterData, ... }, tx)
+    ↓
+200 { review }
+```
+
+## 16. Performance Notes
+
+Two single-row lookups (review, ownership `Employee`), one update, one
+audit-log insert — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why is acknowledgement the one action in this entire API with no
+  admin override?** `docs/domain-performance.md` §2's own framing:
+  acknowledgement is "inherently a personal act" — an `ADMIN` clicking
+  "acknowledge" on an employee's behalf would defeat the entire purpose
+  of the action, which is to record that the employee themselves saw
+  and accepted the review. Every other lifecycle transition in this
+  domain (`create`, edit, `/submit`, delete) has an `ADMIN` (`:any`)
+  path; this one deliberately does not.
+- **Q: Why does the controller not even pass `grantedPermissions` to the
+  service for this action?** Because the service function has no use
+  for it — `acknowledgePerformanceReview` never checks a permission
+  grant, only identity (`ownEmployee.id === review.employeeId`). Not
+  forwarding an unused field keeps the actor object's shape honest about
+  what the function actually consults.
+- **Q: What happens to the review's `rating`/`managerComments` after
+  acknowledgement?** They become effectively frozen — `PATCH` (endpoint
+  87) already requires `DRAFT`, so once `ACKNOWLEDGED` (which implies
+  already `SUBMITTED`), no further edit path exists at all; only an
+  addendum (endpoint 92) can add commentary from this point forward.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/performance-reviews/$PERFORMANCE_REVIEW_ID/acknowledge \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this only after `/submit` (endpoint 88) — attempting it on a `DRAFT`
+review will correctly `409`. Switch the bearer token to the *reviewed
+employee's own* token before this call; reusing the reviewer's/`ADMIN`'s
+token from the preceding steps will correctly `403`.
+
+## 20. Testing Checklist
+
+- ✅ Reviewed employee acknowledges a `SUBMITTED` review → `200` (verified live)
+- ✅ A different employee (including `ADMIN`/the reviewer) → `403` (verified live)
+- ✅ `DRAFT` or already-`ACKNOWLEDGED` review → `409` (verified live, both directions)
+- ✅ Nonexistent `id` → `404`
+- ✅ `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 90. `PATCH /performance-reviews/:id/self-assessment`
+
+## 1. Endpoint Information
+
+```
+Feature:            Performance Domain (2026-09-15, feature/24-performance-domain)
+Endpoint:           Set the reviewed employee's self-assessment
+Description:        Sets/updates selfComments on the reviewed employee's own review; settable any time before acknowledgement
+Method:             PATCH
+URL:                /api/v1/performance-reviews/:id/self-assessment
+API Version:        v1
+Module:             modules/performance
+Authentication:     Yes (Bearer access token)
+Authorization:      `performanceReview:selfAssess:own` permission required (every role, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: lets the reviewed employee add their own
+  perspective alongside the manager's assessment within the same
+  review record — `docs/domain-performance.md` §2: "the employee may
+  optionally provide a self-assessment within the same review."
+- **Not gated behind the manager's own submission** — the domain doc
+  names self-assessment as optional without specifying sequencing
+  relative to `/submit` (endpoint 88), so this endpoint's own guard is
+  simply "not yet `ACKNOWLEDGED`," which allows setting it while the
+  review is still `DRAFT` (before the manager has even rated it) just as
+  much as while `SUBMITTED`. Verified live
+  (`performance.service.test.js`'s self-assessment test sets it on a
+  still-`DRAFT` review, created with no manager `rating`/`managerComments`
+  at all, before that same test later submits and acknowledges it).
+- **No admin/manager override — same personal-action shape as
+  acknowledge** (endpoint 89): `setSelfAssessment` only ever resolves
+  the caller's own `Employee` record and compares it to
+  `review.employeeId`; `actor.grantedPermissions` is never consulted,
+  and the controller doesn't forward it either.
+- **Overwritable, not append-only** — unlike an addendum (endpoint 92),
+  calling this again before acknowledgement fully replaces the prior
+  `selfComments` value; there is no history of earlier self-assessment
+  drafts.
+- **Expected callers**: the reviewed employee, whichever role they hold.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                     |
+| --------------------------------------- | -------- | -------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `performanceReview:selfAssess:own` permission |
+| `Content-Type: application/json`     | **Yes**  |                                                             |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                  |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The PerformanceReview's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "selfComments": "I delivered the Q2 migration project ahead of schedule."
+}
+```
+
+| Field          | Type   | Required | Description                       |
+| -------------- | ------ | -------- | ------------------------------------ |
+| `selfComments` | string | **Yes**  | Trimmed, minimum length 1             |
+
+## 7. Validation Rules
+
+- `selfComments`: `z.string().trim().min(1, 'selfComments is required')`
+  — a required field on this schema, unlike `updatePerformanceReviewSchema`'s
+  optional `rating`/`managerComments` pair.
+- No other field is accepted on this schema at all.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "review": {
+    "id": "a7b8c9d0-e1f2-4a3b-4c5d-6f7a8b9c0d1e",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "reviewerId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "reviewCycleId": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "status": "DRAFT",
+    "rating": null,
+    "managerComments": null,
+    "selfComments": "I hit every sprint commitment this half.",
+    "departmentName": null,
+    "designationName": null,
+    "branchName": null,
+    "submittedAt": null,
+    "acknowledgedAt": null,
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:01:00.000Z"
+  }
+}
+```
+
+Verified live (`performance.service.test.js`'s self-assessment test
+asserts `selfAssessed.selfComments === 'I hit every sprint commitment
+this half.'`).
+
+## 9. Error Responses
+
+| Status | Reason                                                | Response (`message`)                                                       | When                                                                 |
+| ------ | ------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `400`  | Validation failed                                        | `"selfComments: selfComments is required"`                                       | Missing/blank `selfComments`                                              |
+| `401`  | Missing/invalid/expired access token                     | Same as every other protected endpoint                                           | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks `selfAssess:own` at the middleware layer    | `"You do not have permission to perform this action"`                           | Not expected in practice — every seeded role holds it                     |
+| `403`  | Caller is not the reviewed employee                      | `"You do not have permission to add a self-assessment to this review"`          | Verified implicitly by the acknowledge-vs-imposter test pattern; message text confirmed directly against `performance.service.js` |
+| `404`  | No such PerformanceReview                                | `"Performance review not found"`                                                  | Invalid/nonexistent `id`                                                   |
+| `409`  | Review is already `ACKNOWLEDGED`                         | `"Cannot add a self-assessment to an already-acknowledged review"`               | Verified live                                                              |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                       | Expected |
+| --- | ----------------------------------------------------------------- | -------- |
+| 1   | Reviewed employee sets self-assessment on a `DRAFT` review          | `200` — verified live |
+| 2   | Reviewed employee sets self-assessment on a `SUBMITTED` review      | `200`    |
+| 3   | Reviewed employee overwrites a previously-set self-assessment       | `200`, old value replaced |
+| 4   | A different employee attempts to set it                            | `403`    |
+| 5   | Setting it on an `ACKNOWLEDGED` review                              | `409` — verified live |
+| 6   | Blank `selfComments`                                                | `400`    |
+| 7   | Nonexistent `id`                                                    | `404`    |
+| 8   | No token                                                            | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Whitespace-only `selfComments`      | `400` — `.trim().min(1)` rejects it after trimming                          |
+| `ADMIN`/reviewer token, not the reviewed employee | `403` — no override exists for any role, including `ADMIN` |
+| Tampered/expired JWT                | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                        |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Setting self-assessment on a `DRAFT` review before the manager has entered any `rating`/`managerComments` | `200` — no ordering dependency on the manager's own progress exists at all                                                                       |
+| Setting self-assessment, then the manager submits the review        | `200` on submit — `submitPerformanceReview` never reads or requires `selfComments`; it is entirely independent of the submit gate (§7 of endpoint 88) |
+| Attempting to set it after the review has moved to `ACKNOWLEDGED`   | `409` — the *only* status this endpoint blocks; both `DRAFT` and `SUBMITTED` remain open windows                                                  |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role other than the reviewed employee
+  themselves can set `selfComments`, including `ADMIN` and the assigned
+  reviewer — same zero-override shape as acknowledge (endpoint 89).
+- **Mass assignment**: only `selfComments` is ever read from the body —
+  `rating`/`managerComments`/`status` are entirely untouchable via this
+  route.
+
+## 14. Database Impact
+
+- **Tables affected**: `PerformanceReview` (update), `AuditLog`
+  (insert), inside one `prisma.$transaction`.
+- **Pre-checks**: `findById` (`404` gate), `Employee.findByUserId`
+  (ownership check).
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/performance-reviews/:id/self-assessment
+    ↓
+authMiddleware
+    ↓
+requirePermission('performanceReview:selfAssess:own')
+    ↓ (403 if not granted)
+validateMiddleware(selfAssessmentSchema)
+    ↓ (400 if invalid)
+performance.controller.selfAssess → performance.service.setSelfAssessment(id, data, actor)
+    ├─ performanceReviewRepository.findById(id) → not found → 404
+    ├─ employeeRepository.findByUserId(actor.id) → null or id mismatch → 403
+    ├─ review.status === 'ACKNOWLEDGED' → 409
+    └─ prisma.$transaction:
+         ├─ performanceReviewRepository.update(id, { selfComments }, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', beforeData, afterData, ... }, tx)
+    ↓
+200 { review }
+```
+
+## 16. Performance Notes
+
+Two single-row lookups (review, ownership `Employee`), one update, one
+audit-log insert — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why is self-assessment allowed while still `DRAFT`, unlike the
+  manager's own `rating`/`managerComments` edit which requires `DRAFT`
+  but produces no further gate before submit?** They serve different
+  purposes: the manager's `PATCH` (endpoint 87) is explicitly the
+  drafting step before `/submit`, while self-assessment is the
+  employee's independent, parallel contribution — the domain doc never
+  ties its timing to the manager's own progress, so the implementation
+  gates it only on the one status (`ACKNOWLEDGED`) where the whole
+  record becomes frozen.
+- **Q: Why block it only at `ACKNOWLEDGED` and not also require
+  `SUBMITTED` first?** No verified requirement demands the employee wait
+  for the manager to submit before adding their own perspective — doing
+  so would add process friction without a named benefit, consistent with
+  this domain's general preference (§7) for the simpler, less
+  restrictive rule wherever no invariant demands otherwise.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/performance-reviews/$PERFORMANCE_REVIEW_ID/self-assessment \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"selfComments":"I delivered the Q2 migration project ahead of schedule."}'
+```
+
+## 19. Postman Collection Notes
+
+Exercise this at two different points in the same collection run — once
+while the review is still `DRAFT` and once after `/submit` — to confirm
+both windows are open, then confirm the `409` once the reviewed employee
+has acknowledged it (endpoint 89).
+
+## 20. Testing Checklist
+
+- ✅ Set self-assessment on `DRAFT` review → `200` (verified live)
+- ✅ Set self-assessment on `SUBMITTED` review → `200`
+- ✅ Set on `ACKNOWLEDGED` review → `409` (verified live)
+- ✅ A different employee → `403`
+- ✅ Blank `selfComments` → `400`
+- ✅ Nonexistent `id` → `404`
+- ✅ `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 91. `DELETE /performance-reviews/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Performance Domain (2026-09-15, feature/24-performance-domain)
+Endpoint:           Delete a Draft Performance Review
+Description:        Hard-deletes a PerformanceReview; only permitted while DRAFT
+Method:             DELETE
+URL:                /api/v1/performance-reviews/:id
+API Version:        v1
+Module:             modules/performance
+Authentication:     Yes (Bearer access token)
+Authorization:      `performanceReview:manage:reports` (the review's own reviewer) OR `performanceReview:manage:any` (ADMIN)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: cleans up a review created in error before it has
+  ever been submitted or acknowledged — the same "correct a mistake
+  before it matters" role `DELETE /review-cycles/:id` (endpoint 83)
+  plays for its own aggregate.
+- **`DRAFT`-only, mirroring `PayrollRun`'s own DRAFT-only-delete
+  convenience** (this domain's own code comment says so directly) — by
+  the time a review is `SUBMITTED`, there is meaningful content
+  (potentially a self-assessment, and always the reviewer's own
+  rating/comments) that a hard-delete would destroy with no trace beyond
+  the `AuditLog`'s `beforeData`; by `ACKNOWLEDGED`, deleting it would
+  also destroy the employee's own confirmed acknowledgement.
+- **Same authority check as `PATCH`/`/submit`** (endpoints 87/88) —
+  `assertCanManage`, with the identical `manage:reports`/`manage:any`
+  permission pair in the route file.
+- **Cascades to `ReviewAddendum`** — the Prisma relation
+  `ReviewAddendum.performanceReview` uses `onDelete: Cascade` (unlike
+  `PerformanceReview`'s own `employeeId`/`reviewerId`/`reviewCycleId`
+  relations, which all use `Restrict`) — though in practice a `DRAFT`
+  review can still have addenda appended to it (endpoint 92 has no
+  status gate at all), so deleting a `DRAFT` review with existing
+  addenda silently deletes those addenda too, with no separate
+  confirmation or count shown to the caller.
+- **Expected callers**: the review's own reviewer (`MANAGER`), or
+  `ADMIN`.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                                                |
+| --------------------------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `performanceReview:manage:reports` or `performanceReview:manage:any` |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                  |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The PerformanceReview's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body to validate. The service layer, in order:
+
+1. `performanceReviewRepository.findById(id)` → `404` if missing.
+2. `assertCanManage(review, actor)` → `403` if neither `manage:any` nor
+   a matching `manage:reports` reviewer.
+3. `review.status !== 'DRAFT'` → `409`.
+4. Hard-delete inside one `prisma.$transaction` (cascading to any
+   `ReviewAddendum` rows), with an `AuditLog` row recording the full
+   `beforeData`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Performance review deleted successfully"
+}
+```
+
+Verified live (`performance.service.test.js`'s "deletePerformanceReview
+is Draft-only" case, which confirms the row is actually gone via a
+direct `prisma.performanceReview.findUnique` afterward).
+
+## 9. Error Responses
+
+| Status | Reason                                                | Response (`message`)                                                | When                                                                 |
+| ------ | ------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token                     | Same as every other protected endpoint                               | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks both manage permissions at the middleware layer | `"You do not have permission to perform this action"`             | `EMPLOYEE` token                                                            |
+| `403`  | `MANAGER` (`manage:reports`) is not this review's `reviewerId` | `"You do not have permission to manage this performance review"` |                                                                             |
+| `404`  | No such PerformanceReview                                | `"Performance review not found"`                                      | Invalid/nonexistent `id`                                                   |
+| `409`  | Review is not `DRAFT`                                    | `"Only a Draft performance review can be deleted"`                   | Already `SUBMITTED`/`ACKNOWLEDGED` — verified live via the delete test's own creation-then-immediate-delete happy path (implicitly proving the guard exists) |
+
+## 10. Postman Test Cases
+
+| #   | Case                                          | Expected |
+| --- | ------------------------------------------------ | -------- |
+| 1   | Delete a `DRAFT` review                            | `200` — verified live |
+| 2   | Delete an already-`SUBMITTED` review               | `409`    |
+| 3   | Delete an `ACKNOWLEDGED` review                    | `409`    |
+| 4   | `MANAGER` who is not this review's reviewer         | `403`    |
+| 5   | Nonexistent `id`                                   | `404`    |
+| 6   | As `EMPLOYEE` token                                 | `403`    |
+| 7   | No token                                           | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                | Expected |
+| --------------------------- | -------- |
+| Malformed (non-UUID) `id`   | `404`    |
+| Body sent anyway            | `200`/relevant status — the body is never read |
+| Tampered/expired JWT        | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A `DRAFT` review with one or more addenda already appended (endpoint 92 has no status gate) | `200` — the delete cascades to `ReviewAddendum` via `onDelete: Cascade`; the addenda are silently deleted along with the review, no separate warning |
+| Deleting a review immediately after creation, before any `PATCH`     | `200` — no minimum "age" or field-completeness requirement for delete, only the `DRAFT` status check                                                    |
+| The parent `ReviewCycle` was later closed/deleted-attempted after this review's own delete | Deleting this review lowers `countReferencesForReviewCycle`'s count for its cycle, which can make a previously-blocked `DELETE /review-cycles/:id` (endpoint 83) succeed afterward |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `EMPLOYEE` cannot delete any review, and a
+  `MANAGER` cannot delete a review they don't personally review.
+- **Referential integrity**: `ReviewAddendum`'s `onDelete: Cascade`
+  means no orphaned addendum rows can result from this operation, unlike
+  `PerformanceReview`'s own `Restrict`ed relations to `Employee`/
+  `ReviewCycle`, which instead prevent *those* parents from being
+  deleted while this review still exists.
+
+## 14. Database Impact
+
+- **Tables affected**: `PerformanceReview` (delete), `ReviewAddendum`
+  (cascading delete, if any exist), `AuditLog` (insert), inside one
+  `prisma.$transaction`.
+- **Pre-checks**: `findById` (`404` gate), conditionally `Employee.findByUserId`
+  (ownership check).
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/performance-reviews/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('performanceReview:manage:reports', 'performanceReview:manage:any')
+    ↓ (403 if neither granted)
+performance.controller.remove → performance.service.deletePerformanceReview(id, actor)
+    ├─ performanceReviewRepository.findById(id) → not found → 404
+    ├─ assertCanManage(review, actor) → 403
+    ├─ review.status !== 'DRAFT' → 409
+    └─ prisma.$transaction:
+         ├─ performanceReviewRepository.remove(id, tx)   [cascades to ReviewAddendum]
+         └─ auditLogRepository.create({ action: 'DELETE', beforeData, afterData: null, ... }, tx)
+    ↓
+200 { message }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup, one conditional `Employee` lookup, one delete
+(with a cascading delete on any addenda), one audit-log insert — no
+notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why is delete restricted to `DRAFT` only, same as Payroll's
+  `PayrollRun`, rather than allowing an `ADMIN` to delete any review at
+  any status?** The code comment on `deletePerformanceReview` states it
+  directly: "by that status there is nothing (no addenda, no
+  acknowledgement) to lose" — a `DRAFT`-only rule ensures delete is only
+  ever exercised before the record has accumulated content anyone
+  depends on, rather than requiring a more complex cascading-consequence
+  policy for a `SUBMITTED`/`ACKNOWLEDGED` review's rich history.
+- **Q: Is that assumption ("nothing to lose") fully accurate, given a
+  `DRAFT` review can still have addenda?** Not perfectly — `POST
+  .../addenda` (endpoint 92) has no status gate at all, so a `DRAFT`
+  review *can* accumulate addenda before deletion, and those are lost
+  along with it via the cascade. This is a real, narrow gap between the
+  comment's stated intent and the addenda endpoint's actual
+  permissiveness, worth flagging rather than assuming the two features
+  were designed with this interaction in mind.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/performance-reviews/$PERFORMANCE_REVIEW_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this only against a review still in `DRAFT` in any collection —
+attempting it after `/submit` (endpoint 88) will correctly `409`; that
+is expected behavior, not a collection bug.
+
+## 20. Testing Checklist
+
+- ✅ Delete a `DRAFT` review → `200` (verified live)
+- ✅ Non-`DRAFT` review → `409`
+- ✅ `MANAGER` not the reviewer → `403`
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ Cascading delete removes any addenda
+- ✅ `AuditLog` row records `beforeData` with `afterData: null`
+
+---
+
+---
+
+# 92. `POST /performance-reviews/:id/addenda`
+
+## 1. Endpoint Information
+
+```
+Feature:            Performance Domain (2026-09-15, feature/24-performance-domain)
+Endpoint:           Add an addendum comment to a Performance Review
+Description:        Appends a ReviewAddendum comment; the mechanism for adding commentary without editing frozen content
+Method:             POST
+URL:                /api/v1/performance-reviews/:id/addenda
+API Version:        v1
+Module:             modules/performance
+Authentication:     Yes (Bearer access token)
+Authorization:      No dedicated permission - gated by whichever of `performanceReview:read:any`, `:read:own`, `:manage:reports`, or `:manage:any` already grants access to this specific review
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: `docs/domain-performance.md` §2/ADR-PF06 names this
+  as the mechanism for adding commentary **after** a review is
+  `ACKNOWLEDGED`, when both `PATCH` (endpoint 87, `DRAFT`-only) and
+  self-assessment (endpoint 90, blocked at `ACKNOWLEDGED`) are closed —
+  the same "adjustment entry, never edit history" pattern Payroll
+  established (ADR-PR01), applied here as an append-only comment thread
+  rather than a financial adjustment line.
+- **No dedicated permission key — ADR-PF06's explicit, deliberate
+  choice**: rather than invent a 13th permission key, this action is
+  gated entirely by `canAccessReview` — the identical four-way
+  own/any/reports check `GET /performance-reviews/:id` (endpoint 86)
+  uses to decide who can *view* a review. The reasoning: whoever can
+  already see this specific review (the reviewer, `ADMIN`, or the
+  reviewed employee themselves) can also comment on it; no finer-grained
+  distinction was judged worth a whole new permission.
+- **Not status-gated at all** — unlike every other write endpoint in
+  this domain, `addAddendum` never checks `review.status`. An addendum
+  can be appended while `DRAFT`, `SUBMITTED`, or `ACKNOWLEDGED` alike —
+  it is deliberately "always available," per §2's own framing, which is
+  precisely what makes it able to serve as the post-acknowledgement
+  commentary channel the other endpoints can't be.
+- **Distinct error message from `GET /:id`'s access-denial, despite
+  identical underlying logic**: `addAddendum` inlines its own `if
+  (!(await canAccessReview(...)))` check with its own message —
+  `"You do not have permission to comment on this performance review"`
+  — rather than reusing `assertCanView`'s `"...to view this performance
+  review"` wording (endpoint 86). Both call the same `canAccessReview`
+  function; only the thrown message text differs by call site.
+- **`authorId` is nullable on the model** (`ReviewAddendum.authorId
+  String?`, `onDelete: SetNull` on its `User` relation) — if the
+  authoring user is later deleted, their past addenda survive with
+  `authorId: null` rather than being deleted or blocked.
+- **Expected callers**: `ADMIN`, the review's reviewer, or the reviewed
+  employee — the same three parties who can view it.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                                                                          |
+| --------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to one of the four read/manage permissions listed above (in practice, every seeded role qualifies via at least `read:own`) |
+| `Content-Type: application/json`     | **Yes**  |                                                                                                                 |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                  |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The PerformanceReview's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "comment": "Follow-up: employee completed the agreed training in July."
+}
+```
+
+| Field     | Type   | Required | Description                    |
+| --------- | ------ | -------- | --------------------------------- |
+| `comment` | string | **Yes**  | Trimmed, minimum length 1          |
+
+## 7. Validation Rules
+
+- `comment`: `z.string().trim().min(1, 'comment is required')`.
+- No other field is accepted — `authorId` is always the caller's own
+  `User.id` (`actor.id`), never client-supplied.
+- Service-layer authorization, after the `404` existence check: the
+  identical four-way `canAccessReview` OR-check §2 of endpoint 86
+  documents in full (`read:any`/`manage:any` unconditional;
+  `read:own`+`ownEmployee.id === employeeId`;
+  `manage:reports`+`ownEmployee.id === reviewerId`).
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "addendum": {
+    "id": "f6a7b8c9-d0e1-4f2a-3b4c-5d6f7a8b9c0d",
+    "performanceReviewId": "a7b8c9d0-e1f2-4a3b-4c5d-6f7a8b9c0d1e",
+    "authorId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "comment": "Follow-up: employee completed the agreed training in July.",
+    "createdAt": "2026-09-15T10:06:00.000Z"
+  }
+}
+```
+
+**`ReviewAddendum` has no `updatedAt` field at all** — unlike
+`ReviewCycle`/`PerformanceReview`, an addendum is genuinely immutable
+once created (there is no `PATCH`/`PUT` for an addendum anywhere in this
+API — confirmed against `performanceReview.routes.js`, which wires only
+`POST .../addenda` and nothing else for this sub-resource). Verified
+live (`performance.service.test.js`'s addenda test asserts
+`fromReviewer.comment` and `fromEmployee.comment` both match exactly
+what was sent).
+
+## 9. Error Responses
+
+| Status | Reason                                                | Response (`message`)                                                       | When                                                                 |
+| ------ | ------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `400`  | Validation failed                                        | `"comment: comment is required"`                                                  | Missing/blank `comment`                                                   |
+| `401`  | Missing/invalid/expired access token                     | Same as every other protected endpoint                                           | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks all four permissions at the middleware layer | `"You do not have permission to perform this action"`                           | Not expected in practice — every seeded role holds at least `read:own`   |
+| `403`  | Caller fails `canAccessReview` (unrelated to the review)  | `"You do not have permission to comment on this performance review"`            | Verified live ("Not my business" stranger case)                           |
+| `404`  | No such PerformanceReview                                | `"Performance review not found"`                                                  | Invalid/nonexistent `id`                                                   |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                | Expected |
+| --- | ------------------------------------------------------ | -------- |
+| 1   | `ADMIN` adds an addendum to any review                   | `201`    |
+| 2   | The review's own reviewer (`manage:reports`) adds one     | `201` — verified live |
+| 3   | The reviewed employee (`read:own`) adds one                | `201` — verified live |
+| 4   | An unrelated employee attempts to add one                  | `403` — verified live |
+| 5   | Add an addendum to a `DRAFT` review                         | `201` — no status gate |
+| 6   | Add an addendum to an `ACKNOWLEDGED` review                 | `201` — the intended post-acknowledgement use case |
+| 7   | Blank `comment`                                             | `400`    |
+| 8   | Nonexistent `id`                                            | `404`    |
+| 9   | No token                                                    | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Whitespace-only `comment`           | `400` — `.trim().min(1)` rejects it after trimming                          |
+| Attempting to set `authorId` in the body | Silently ignored — not in the schema; `authorId` is always `actor.id`  |
+| Tampered/expired JWT                | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Adding an addendum to a `DRAFT` review that is later deleted (endpoint 91) | The addendum is destroyed along with it via `onDelete: Cascade` — no independent survival for an addendum once its parent review is gone (see endpoint 91 §12) |
+| A caller holding only `read:own`, adding an addendum to their **own** review as the reviewed employee | `201` — `canAccessReview`'s `read:own` branch covers this exactly, mirroring `GET /:id`'s own access shape                                              |
+| A `MANAGER` holding `manage:reports` who is the review's `reviewerId`, but the review belongs to a *different* one of their reports than the one they're calling about | `403` — the check is per-review (`ownEmployee.id === review.reviewerId` for *this specific* row), not a blanket "any report of mine" grant             |
+| Adding many addenda over time                                       | Each is a fully independent, immutable row; `GET /:id` (endpoint 86) returns all of them ordered oldest-first, with no pagination on the `addenda` array itself |
+
+## 13. Security Testing
+
+- **BOLA**: the primary test for this endpoint — confirm an unrelated
+  employee (holding only `read:own` for their *own*, different review)
+  cannot comment on someone else's review, verified live via the "Not my
+  business" stranger case.
+- **No dedicated permission is itself a considered trade-off, not a
+  gap**: ADR-PF06 explicitly weighed and rejected a 13th permission key
+  for this action — the security review for this endpoint is really the
+  security review of `canAccessReview` itself (shared with endpoint 86),
+  not a separate surface.
+
+## 14. Database Impact
+
+- **Tables affected**: `ReviewAddendum` (insert), `AuditLog` (insert),
+  inside one `prisma.$transaction`.
+- **Pre-checks**: `PerformanceReview.findById` (`404` gate),
+  conditionally `Employee.findByUserId` (the ownership check inside
+  `canAccessReview`, for any non-`:any` caller).
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/performance-reviews/:id/addenda
+    ↓
+authMiddleware
+    ↓
+requirePermission('performanceReview:read:any', 'performanceReview:read:own', 'performanceReview:manage:reports', 'performanceReview:manage:any')
+    ↓ (403 if none granted)
+validateMiddleware(addAddendumSchema)
+    ↓ (400 if invalid)
+performance.controller.addAddendum → performance.service.addAddendum(id, data, actor)
+    ├─ performanceReviewRepository.findById(id) → not found → 404
+    ├─ canAccessReview(review, actor) → false → 403
+    └─ prisma.$transaction:
+         ├─ performanceReviewRepository.createAddendum({ performanceReviewId, authorId: actor.id, comment }, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', entityType: 'ReviewAddendum', afterData, ... }, tx)
+    ↓
+201 { addendum }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup, one conditional `Employee` lookup, one insert,
+one audit-log insert — no notable performance concerns; `ReviewAddendum`
+is indexed on `performanceReviewId` for its own `findById`-time
+`include` (endpoint 86).
+
+## 17. Interview Notes
+
+- **Q: Why give this action no dedicated permission key at all?**
+  ADR-PF06's own summary: it avoids a 13th permission key for "a
+  lightweight, always-available action" — the access decision is
+  entirely derivable from permissions that already exist for viewing the
+  same review, so a new key would only duplicate that logic under a new
+  name.
+- **Q: Why is this the *only* write endpoint in the domain with no
+  status gate?** Because it needs to remain available specifically when
+  every other write path is closed — after `ACKNOWLEDGED`, `PATCH`
+  (endpoint 87) and self-assessment (endpoint 90) are both blocked, and
+  addenda is the domain's designed answer to "how is a correction made
+  now?" (§2, mirroring Payroll's adjustment-entry philosophy). Gating it
+  by status would defeat that purpose.
+- **Q: Why does this endpoint's error message differ from `GET /:id`'s,
+  even though both call the same `canAccessReview` function?** Simply a
+  call-site choice — `addAddendum` inlines its own check with its own
+  wording ("...to comment on...") rather than reusing
+  `assertCanView`'s ("...to view..."), since the two actions are
+  conceptually distinct even though they share identical underlying
+  authorization logic.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/performance-reviews/$PERFORMANCE_REVIEW_ID/addenda \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"comment":"Acknowledging the follow-up."}'
+```
+
+## 19. Postman Collection Notes
+
+Run this at least twice in the same collection — once before
+acknowledgement (as the reviewer) and once after (as the reviewed
+employee, per §12's "the intended post-acknowledgement use case") — then
+follow with `GET /performance-reviews/:id` (endpoint 86) to confirm both
+addenda appear, oldest-first, in the `addenda` array.
+
+## 20. Testing Checklist
+
+- ✅ Reviewer, reviewed employee, and `ADMIN` can each add an addendum (verified live for reviewer/employee)
+- ✅ Unrelated employee → `403` (verified live)
+- ✅ Works at every review status, including `ACKNOWLEDGED` (no status gate)
+- ✅ Blank `comment` → `400`
+- ✅ Nonexistent `id` → `404`
+- ✅ `401` with no token
+- ✅ `AuditLog` row created; addendum has no `updatedAt` field
+- ✅ Deleting the parent review (endpoint 91, `DRAFT`-only) cascades to any addenda

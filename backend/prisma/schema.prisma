@@ -27,6 +27,7 @@ model User {
   employees            Employee[]
   auditLogs            AuditLog[]
   uploadedDocuments    EmployeeDocument[]
+  reviewAddenda        ReviewAddendum[]
 }
 
 model RefreshToken {
@@ -135,6 +136,8 @@ model Employee {
   leaveRequests LeaveRequest[]
   leaveBalances LeaveBalance[]
   payslips      Payslip[]
+  performanceReviewsAsSubject  PerformanceReview[] @relation("PerformanceReviewSubject")
+  performanceReviewsAsReviewer PerformanceReview[] @relation("PerformanceReviewReviewer")
 
   // No @unique on userId: Prisma's schema DSL can't express a *partial*
   // unique constraint (scoped to non-deleted rows), so the real
@@ -548,6 +551,110 @@ model PayslipLineItem {
   createdAt DateTime            @default(now())
 
   @@index([payslipId])
+}
+
+// See docs/domain-performance.md for the full business-architecture
+// sign-off. Master data, same status-lifecycle shape as Branch/Department/
+// Designation/Shift/HolidayCalendar/LeaveType - OPEN/CLOSED instead of
+// ACTIVE/INACTIVE, the domain doc's own suggested naming (§2), but
+// structurally identical.
+enum ReviewCycleStatus {
+  OPEN
+  CLOSED
+}
+
+model ReviewCycle {
+  id        String            @id @default(uuid())
+  name      String            @unique
+  startDate DateTime
+  endDate   DateTime
+  status    ReviewCycleStatus @default(OPEN)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  reviews   PerformanceReview[]
+}
+
+// This review's second explicit multi-party workflow after Leave
+// (ADR-PF01). Draft -> Submitted -> Acknowledged (ADR-PF01, §2) -
+// PATCH only permitted while Draft; once Submitted, further correction
+// goes through ReviewAddendum, giving "Submitted" real meaning as a
+// checkpoint rather than an edit-anytime label (a deliberately stricter
+// reading than the domain doc's own looser wording, flagged in this
+// domain's implementation notes).
+enum PerformanceReviewStatus {
+  DRAFT
+  SUBMITTED
+  ACKNOWLEDGED
+}
+
+// A closed 5-value categorical scale (implementation choice - the domain
+// doc allows either "a single categorical or numeric rating" without
+// mandating one, §4). A closed enum needs no separate range-validation
+// logic, mirroring EmploymentType's ADR-ET01 precedent.
+enum PerformanceRating {
+  OUTSTANDING
+  EXCEEDS_EXPECTATIONS
+  MEETS_EXPECTATIONS
+  BELOW_EXPECTATIONS
+  UNSATISFACTORY
+}
+
+// Both employeeId and reviewerId use Restrict, not Attendance/Leave's
+// Cascade - the domain doc itself analogizes acknowledgement to Payroll's
+// finalization rule ("a lighter-weight echo," §2), so this is treated as
+// a personnel record with retention value, like a Payslip, not a pure
+// operational fact like an attendance check-in.
+model PerformanceReview {
+  id              String                  @id @default(uuid())
+  employeeId      String
+  employee        Employee                @relation("PerformanceReviewSubject", fields: [employeeId], references: [id], onDelete: Restrict)
+  // Resolved from Employee.managerId at creation time (ADR-PF02, reuses
+  // the same relationship Leave's approval workflow reuses) - not a live
+  // join, so a later manager change never retroactively rewrites who
+  // authored a past review.
+  reviewerId      String
+  reviewer        Employee                @relation("PerformanceReviewReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+  reviewCycleId   String
+  reviewCycle     ReviewCycle             @relation(fields: [reviewCycleId], references: [id], onDelete: Restrict)
+  status          PerformanceReviewStatus @default(DRAFT)
+  rating          PerformanceRating?
+  managerComments String?
+  selfComments    String?
+  // Recommended-not-mandatory org-context snapshot (ADR-PF03), taken at
+  // submission time specifically (the domain doc's own explicit wording,
+  // §3's Recommended Practices) - not at creation, since the review's
+  // organizational context is only meaningful once the assessment is
+  // actually being finalized. Null while Draft.
+  departmentName  String?
+  designationName String?
+  branchName      String?
+  submittedAt     DateTime?
+  acknowledgedAt  DateTime?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  addenda         ReviewAddendum[]
+
+  @@unique([employeeId, reviewCycleId])
+  @@index([employeeId])
+  @@index([reviewerId])
+  @@index([reviewCycleId])
+}
+
+// Append-only (ADR-PF03's "addenda, not edits" recommended practice, §2) -
+// the mechanism for adding commentary once a review is Acknowledged
+// without editing its frozen content. authorId uses the same User-plus-
+// SetNull actor-reference convention as AuditLog.actorId/
+// EmployeeDocument.uploadedBy.
+model ReviewAddendum {
+  id                  String            @id @default(uuid())
+  performanceReviewId String
+  performanceReview   PerformanceReview @relation(fields: [performanceReviewId], references: [id], onDelete: Cascade)
+  authorId            String?
+  author              User?             @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  comment             String
+  createdAt           DateTime          @default(now())
+
+  @@index([performanceReviewId])
 }
 
 model EmployeeDocument {
