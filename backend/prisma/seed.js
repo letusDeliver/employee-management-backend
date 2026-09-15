@@ -332,6 +332,62 @@ const PERMISSIONS = [
     scope: 'any',
     description: 'Manually adjust any leave balance (ADMIN escape hatch, always audit-logged)',
   },
+  {
+    key: 'payrollRun:create',
+    resource: 'payrollRun',
+    action: 'create',
+    scope: null,
+    description: 'Create a new DRAFT PayrollRun for a period',
+  },
+  {
+    key: 'payrollRun:read',
+    resource: 'payrollRun',
+    action: 'read',
+    scope: null,
+    description: 'Read PayrollRun records',
+  },
+  {
+    key: 'payrollRun:process',
+    resource: 'payrollRun',
+    action: 'process',
+    scope: null,
+    description: 'Generate Payslips for every active Employee and move a DRAFT run to PROCESSING',
+  },
+  {
+    key: 'payrollRun:finalize',
+    resource: 'payrollRun',
+    action: 'finalize',
+    scope: null,
+    description: 'Finalize a PROCESSING run, making its Payslips immutable',
+  },
+  {
+    key: 'payrollRun:markPaid',
+    resource: 'payrollRun',
+    action: 'markPaid',
+    scope: null,
+    description: 'Record that a FINALIZED run has been paid out',
+  },
+  {
+    key: 'payrollRun:delete',
+    resource: 'payrollRun',
+    action: 'delete',
+    scope: null,
+    description: 'Delete a DRAFT PayrollRun (no Payslips exist yet at that status)',
+  },
+  {
+    key: 'payslip:read:own',
+    resource: 'payslip',
+    action: 'read',
+    scope: 'own',
+    description: "Read the caller's own Payslips only",
+  },
+  {
+    key: 'payslip:read:any',
+    resource: 'payslip',
+    action: 'read',
+    scope: 'any',
+    description: 'Read any Payslip, including listing across employees',
+  },
 ];
 
 const ROLE_PERMISSIONS = {
@@ -380,6 +436,14 @@ const ROLE_PERMISSIONS = {
     'leaveBalance:read:own',
     'leaveBalance:read:any',
     'leaveBalance:adjust:any',
+    'payrollRun:create',
+    'payrollRun:read',
+    'payrollRun:process',
+    'payrollRun:finalize',
+    'payrollRun:markPaid',
+    'payrollRun:delete',
+    'payslip:read:own',
+    'payslip:read:any',
   ],
   MANAGER: [
     'employee:create',
@@ -405,6 +469,7 @@ const ROLE_PERMISSIONS = {
     'leaveRequest:decide:reports',
     'leaveBalance:read:own',
     'leaveBalance:read:any',
+    'payslip:read:own',
   ],
   EMPLOYEE: [
     'employee:read:own',
@@ -420,6 +485,7 @@ const ROLE_PERMISSIONS = {
     'leaveRequest:read:own',
     'leaveRequest:cancel:own',
     'leaveBalance:read:own',
+    'payslip:read:own',
   ],
 };
 
@@ -458,7 +524,7 @@ const seedRolesAndGrants = async () => {
 const main = async () => {
   await seedPermissions();
   await seedRolesAndGrants();
-  console.log('Seed complete: 3 system roles, 46 permissions, role-permission grants.');
+  console.log('Seed complete: 3 system roles, 54 permissions, role-permission grants.');
 };
 
 main()

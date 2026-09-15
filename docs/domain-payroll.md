@@ -1,6 +1,6 @@
 ---
 Domain: Payroll
-Status: FINAL — with open questions on tax/statutory deductions and salary-unit confirmation
+Status: FINAL — Implemented (2026-09-15); tax/statutory deduction calculation and a separate contractor/invoice-based payment flow remain explicitly out of scope
 Date: 2026-07-27
 Depends on: docs/domain-identity-employee-lifecycle.md, docs/domain-branch.md, docs/domain-department.md, docs/domain-designation.md, docs/domain-employment-type.md, docs/domain-attendance.md, docs/domain-leave.md
 ---
@@ -80,10 +80,10 @@ Payroll calculates and permanently records **what each employee was actually pai
 
 ## 8. Open Questions
 
-1. **Salary period unit** (monthly, annual, other) — must be confirmed with actual stakeholders before implementation; not resolved here.
-2. **Contractor/invoice-based payment flow** for `CONTRACT` employment type — may fall outside this domain entirely; not resolved here.
+1. ~~**Salary period unit** (monthly, annual, other)~~ — **Resolved (2026-09-15).** Confirmed directly with the user (acting as stakeholder) before implementation: monthly. `PayrollRun.periodMonth`/`periodYear` express a period as one calendar month (ADR-PR05).
+2. **Contractor/invoice-based payment flow** for `CONTRACT` employment type — not designed here; `CONTRACT` employees flow through the same periodic Payslip mechanism as every other Employment Type in this implementation, an explicitly accepted trade-off (§6) pending a real requirement to the contrary.
 3. **Tax/statutory deduction calculation rules** — explicitly out of scope; a future sub-domain design effort.
-4. Permission scoping for who can initiate/finalize a PayrollRun — presumably a narrower set than general `ADMIN` (a dedicated Finance/Payroll role), consistent with the unresolved permission-scoping pattern carried through this entire review.
+4. ~~Permission scoping~~ — **Resolved (2026-09-15).** No dedicated Finance/Payroll role exists in this system (only `ADMIN`/`MANAGER`/`EMPLOYEE`); inventing a fourth system role wasn't justified by any verified requirement, so `PayrollRun` mutations and reads follow the same `ADMIN`-only pattern as `LeaveType` and every other master-data domain (ADR-PR06). `Payslip` reads split own/any, mirroring Leave/Attendance - but unlike Leave's approval workflow, `MANAGER` does **not** get `payslip:read:any` over reports' pay: no verified requirement calls for that, and pay is more sensitive than leave status.
 
 ## 9. Deferred Decisions
 
@@ -123,32 +123,37 @@ This most directly constrains the future **Exit Management** domain (a departing
 ## Architecture Decision Records
 
 **ADR-PR01 — PayrollRun/Payslip as Immutable-Once-Finalized Aggregates**
-Status: Accepted
-Summary: Finalized Payslips cannot be edited; corrections are adjustment entries in a subsequent run.
+Status: Accepted; Implemented (2026-09-15)
+Summary: Finalized Payslips cannot be edited; corrections are adjustment entries in a subsequent run. There is no edit endpoint for a Payslip at any status, not just at FINALIZED - the rule is enforced by omission, not a guarded update path.
 
 **ADR-PR02 — Full Input Snapshotting at Generation Time**
-Status: Accepted
+Status: Accepted; Implemented (2026-09-15)
 Summary: Salary, attendance outcome, leave deduction, and department/designation/branch names are all snapshotted, never live-joined post-finalization.
 Consequences: Directly surfaces the cost of Branch/Department/Designation's earlier "no history" decisions (ADR-B03/ADR-D03/ADR-DS03) — those decisions remain correct and unchanged (per the standing rule against redesigning prior domains), but Payroll is where their trade-off becomes concretely visible and must be compensated for via snapshotting, not by reopening those ADRs.
+Implementation note: no overtime line item is generated despite this ADR's original attendance-input framing (§3) mentioning it - `AttendanceRecord` has no overtime field or verified overtime-rate concept anywhere in this project (only `checkIn`/`checkOut` timestamps), so there was nothing verified to snapshot. Named as a known limitation, not silently dropped.
 
 **ADR-PR03 — Generalized PayslipLineItem, Not Fixed Deduction Columns**
-Status: Accepted
-Summary: Earnings/deductions modeled as a generic `{type, label, amount}` collection.
+Status: Accepted; Implemented (2026-09-15)
+Summary: Earnings/deductions modeled as a generic `{type, label, amount}` collection. Every Payslip gets one EARNING line ("Base Salary") and, when applicable, one DEDUCTION line ("Unpaid Absence (N days)").
 
 **ADR-PR04 — Tax/Statutory Calculation Explicitly Out of Scope**
 Status: Deferred
 Summary: A distinct future sub-domain design effort; this domain only provides the attachment seam (ADR-PR03).
 
-**ADR-PR05 — Salary Period Unit Unverified (Open)**
-Status: Deferred — Open
-Summary: Assumed monthly; requires stakeholder confirmation before implementation.
+**ADR-PR05 — Salary Period Unit**
+Status: Accepted; Implemented (2026-09-15)
+Summary: Confirmed directly with the user (acting as stakeholder, per this review's delegated-authority process) before implementation: monthly. `PayrollRun` is keyed on `(periodMonth, periodYear)`.
+
+**ADR-PR06 — Permission Scoping**
+Status: Accepted; Implemented (2026-09-15)
+Summary: `PayrollRun` (create/read/process/finalize/markPaid/delete) follows the `ADMIN`-only master-data pattern (no dedicated Finance/Payroll role exists or was justified). `Payslip` reads split own/any (mirrors Leave/Attendance), but `MANAGER` gets only `payslip:read:own`, not `payslip:read:any` over reports - a deliberate divergence from Leave's manager-visibility pattern, since no verified requirement extends pay visibility to managers and pay is more sensitive than leave status.
 
 ## Final Sign-off
 
-**Implementation readiness:** Conditionally ready. The aggregate structure, immutability rule, and snapshotting requirement are solid; the salary-unit assumption (ADR-PR05) and tax/statutory scope cut (ADR-PR04) must be explicitly acknowledged as follow-on work, not silently treated as complete.
+**Implementation readiness:** Implemented (2026-09-15). The salary-unit assumption (ADR-PR05) was confirmed before implementation, closing this domain's most load-bearing open item. The tax/statutory scope cut (ADR-PR04) and the contractor/invoice-based payment flow (§8 item 2) remain explicitly out of scope, not silently treated as complete.
 
-**Confidence score: 78%** — the lowest so far in this review, reflecting the genuine, high-stakes open items (salary unit, contractor payment flow, tax logic) inherent to a financial domain, named honestly rather than smoothed over.
+**Confidence score: 90%** — up from 78% now that the salary-unit assumption is confirmed rather than open; the remaining gap is entirely the acknowledged-and-deferred tax/statutory and contractor-flow scope cuts, not an unresolved architectural question.
 
-**Remaining blockers:** Confirm salary period unit with stakeholders; decide whether `CONTRACT` employment type is in scope for this mechanism or needs a separate process; scope tax/statutory deduction work as an explicit follow-on effort before real-world deployment.
+**Remaining blockers:** None for the scope actually built. Tax/statutory deduction work remains an explicit follow-on effort before real-world deployment (ADR-PR04); a separate contractor/invoice-based payment flow remains undesigned if `CONTRACT` employees turn out to need one (§8 item 2); carry-forward/encashment (Leave's LV06) still blocks a fully accurate final-settlement calculation for Exit Management, not Payroll's own periodic-run scope.
 
-**Recommended next domain:** Performance — a lower-stakes domain that can proceed independently while Payroll's open financial questions are resolved with stakeholders outside this design process.
+**Recommended next domain:** Performance — the next domain in the roadmap once Payroll's periodic-run mechanism is in place; lower-stakes than Payroll and does not depend on any of Payroll's still-open items.

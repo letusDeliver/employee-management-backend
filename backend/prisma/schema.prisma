@@ -134,6 +134,7 @@ model Employee {
   attendanceRecords AttendanceRecord[]
   leaveRequests LeaveRequest[]
   leaveBalances LeaveBalance[]
+  payslips      Payslip[]
 
   // No @unique on userId: Prisma's schema DSL can't express a *partial*
   // unique constraint (scoped to non-deleted rows), so the real
@@ -372,6 +373,14 @@ model LeaveType {
   // Whole days, admin-configured per type (e.g. 18 for Annual, 10 for
   // Sick) - the base a LeaveBalance's entitlement is prorated from.
   defaultAnnualEntitlement Int
+  // Named "not decided here" at Leave's own sign-off (docs/domain-leave.md
+  // §2/§12) and left for Payroll to resolve, since only Payroll needs to
+  // distinguish paid from unpaid leave (docs/domain-payroll.md's Payslip
+  // deduction calculation, ADR-LV09). Defaults true: real-world leave
+  // catalogs are dominated by paid types (Annual, Sick); unpaid leave is
+  // the named exception (e.g. "Leave Without Pay"), and no existing
+  // LeaveType rows exist yet to migrate.
+  isPaid                   Boolean         @default(true)
   status                   LeaveTypeStatus @default(ACTIVE)
   createdAt                DateTime        @default(now())
   updatedAt                DateTime        @updatedAt
@@ -443,6 +452,102 @@ model LeaveBalance {
   @@unique([employeeId, leaveTypeId, year])
   @@index([employeeId])
   @@index([leaveTypeId])
+}
+
+// See docs/domain-payroll.md for the full business-architecture sign-off.
+// Confirmed with the user (2026-09-15) that Employee.salary represents a
+// MONTHLY figure (ADR-PR05) - periodMonth/periodYear alone is therefore
+// sufficient to express a period and to enforce non-overlap (ADR-PR01).
+enum PayrollRunStatus {
+  DRAFT
+  PROCESSING
+  FINALIZED
+  PAID
+}
+
+model PayrollRun {
+  id          String           @id @default(uuid())
+  periodMonth Int
+  periodYear  Int
+  status      PayrollRunStatus @default(DRAFT)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  payslips    Payslip[]
+
+  // One run per calendar month (ADR-PR01's "periods must not overlap"),
+  // trivially guaranteed at monthly granularity.
+  @@unique([periodMonth, periodYear])
+}
+
+// Every input this aggregate depends on is snapshotted at generation
+// time, never live-joined afterward (ADR-PR02) - this is the direct,
+// concrete cost of Branch/Department/Designation's earlier "single
+// current value, no history" decisions (ADR-B03/ADR-D03/ADR-DS03)
+// surfacing here, exactly as those domains' own docs anticipated.
+// `employeeId` uses Restrict, not the Cascade every other Employee-owned
+// domain in this review uses (Attendance/Leave) - a Payslip is a
+// permanent financial record, not an operational one, so it must survive
+// even in the (essentially theoretical, given ADR-006's soft-delete
+// convention) case of a hard-deleted Employee row.
+model Payslip {
+  id                  String     @id @default(uuid())
+  payrollRunId        String
+  payrollRun          PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  employeeId          String
+  employee            Employee   @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  // Denormalized from the parent run so a Payslip is a complete,
+  // self-contained record - an employee reading their own Payslip via
+  // `payslip:read:own` never needs `payrollRun:read` to know what period
+  // it covers.
+  periodMonth         Int
+  periodYear          Int
+  // Org-context snapshot (ADR-PR02) - nullable because Employee.userId
+  // (the only source of a display name in this schema) is itself
+  // optional; branchName is nullable because branchId is optional
+  // (ADR-B03's own nullable pattern), department/designation names are
+  // never null since both are mandatory on Employee (ADR-D07/DS07).
+  employeeName        String?
+  departmentName      String
+  designationName     String
+  branchName          String?
+  employmentType      EmploymentType
+  baseSalary          Decimal
+  workingDaysInPeriod Decimal
+  paidDays            Decimal
+  unpaidDays          Decimal
+  grossPay            Decimal
+  totalDeductions     Decimal
+  netPay              Decimal
+  generatedAt         DateTime   @default(now())
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+  lineItems           PayslipLineItem[]
+
+  @@unique([employeeId, payrollRunId])
+  @@index([payrollRunId])
+  @@index([employeeId])
+}
+
+enum PayslipLineItemType {
+  EARNING
+  DEDUCTION
+}
+
+// Generalized shape (ADR-PR03), not fixed columns (incomeTax, pf, ...) -
+// the same "avoid a wide, brittle schema" reasoning already applied to
+// AuditLog's entityType/entityId and EmployeeDocument's generic model.
+// The deliberate seam for tax/statutory calculation logic to attach to
+// later (ADR-PR04) without a schema redesign.
+model PayslipLineItem {
+  id        String              @id @default(uuid())
+  payslipId String
+  payslip   Payslip             @relation(fields: [payslipId], references: [id], onDelete: Cascade)
+  type      PayslipLineItemType
+  label     String
+  amount    Decimal
+  createdAt DateTime            @default(now())
+
+  @@index([payslipId])
 }
 
 model EmployeeDocument {

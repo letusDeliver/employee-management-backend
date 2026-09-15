@@ -78,7 +78,7 @@ Every decision explicitly deferred across every domain in this review, in one pl
 ## Leave
 | Deferred Item | Reason |
 |---|---|
-| Carry-forward / encashment (LV06) | No verified requirement; **blocks Payroll and Exit Management's final-settlement completeness.** |
+| Carry-forward / encashment (LV06) | No verified requirement; **blocks a fully accurate Payroll final-period settlement and Exit Management's final-settlement completeness.** |
 | Monthly/periodic accrual instead of annual lump sum | No verified requirement; implemented as annual lump-sum, hire-year-prorated (2026-09-15). |
 | Negative-balance / advance-leave policy | No verified requirement; strict no-negative-balance is the safer default - implemented (2026-09-15), `PATCH /leave-balances/:id` is the ADMIN escape hatch. |
 | Multi-level approval workflow | No approval-workflow infrastructure exists project-wide yet. |
@@ -86,16 +86,19 @@ Every decision explicitly deferred across every domain in this review, in one pl
 | Employment-type-based entitlement adjustment | No verified formula exists; explicitly not hard-coded (2026-09-15) - only the hire-date proration leg of §4's recommendation was implemented. |
 | Per-employee optional/restricted holiday election (HC05's boundary) | Still open even after Leave's implementation (2026-09-15) - no verified requirement surfaced during this pass. |
 | Permission scoping | **Resolved (2026-09-15)** — `LeaveType` follows the `ADMIN`-only pattern; `LeaveRequest`/`LeaveBalance` mirror Employee's own/any split (ADR-LV07). |
+| `LeaveType.isPaid` | **Resolved (2026-09-15, during Payroll's build)** — additive boolean, `@default(true)`; consumed by Payroll's pay calculation (ADR-LV09). |
 
 ## Payroll
 | Deferred Item | Reason |
 |---|---|
 | Tax/statutory deduction calculation (PR04) | Jurisdiction-specific legal complexity; distinct future sub-domain effort. |
 | Multi-currency support | No verified requirement. |
-| Contractor/invoice-based payment flow | Materially different process; not verified as needed. |
-| Automated/scheduled PayrollRun triggering | No verified requirement; manual admin initiation is today's scope. |
-| Payslip correction workflow beyond "adjustment in next run" | No verified requirement. |
-| Salary period unit confirmation (PR05) | **Open — requires stakeholder confirmation before implementation.** |
+| Contractor/invoice-based payment flow | Materially different process; not verified as needed - `CONTRACT` employees flow through the same periodic Payslip mechanism as every other Employment Type in this implementation, an accepted trade-off pending a real requirement otherwise. |
+| Automated/scheduled PayrollRun triggering | No verified requirement; manual admin initiation is today's scope - implemented (2026-09-15). |
+| Payslip correction workflow beyond "adjustment in next run" | No verified requirement; there is no edit endpoint for a Payslip at any status. |
+| Overtime pay calculation | No verified overtime field or rate concept exists anywhere in this project (`AttendanceRecord` has only `checkIn`/`checkOut`) - not invented despite §3's passing mention of "overtime" as an input. |
+| Salary period unit confirmation (PR05) | **Resolved (2026-09-15)** — confirmed with the user (acting as stakeholder): monthly. |
+| Permission scoping | **Resolved (2026-09-15)** — `PayrollRun` follows the `ADMIN`-only pattern (no dedicated Finance/Payroll role exists or was justified); `Payslip` reads split own/any, but `MANAGER` gets only `:own` (no reports-visibility into pay, unlike Leave's approval workflow). |
 
 ## Performance
 | Deferred Item | Reason |
@@ -145,9 +148,9 @@ These are not domain-specific deferrals but the same missing capability surfacin
 
 | Recurring Gap | Domains Affected |
 |---|---|
-| Permission scoping beyond `ADMIN`-only | Payroll, Recruitment, Training, Asset Management, Exit Management. Branch (ADR-B07), Department (ADR-D08), Designation (ADR-DS06), Holiday Calendar (ADR-HC06), Shift (ADR-SH05), and LeaveType (ADR-LV07) have all now resolved this as `ADMIN`-only mutations / read-for-all (2026-09-13 through 2026-09-15) — the same resolution is the likely default for the rest unless a real requirement diverges. Attendance (ADR-AT06) and LeaveRequest/LeaveBalance (ADR-LV07) instead resolved to Employee's own/any split, since both are self-service-plus-admin-correction domains, not pure master data - a second, equally-established pattern now exists depending on domain shape. |
+| Permission scoping beyond `ADMIN`-only | Recruitment, Training, Asset Management, Exit Management. Branch (ADR-B07), Department (ADR-D08), Designation (ADR-DS06), Holiday Calendar (ADR-HC06), Shift (ADR-SH05), LeaveType (ADR-LV07), and PayrollRun (ADR-PR06) have all now resolved this as `ADMIN`-only mutations / read-for-all (2026-09-13 through 2026-09-15) — the same resolution is the likely default for the rest unless a real requirement diverges. Attendance (ADR-AT06), LeaveRequest/LeaveBalance (ADR-LV07), and Payslip (ADR-PR06) instead resolved to an own/any split, since all three are self-service-plus-admin-correction domains, not pure master data - a second, equally-established pattern now exists depending on domain shape. Payslip's own/any split further diverges from Leave's by withholding `MANAGER`'s reports-visibility, since no verified requirement extends pay visibility to managers. |
 | No approval-workflow infrastructure project-wide | Attendance (regularization), Leave (multi-level approval), Asset Management (asset requests) all independently deferred the same underlying capability. |
 | No notification infrastructure project-wide | Training (renewal reminders) is the only domain to name this explicitly, but it would also affect Leave (approval notifications) and Exit Management (clearance reminders) once built. |
-| AuditLog extension to new entity types | Payroll assumes it's used but doesn't re-litigate whether it should be. Branch (ADR-B08), Department (ADR-D09), Designation, Holiday Calendar (both entities, `HolidayCalendar` and `Holiday`), Shift, Attendance (ADR-AT04), and Leave (all three entities - `LeaveType`, `LeaveRequest`, `LeaveBalance`) have all resolved this (2026-09-13 through 2026-09-15) — confirms the generic `AuditLog` model extends cleanly with no schema change, as predicted, across eight independent domains now. |
+| AuditLog extension to new entity types | Branch (ADR-B08), Department (ADR-D09), Designation, Holiday Calendar (both entities, `HolidayCalendar` and `Holiday`), Shift, Attendance (ADR-AT04), Leave (all three entities - `LeaveType`, `LeaveRequest`, `LeaveBalance`), and Payroll (both `PayrollRun` and `Payslip`) have all resolved this (2026-09-13 through 2026-09-15) — confirms the generic `AuditLog` model extends cleanly with no schema change, as predicted, across nine independent domains now. |
 
 See [[future-roadmap]] for how these recurring gaps should be sequenced relative to the domain-specific open items above.

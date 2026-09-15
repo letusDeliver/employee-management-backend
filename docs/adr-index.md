@@ -97,15 +97,17 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the two most load-
 | LV06 | Carry-forward / encashment | **Deferred — Open**, blocks Payroll/Exit Management final-settlement completeness |
 | LV07 | Permission scoping | Accepted; Implemented (2026-09-15) — `LeaveType` follows the `ADMIN`-only pattern; `LeaveRequest`/`LeaveBalance` mirror Employee's own/any split |
 | LV08 | Closes Attendance's ADR-AT03 Leave leg via `hasApprovedLeaveOnDate` | Accepted; Implemented (2026-09-15) |
+| LV09 | `LeaveType.isPaid` - resolves Payroll's named consumption gap | Accepted; Implemented (2026-09-15, during Payroll's build) |
 
 ## Payroll — [[domain-payroll]]
 | ADR | Summary | Status |
 |---|---|---|
-| PR01 | PayrollRun/Payslip immutable once finalized | Accepted |
-| PR02 | Full input snapshotting at generation time (salary, attendance, leave, org-context names) | Accepted |
-| PR03 | Generalized `PayslipLineItem`, not fixed deduction columns | Accepted |
+| PR01 | PayrollRun/Payslip immutable once finalized | Accepted; Implemented (2026-09-15) — no edit endpoint exists for a Payslip at any status |
+| PR02 | Full input snapshotting at generation time (salary, attendance, leave, org-context names) | Accepted; Implemented (2026-09-15) — no overtime line item (no verified overtime concept exists anywhere in this project) |
+| PR03 | Generalized `PayslipLineItem`, not fixed deduction columns | Accepted; Implemented (2026-09-15) |
 | PR04 | Tax/statutory calculation explicitly out of scope | Deferred |
-| PR05 | Salary period unit (assumed monthly) unverified | **Deferred — Open** |
+| PR05 | Salary period unit | Accepted; Implemented (2026-09-15) — confirmed with the user (stakeholder): monthly |
+| PR06 | Permission scoping | Accepted; Implemented (2026-09-15) — `PayrollRun` `ADMIN`-only; `Payslip` own/any, but `MANAGER` gets only `:own` (no reports-visibility, unlike Leave) |
 
 ## Performance — [[domain-performance]]
 | ADR | Summary | Status |
@@ -152,8 +154,7 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the two most load-
 | ADR | Domain | Nature of Gap |
 |---|---|---|
 | HC05 | Holiday Calendar | Optional/restricted holiday election — boundary deferred to Leave; still open, Leave's own implementation (2026-09-15) did not add per-employee holiday election. |
-| LV06 | Leave | Carry-forward / encashment policy — blocks Payroll (PR05-adjacent) and Exit Management (EM05) final-settlement completeness. |
-| PR05 | Payroll | Salary period unit unverified — requires stakeholder confirmation. |
+| LV06 | Leave | Carry-forward / encashment policy — blocks a fully accurate Payroll final-period settlement and Exit Management (EM05) final-settlement completeness. |
 | RC04 | Recruitment | Candidate PII retention — requires legal/compliance input. |
 | EM05 | Exit Management | Depends directly on LV06. |
 

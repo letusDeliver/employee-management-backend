@@ -14,6 +14,10 @@ export const createLeaveTypeSchema = z
       .positive('defaultAnnualEntitlement must be a positive whole number of days')
       .max(MAX_ENTITLEMENT, 'defaultAnnualEntitlement seems unreasonably high')
       .meta({ example: 18 }),
+    // Resolves the "not decided here" gap Leave's own sign-off left for
+    // Payroll (docs/domain-leave.md §2/§12, ADR-LV09) - defaults true since
+    // most real leave catalogs are dominated by paid types.
+    isPaid: z.boolean().default(true).meta({ example: true }),
   })
   .meta({ id: 'CreateLeaveTypeRequest' });
 
@@ -29,6 +33,7 @@ export const updateLeaveTypeSchema = z
       .max(MAX_ENTITLEMENT, 'defaultAnnualEntitlement seems unreasonably high')
       .optional()
       .meta({ example: 18 }),
+    isPaid: z.boolean().optional().meta({ example: true }),
     status: z.enum(['ACTIVE', 'INACTIVE']).optional().meta({ example: 'INACTIVE' }),
   })
   .meta({ id: 'UpdateLeaveTypeRequest' });

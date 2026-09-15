@@ -11416,6 +11416,21 @@ Public/Protected:   Protected
   `WEEK_OFF` and `ABSENT` (item 3 above). See `docs/domain-leave.md`
   ADR-LV08 and the Leave domain's own section (endpoints 56-69) for the
   full detail.
+- **Third consumer — the Payroll domain (2026-09-15)**: `PATCH
+  /payroll-runs/:id/process` (endpoint 73) calls this exact function,
+  `attendanceService.getEffectiveStatus`, once per calendar day in the
+  run's period for every active Employee, via
+  `payrollService.summarizeAttendanceForPeriod` — the same coordinating
+  read `GET /attendance/effective-status` exposes, invoked as a trusted
+  internal service-to-service call (a synthetic
+  `{ grantedPermissions: ['attendance:read:any'] }` reader) rather than
+  through this HTTP endpoint itself. This is exactly the future scenario
+  this section's own Performance Notes (§16 below) named as a place a
+  read-model/cache might eventually be warranted ("a company-wide
+  monthly report calling this once per employee per day") — now
+  materialized as Payroll's own real, named performance risk
+  (`docs/domain-payroll.md` §10). See endpoint 73's own Performance Notes
+  for the concrete cost at scale.
 - **Documented limitation — no `LATE` for overnight shifts**: lateness is
   only computed when the assigned shift is **not** overnight
   (`shiftService.isOvernightShift`, i.e. `endTime >= startTime`). An
@@ -15166,3 +15181,2081 @@ Run after confirming a balance's current state via `GET
 - ✅ Nonexistent `id` → `404`
 - ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
 - ✅ `AuditLog` row created (verified live)
+
+---
+
+---
+
+# 70. `POST /payroll-runs`
+
+## 1. Endpoint Information
+
+```
+Feature:            Payroll Domain (2026-09-15, feature/23-payroll-domain)
+Endpoint:           Create a DRAFT Payroll Run
+Description:        Creates a new PayrollRun for a calendar-month period, always starting in DRAFT status
+Method:             POST
+URL:                /api/v1/payroll-runs
+API Version:        v1
+Module:             modules/payroll
+Authentication:     Yes (Bearer access token)
+Authorization:      `payrollRun:create` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the entry point into this domain's
+  `DRAFT` → `PROCESSING` → `FINALIZED` → `PAID` lifecycle
+  (`docs/domain-payroll.md` §2) — every `PayrollRun` starts life here,
+  and no other endpoint creates one.
+- **Business problem solved**: gives `ADMIN`/Finance one governed place
+  to declare "process payroll for month X, year Y" before a single
+  `Payslip` exists.
+- **A period is exactly one calendar month, not an arbitrary date
+  range**: this rests on a load-bearing, previously-unverified
+  assumption that was confirmed directly with the user before
+  implementation (ADR-PR05) — `Employee.salary` represents a **monthly**
+  base figure. `periodMonth`/`periodYear` together express that single
+  month.
+- **One run per calendar month**: `@@unique([periodMonth, periodYear])`
+  trivially enforces ADR-PR01's "periods must not overlap" invariant at
+  monthly granularity — there is no way to create two overlapping runs
+  even by accident.
+- **No dedicated Finance/Payroll role**: `PayrollRun` mutations follow
+  the same `ADMIN`-only pattern as `LeaveType`/Designation/Branch/Shift/
+  Holiday Calendar (ADR-PR06) — inventing a fourth system role wasn't
+  justified by any verified requirement. Checked directly in
+  `prisma/seed.js`: `MANAGER` holds **zero** `payrollRun:*` permissions,
+  not even read — a stricter cut than Attendance's/Employee's
+  `MANAGER`-inclusive scoping, and worth calling out since it's easy to
+  assume `MANAGER` mirrors those domains here.
+- **Expected callers**: `ADMIN` only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                             |
+| --------------------------------------- | -------- | ----------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `payrollRun:create` permission |
+| `Content-Type: application/json`     | **Yes**  |                                                     |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "periodMonth": 9,
+  "periodYear": 2026
+}
+```
+
+| Field         | Type    | Required | Description        |
+| ------------- | ------- | -------- | ------------------- |
+| `periodMonth` | integer | **Yes**  | `1`-`12`             |
+| `periodYear`  | integer | **Yes**  | `2000`-`2100`        |
+
+## 7. Validation Rules
+
+- `periodMonth`: required, `z.number().int().min(1).max(12)`.
+- `periodYear`: required, `z.number().int().min(2000).max(2100)`.
+- **No custom error messages are defined anywhere in
+  `createPayrollRunSchema`** — unlike `LeaveType`'s bespoke messages
+  (endpoint 56), every validation failure here surfaces Zod's own
+  generic wording verbatim, e.g. `"periodMonth: Too small: expected
+  number to be >=1"`, `"periodMonth: Too big: expected number to be
+  <=12"`, `"periodYear: Too small: expected number to be >=2000"`, or
+  `"periodMonth: Invalid input: expected number, received undefined"`
+  if the field is omitted entirely.
+- **No schema-level uniqueness check** — the `(periodMonth, periodYear)`
+  duplicate check happens only in the service layer, against
+  `payrollRunRepository.findByPeriod`, not a Zod `.refine`.
+- `status` is never an accepted field — every new run is created `DRAFT`
+  unconditionally via the Prisma schema's own default; there is no way
+  to request a different starting status.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "run": {
+    "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "periodMonth": 9,
+    "periodYear": 2026,
+    "status": "DRAFT",
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:00:00.000Z"
+  }
+}
+```
+
+`payslipCount` is never present on this response — that field is only
+ever added by `GET /payroll-runs/:id`'s own extra `countPayslips` query
+(endpoint 72), and a freshly created run has 0 Payslips regardless (they
+only ever come into existence via `/process`, endpoint 73). Verified
+live (`payroll.service.test.js`'s "createPayrollRun creates a DRAFT run
+and rejects a duplicate period" case asserts `run.status === 'DRAFT'`).
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                   | When                                                                 |
+| ------ | ------------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `400`  | Validation failed                   | e.g. `"periodMonth: Too big: expected number to be <=12"`      | Out-of-range/missing/non-integer `periodMonth`/`periodYear`               |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                       | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks `payrollRun:create`    | `"You do not have permission to perform this action"`         | `MANAGER`/`EMPLOYEE` token — `MANAGER` has no `payrollRun:*` grant at all |
+| `409`  | A run already exists for this period | `"A payroll run already exists for this period"`              | Verified live (`payroll.service.test.js`)                                  |
+
+## 10. Postman Test Cases
+
+| #   | Case                                     | Expected |
+| --- | ------------------------------------------- | -------- |
+| 1   | Valid create                                | `201` — verified live |
+| 2   | Duplicate `(periodMonth, periodYear)`       | `409` — verified live |
+| 3   | `periodMonth = 0` or `13`                   | `400`    |
+| 4   | `periodYear = 1999` or `2101`                | `400`    |
+| 5   | Missing `periodMonth`/`periodYear`          | `400`    |
+| 6   | As `MANAGER`/`EMPLOYEE` token                | `403`    |
+| 7   | No token                                    | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                | Expected                                                                 |
+| ------------------------------------------- | --------------------------------------------------------------------------- |
+| Malformed JSON body                        | `400` from Express's own JSON body-parser                                  |
+| `periodMonth`/`periodYear` as a non-integer (e.g. `9.5`) | `400` — Zod's `.int()` rejects it                          |
+| `periodMonth`/`periodYear` as a string      | `400` — no `.coerce`, unlike the list-query schemas                        |
+| Tampered/expired JWT                       | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `periodMonth = 1` or `12` (calendar-year boundaries)               | `201` — both are valid, inclusive bounds                                                                                                               |
+| Creating a run for a period already in the past, or far in the future | `201` — nothing in `createPayrollRun` compares `periodMonth`/`periodYear` against today's date; any value inside `[2000, 2100]` is accepted regardless |
+| **Concurrent creates for the same period**                        | `409`, not a `500` — `createPayrollRun` wraps its create transaction in `try/catch (error.code === 'P2002')`, translating a losing race into the same clean `"A payroll run already exists for this period"` message the pre-check `findByPeriod` produces for the non-racing case. Same defense-in-depth shape as every other create-with-uniqueness endpoint in this codebase (Branch, Department, Designation, Shift, Holiday Calendar, Leave Type, Employee, Attendance). |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot create a run — `MANAGER`
+  holds no `payrollRun:*` permission whatsoever in `prisma/seed.js`,
+  unlike its broad `attendance:*:any`/`employee:*:any` grants elsewhere.
+- **Mass assignment**: only `periodMonth`/`periodYear` are read from the
+  body; `status` can never be set by the caller.
+
+## 14. Database Impact
+
+- **Tables affected**: `PayrollRun` (insert), `AuditLog` (insert), inside
+  one `prisma.$transaction`.
+- **Pre-check**: one `payrollRun.findUnique` on `(periodMonth,
+  periodYear)` before the transaction opens.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/payroll-runs
+    ↓
+authMiddleware
+    ↓
+requirePermission('payrollRun:create')
+    ↓ (403 if not granted)
+validateMiddleware(createPayrollRunSchema)
+    ↓ (400 if invalid)
+payroll.controller.create → payroll.service.createPayrollRun(data, actor)
+    ├─ payrollRunRepository.findByPeriod(periodMonth, periodYear) → existing → 409
+    └─ try { prisma.$transaction:
+         ├─ payrollRunRepository.create(data, tx)   [status defaults to DRAFT]
+         └─ auditLogRepository.create({ action: 'CREATE', afterData, ... }, tx)
+       } catch (P2002) → 409 (race-condition fallback, same shape as every
+         sibling create-with-uniqueness endpoint)
+    ↓
+201 { run }
+```
+
+## 16. Performance Notes
+
+One indexed unique-key lookup, one insert, one audit-log insert — no
+notable performance concerns. The expensive part of this domain's
+lifecycle is entirely in `/process` (endpoint 73), not here.
+
+## 17. Interview Notes
+
+- **Q: Why is a PayrollRun period exactly one calendar month instead of
+  an arbitrary date range?** `Employee.salary` (`prisma/schema.prisma`)
+  is a single `Decimal`, and this domain's build confirmed directly with
+  the user (ADR-PR05, `docs/domain-payroll.md` §8 item 1) that it
+  represents a **monthly** figure — an arbitrary range would need a
+  separate, unverified proration rule for partial months, so the schema
+  narrows the concept to what's actually confirmed.
+- **Q: Why does `MANAGER` get no `payrollRun:*` permission at all, unlike
+  its `attendance:*:any`/`employee:*:any` grants?** `docs/domain-payroll.md`
+  ADR-PR06: no verified requirement extends payroll-run administration to
+  `MANAGER`, and pay data is treated as more sensitive than attendance or
+  leave status — a deliberate, narrower cut than those domains, not an
+  oversight.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/payroll-runs \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"periodMonth":9,"periodYear":2026}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `run.id` as `{{payrollRunId}}` — used by every other
+`/payroll-runs/:id*` endpoint (72-76) and as the `payrollRunId` filter
+for `GET /payslips` (endpoint 77).
+
+## 20. Testing Checklist
+
+- ✅ Valid create → `201`, `status: "DRAFT"` (verified live)
+- ✅ Duplicate `(periodMonth, periodYear)` → `409` (verified live)
+- ✅ Out-of-range `periodMonth`/`periodYear` → `400`
+- ✅ `403` as `MANAGER`/`EMPLOYEE` (no `payrollRun:*` grant at all)
+- ✅ `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 71. `GET /payroll-runs`
+
+## 1. Endpoint Information
+
+```
+Feature:            Payroll Domain (2026-09-15, feature/23-payroll-domain)
+Endpoint:           List Payroll Runs
+Method:             GET
+URL:                /api/v1/payroll-runs
+API Version:        v1
+Module:             modules/payroll
+Authentication:     Yes (Bearer access token)
+Authorization:      `payrollRun:read` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: browse/search `PayrollRun`s across periods and
+  statuses — the administrative index into the domain's lifecycle.
+- **Business problem solved**: "show me every run still in `DRAFT`," "show
+  me all of 2026's runs," "show me the most recently created runs
+  first."
+- **No auto-scoped `:own` mode**: unlike `GET /leave-requests`/`GET
+  /leave-balances`/`GET /payslips`, there is no own/any split here —
+  `payrollRun:read` is a single, unconditional `ADMIN`-only grant, the
+  same any-only shape `GET /attendance` (endpoint 51) uses. This is
+  consistent with `PayrollRun` having no employee-self-service angle at
+  all — an employee's own-pay self-service need is served entirely by
+  `GET /payslips` (endpoint 77), not this endpoint.
+- **Expected callers**: `ADMIN` only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| --------------------------------------- | -------- | --------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `payrollRun:read` permission |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name         | Type          | Required | Default     | Description                                             |
+| -------------- | ------------- | -------- | ------------- | ------------------------------------------------------------ |
+| `page`       | integer       | No       | `1`         | 1-indexed page number                                    |
+| `limit`      | integer       | No       | `10` (max 100) | Page size                                                |
+| `status`     | enum          | No       | —           | `DRAFT`, `PROCESSING`, `FINALIZED`, or `PAID`             |
+| `periodYear` | integer       | No       | —           | Filter to a single calendar year                          |
+| `sortBy`     | enum          | No       | `periodYear` | `periodYear`, `periodMonth`, `status`, `createdAt`         |
+| `order`      | enum          | No       | `desc`      | `asc` or `desc`                                            |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same `page`/`limit`/sort shape as every other list endpoint
+(`listPayrollRunsQuerySchema`). `status` must be one of the four
+`PayrollRunStatus` enum values; `periodYear` is `z.coerce.number().int()`
+with no min/max bound (unlike `createPayrollRunSchema`'s `2000`-`2100`
+range) — an out-of-that-range `periodYear` filter is not rejected, it
+just matches zero rows. There is **no `periodMonth` filter** on this
+endpoint (only on create) — filtering to one specific month/year
+combination isn't supported here, only a full year via `periodYear`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "runs": [
+    {
+      "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+      "periodMonth": 9,
+      "periodYear": 2026,
+      "status": "DRAFT",
+      "createdAt": "2026-09-15T10:00:00.000Z",
+      "updatedAt": "2026-09-15T10:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+**List items never include `payslipCount`** — `listPayrollRuns` returns
+raw rows straight from `payrollRunRepository.findAll` with no extra
+per-row count query; `payslipCount` is exclusively a `GET
+/payroll-runs/:id` (endpoint 72) addition, confirmed both in
+`payroll.service.js` (`listPayrollRuns` never calls `countPayslips`) and
+in `PayrollRunSchema`'s own `.meta()` description ("Only present on GET
+/payroll-runs/:id"). Fetching the Payslip count for many runs in one
+list call would require N extra queries this endpoint deliberately does
+not perform.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                                       |
+| ------ | ------------------------------------ | -------------------------------------------------------- | --------------------------------------------- |
+| `400`  | A query parameter failed validation | e.g. `"limit: Too big: expected number to be <=100"`, `"status: Invalid option"` | Out-of-bounds `limit`, invalid `status`/`sortBy` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                   |
+| `403`  | Caller lacks `payrollRun:read`       | `"You do not have permission to perform this action"`   | `MANAGER`/`EMPLOYEE` token                 |
+
+## 10. Postman Test Cases
+
+| #   | Case                                    | Expected |
+| --- | -------------------------------------------- | -------- |
+| 1   | Default pagination, no filters                | `200`, all runs |
+| 2   | `status=DRAFT` filter                         | `200`, only `DRAFT` runs |
+| 3   | `periodYear=2026` filter                      | `200`, only that year's runs |
+| 4   | `sortBy=status&order=asc`                      | `200`    |
+| 5   | `limit=101`                                   | `400`    |
+| 6   | Invalid `status` value                         | `400`    |
+| 7   | As `MANAGER`/`EMPLOYEE` token                   | `403`    |
+| 8   | No token                                      | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| `sortBy` value outside the allowlist | `400`                                                                       |
+| `status` value outside the enum    | `400`                                                                       |
+| Tampered/expired JWT               | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                     |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `page` beyond the last page                                        | `200` with an empty `runs` array, not an error                                                        |
+| `periodYear` outside `createPayrollRunSchema`'s `2000`-`2100` range (e.g. `9999`) | `200` with an empty `runs` array — the filter itself has no bound, it simply can never match a real row |
+| Two runs with the same `periodYear` (different months), default sort  | Sorted by `periodYear` then the unconditional secondary `id ASC` tiebreaker — `periodMonth` is **not** a secondary sort key even though it would be the more intuitive tiebreak |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot list runs — verified by
+  `prisma/seed.js` inspection (no `payrollRun:read` grant exists for
+  `MANAGER` at all).
+
+## 14. Database Impact
+
+Read-only — `PayrollRun.findMany` + `PayrollRun.count`, run in parallel
+via `Promise.all`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/payroll-runs
+    ↓
+authMiddleware
+    ↓
+requirePermission('payrollRun:read')
+    ↓ (403 if not granted)
+validateMiddleware(listPayrollRunsQuerySchema, 'query')
+    ↓ (400 if invalid)
+payroll.controller.list → payroll.service.listPayrollRuns(query)
+    └─ Promise.all([payrollRunRepository.findAll(...), payrollRunRepository.count(...)])
+    ↓
+200 { runs, pagination }
+```
+
+## 16. Performance Notes
+
+Indexed on the `(periodMonth, periodYear)` unique constraint; a bare
+`status`-only or `periodYear`-only filter is a full-table scan bounded
+by pagination — acceptable given a `PayrollRun` table grows by at most
+one row per calendar month in practice (unlike `Payslip`, which grows
+per-employee-per-run).
+
+## 17. Interview Notes
+
+- **Q: Why no auto-scoped `:own` mode here, unlike `GET
+  /leave-requests`/`GET /payslips`?** `PayrollRun` has no per-employee
+  ownership concept at all — it's a period-level administrative record,
+  not something any individual employee "owns." The employee-facing
+  self-service need this domain does support (viewing your own pay) is
+  served entirely by `Payslip`'s own `:own`/`:any` split (endpoint 77),
+  one layer down.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/payroll-runs?status=DRAFT&periodYear=2026" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run once per `status` value to confirm each lifecycle stage is
+independently filterable.
+
+## 20. Testing Checklist
+
+- ✅ Default list → `200`
+- ✅ `status`/`periodYear` filters
+- ✅ Sort both directions with deterministic `id ASC` tiebreaker
+- ✅ List items never include `payslipCount`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `400` on out-of-bounds `limit`/invalid `status`
+
+---
+
+---
+
+# 72. `GET /payroll-runs/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Payroll Domain (2026-09-15, feature/23-payroll-domain)
+Endpoint:           Get one Payroll Run
+Description:        Returns a single PayrollRun, including payslipCount
+Method:             GET
+URL:                /api/v1/payroll-runs/:id
+API Version:        v1
+Module:             modules/payroll
+Authentication:     Yes (Bearer access token)
+Authorization:      `payrollRun:read` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the one place to check a specific run's exact
+  status and how many Payslips it has generated so far.
+- **Business problem solved**: "is September 2026's run still
+  `PROCESSING`, and how many Payslips came out of it" — a single
+  combined read rather than requiring a separate `GET /payslips?
+  payrollRunId=...&limit=1` just to read `pagination.total`.
+- **`payslipCount` is computed on every call, not stored**: `getPayrollRunById`
+  runs the primary `findById` lookup and then a second, separate
+  `payrollRunRepository.countPayslips(id)` query
+  (`prisma.payslip.count({ where: { payrollRunId } })`) and merges the
+  two into one response object — there is no cached/denormalized count
+  column on `PayrollRun` itself.
+- **Expected callers**: `ADMIN` only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| --------------------------------------- | -------- | --------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `payrollRun:read` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ------------------------ |
+| `id` | string (UUID) | **Yes**  | The PayrollRun's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No format validation on `id` — an invalid UUID or a well-formed UUID
+that doesn't exist both simply fail to match any row and produce the
+same `404`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "run": {
+    "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "periodMonth": 9,
+    "periodYear": 2026,
+    "status": "PROCESSING",
+    "payslipCount": 30,
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:05:00.000Z"
+  }
+}
+```
+
+`payslipCount` is `0` for a `DRAFT` run (nothing generated yet) and
+equal to the number of active Employees snapshotted at `/process` time
+for `PROCESSING`/`FINALIZED`/`PAID` runs. Verified live implicitly —
+`payroll.service.test.js` doesn't assert on `payslipCount` directly, but
+`getPayrollRunById`'s `{ ...run, payslipCount }` merge is exercised by
+every test that calls it indirectly via the domain's own lifecycle
+tests.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)         | When                          |
+| ------ | ------------------------------------ | --------------------------------- | -------------------------------- |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint | `authMiddleware` failure    |
+| `403`  | Caller lacks `payrollRun:read`       | `"You do not have permission to perform this action"` | `MANAGER`/`EMPLOYEE` token |
+| `404`  | No such run                         | `"Payroll run not found"`         | Invalid/nonexistent `id`      |
+
+## 10. Postman Test Cases
+
+| #   | Case                                     | Expected |
+| --- | ------------------------------------------- | -------- |
+| 1   | `DRAFT` run, `payslipCount: 0`               | `200`    |
+| 2   | `PROCESSING`/`FINALIZED`/`PAID` run          | `200`, `payslipCount` matches actual generated count |
+| 3   | Nonexistent `id`                             | `404`    |
+| 4   | As `MANAGER`/`EMPLOYEE` token                 | `403`    |
+| 5   | No token                                     | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                | Expected |
+| --------------------------- | -------- |
+| Malformed (non-UUID) `id`   | `404`    |
+| Tampered/expired JWT        | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                     |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| A `DRAFT` run that was never processed                             | `payslipCount: 0` — by construction, `Payslip` rows only ever come into existence via `/process` (endpoint 73) |
+| `/process` skipped one or more employees mid-loop (a soft-delete race, §12 of endpoint 73) | `payslipCount` reflects the **actual** number of Payslips created, which can be fewer than the active-Employee count snapshotted at the start of `/process` |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot fetch a run — no
+  `payrollRun:read` grant exists for `MANAGER`.
+
+## 14. Database Impact
+
+Read-only — one `PayrollRun.findUnique` by primary key, one
+`Payslip.count` by `payrollRunId` (indexed).
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/payroll-runs/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('payrollRun:read')
+    ↓ (403 if not granted)
+payroll.controller.getById → payroll.service.getPayrollRunById(id)
+    ├─ payrollRunRepository.findById(id) → not found → 404
+    ├─ payrollRunRepository.countPayslips(id)
+    └─ return { ...run, payslipCount }
+    ↓
+200 { run }
+```
+
+## 16. Performance Notes
+
+Two single-row/indexed-count queries, run sequentially (not in
+`Promise.all`, unlike the list endpoints) — negligible for a single
+lookup.
+
+## 17. Interview Notes
+
+- **Q: Why isn't `payslipCount` a stored, denormalized column on
+  `PayrollRun`?** No verified requirement demanded it, and computing it
+  on read (a single indexed `count`) is cheap enough at this domain's
+  scale (one run per month, at most a few hundred Payslips per run) that
+  denormalizing it would add write-path complexity (keeping it in sync
+  across `/process`, and — hypothetically — any future correction path)
+  for no measured benefit, the same YAGNI reasoning `docs/domain-attendance.md`
+  §7 applies to `GET /attendance/effective-status`'s own computed-on-read
+  status.
+
+## 18. cURL Examples
+
+```bash
+curl -i http://localhost:3000/api/v1/payroll-runs/$PAYROLL_RUN_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Call this immediately after `PATCH .../process` (endpoint 73) to confirm
+`payslipCount` matches the number of active Employees at that time.
+
+## 20. Testing Checklist
+
+- ✅ `DRAFT` run → `payslipCount: 0`
+- ✅ Processed run → `payslipCount` matches generated Payslips
+- ✅ `404` for nonexistent `id`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+
+---
+
+---
+
+# 73. `PATCH /payroll-runs/:id/process`
+
+## 1. Endpoint Information
+
+```
+Feature:            Payroll Domain (2026-09-15, feature/23-payroll-domain)
+Endpoint:           Generate Payslips and move a run from DRAFT to PROCESSING
+Description:        Generates exactly one Payslip per active Employee, computing gross pay, unpaid-day deductions, and net pay
+Method:             PATCH
+URL:                /api/v1/payroll-runs/:id/process
+API Version:        v1
+Module:             modules/payroll
+Authentication:     Yes (Bearer access token)
+Authorization:      `payrollRun:process` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the single most consequential endpoint in this
+  domain — the one place `Payslip` rows are ever created
+  (`docs/domain-payroll.md` §2: "during PROCESSING, one Payslip is
+  generated per active Employee"). There is **no** `POST /payslips`
+  anywhere in this API; this action is the only creation path.
+- **What it computes, per active Employee** (`buildPayslipForEmployee`,
+  `payroll.service.js`):
+  1. **Attendance summary for the period**
+     (`summarizeAttendanceForPeriod`) — for every calendar day in
+     `periodMonth`/`periodYear`, calls `attendanceService.getEffectiveStatus(employeeId,
+     date, reader)` (the same coordinating read `GET
+     /attendance/effective-status`, endpoint 52, exposes) with a
+     synthetic internal reader (`{ id: actor.id, grantedPermissions:
+     ['attendance:read:any'] }` — a trusted service-to-service call
+     gated by this endpoint's own `payrollRun:process` permission, not a
+     user-facing delegation of Attendance's own access control):
+     - `HOLIDAY`/`WEEK_OFF` → excluded entirely from the working-day
+       denominator.
+     - `PRESENT`/`LATE` → one paid day (no lateness-pay deduction rule
+       exists anywhere in this project).
+     - `HALF_DAY` → `0.5` paid day + `0.5` unpaid day.
+     - `ABSENT` → one fully unpaid day.
+     - `ON_LEAVE` → a **second** lookup,
+       `leaveService.hasApprovedLeaveOnDate(employeeId, date)`, decides
+       paid vs. unpaid per that specific request's `LeaveType.isPaid`
+       (ADR-LV09) — accepted duplication of `getEffectiveStatus`'s own
+       internal `ON_LEAVE` resolution rather than changing that
+       function's return shape, which every other Attendance consumer
+       already depends on.
+  2. **Base pay**: `baseSalary = Employee.salary.toNumber()`
+     (snapshotted, per ADR-PR02 — never live-referenced again once
+     written).
+  3. **Deduction**: `perDayRate = workingDays > 0 ? baseSalary /
+     workingDays : 0`; `deduction = round(perDayRate × unpaidDays, 2)`.
+  4. **Net pay**: `round(baseSalary - deduction, 2)`.
+  5. **Line items**: always one `EARNING` — "Base Salary" (the full
+     `baseSalary`); a `DEDUCTION` — `` `Unpaid Absence (${unpaidDays}
+     day(s))` `` — is added **only when `deduction > 0`** (see Edge
+     Cases for the case where `unpaidDays > 0` yet no deduction line is
+     produced).
+  6. **Org-context snapshot** (ADR-PR02, `docs/domain-payroll.md` §3):
+     `employeeName` (from `Employee.user.name`, nullable),
+     `departmentName`, `designationName`, `branchName` (nullable),
+     `employmentType` are all copied at generation time — a Payslip
+     never live-joins to Employee/Department/Designation/Branch again,
+     so a later department transfer or salary change cannot silently
+     alter a Payslip already generated.
+  7. **No overtime line item** — `AttendanceRecord` has no overtime
+     field or verified overtime-rate concept anywhere in this project
+     (only `checkIn`/`checkOut` timestamps exist), a named limitation
+     (ADR-PR02's implementation note), not an oversight.
+- **Every Employment Type is processed identically** — `CONTRACT`
+  included — an explicitly accepted, unresolved trade-off
+  (`docs/domain-payroll.md` §6/§8 item 2): a per-invoice contractor pay
+  model isn't designed here.
+- **Status transition**: `DRAFT` → `PROCESSING` only; a run at any other
+  status is refused.
+- **"Active" Employee**: `employeeRepository.findAllActiveWithOrgContext()`
+  filters on `deletedAt: null` (the same soft-delete convention
+  ADR-006 established) — a soft-deleted (offboarded) Employee never gets
+  a Payslip for a run processed after their offboarding.
+- **Expected callers**: `ADMIN` only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                            |
+| --------------------------------------- | -------- | ------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `payrollRun:process` permission |
+
+No `Content-Type` is needed — no body is sent.
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ------------------------ |
+| `id` | string (UUID) | **Yes**  | The PayrollRun's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None. **This endpoint never accepts a body** — verified against
+`payrollRun.routes.js`, whose `/process` route wires only
+`requirePermission('payrollRun:process')` and the controller, with no
+`validateMiddleware` call at all.
+
+## 7. Validation Rules
+
+No body to validate. The service layer, in order:
+
+1. `payrollRunRepository.findById(id)` → `404` if missing.
+2. `run.status !== 'DRAFT'` → `409`.
+3. Snapshot every active Employee
+   (`findAllActiveWithOrgContext`, includes `department`, `designation`,
+   `branch`, `user`).
+4. For each snapshotted employee, build a Payslip (see §2 above) —
+   **outside** any database transaction, since this step is the slow,
+   awaited, cross-domain-read part.
+5. Open one `prisma.$transaction` that updates the run's `status` to
+   `PROCESSING`, inserts every built Payslip + its line items, and
+   writes one `AuditLog` row per Payslip plus one for the run update.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "run": {
+    "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "periodMonth": 9,
+    "periodYear": 2026,
+    "status": "PROCESSING",
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:05:00.000Z"
+  }
+}
+```
+
+Note this response is the bare `run` object — **not** the generated
+Payslips themselves; fetch those via `GET /payslips?payrollRunId=...`
+(endpoint 77) or `GET /payroll-runs/:id` (endpoint 72) for the count.
+Verified live (`payroll.service.test.js`'s "processPayrollRun computes
+paid/unpaid days and net pay across present, absent, half-day, and both
+paid and unpaid leave" case) — a worked example from that test: a
+30/31-day month, 3 `PRESENT` days, 1 `HALF_DAY`, 1 unpaid-leave day, 1
+paid-leave day, and the remainder `ABSENT` (no record, no leave) on a
+`3100` monthly salary produces the exact `paidDays`/`unpaidDays`/
+`totalDeductions`/`netPay` the test asserts against, computed the same
+way this endpoint computes it for every employee.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                     | When                                                                 |
+| ------ | ------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                            | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks `payrollRun:process`   | `"You do not have permission to perform this action"`             | `MANAGER`/`EMPLOYEE` token                                                  |
+| `404`  | No such run                         | `"Payroll run not found"`                                          | Invalid/nonexistent `id`                                                   |
+| `409`  | Run is not `DRAFT`                  | `"Only a DRAFT payroll run can be processed"`                     | Already `PROCESSING`/`FINALIZED`/`PAID` — verified live (lifecycle-guard test) |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                          | Expected |
+| --- | ------------------------------------------------------------------ | -------- |
+| 1   | Process a `DRAFT` run with active employees                        | `200`, `status: "PROCESSING"` — verified live |
+| 2   | Process a `DRAFT` run with **zero** active employees                | `200`, `status: "PROCESSING"`, 0 Payslips generated |
+| 3   | Re-process an already-`PROCESSING` run                              | `409` — verified live |
+| 4   | Process a `FINALIZED`/`PAID` run                                    | `409`    |
+| 5   | Nonexistent `id`                                                    | `404`    |
+| 6   | As `MANAGER`/`EMPLOYEE` token                                        | `403`    |
+| 7   | No token                                                            | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Body sent anyway                    | `200` — the body is never read                                              |
+| Tampered/expired JWT                | `401`                                                                       |
+| Double-`PATCH .../process` fired concurrently | Only one can win the `status !== 'DRAFT'` check against a consistent read — not independently verified under true database-level concurrency (the same honest caveat other lifecycle-guard endpoints in this codebase carry) |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An active Employee is soft-deleted (offboarded) **during** the (slow, per-employee, awaited) processing loop | That employee's `buildPayslipForEmployee` call is wrapped in a `try/catch` that swallows only a `NotFoundError` and continues the loop — the employee is silently skipped, not counted as a failure of the whole run. Any **other** error type still propagates and aborts the entire `/process` call. |
+| Employee has no linked `User`                                      | `employeeName` is snapshotted as `null` — this does not block Payslip generation                                                                       |
+| Employee has no `branchId`                                          | `branchName` is `null`; the `HOLIDAY` leg of the daily status computation is skipped entirely for every day in the period (same as `GET /attendance/effective-status`'s own documented behavior) |
+| Employee has no `shiftId`                                           | The `WEEK_OFF` leg is skipped — every calendar day in the period counts toward `workingDays`                                                            |
+| Every day in the period resolves to `HOLIDAY`/`WEEK_OFF` (theoretical: `workingDays = 0`) | `perDayRate` is defined as `0` rather than dividing by zero, so `deduction = 0` and `netPay = baseSalary` regardless of `unpaidDays` — full pay, no deduction line, even if some of those excluded days would otherwise have been `ABSENT` |
+| `unpaidDays > 0` but the computed `deduction` rounds to exactly `0` (only possible when `workingDays = 0`, per the row above) | **No `DEDUCTION` line item is added** — the line item is gated on `deduction > 0`, not `unpaidDays > 0`; the Payslip's own `unpaidDays` field still reflects the true count even though no line item explains it |
+| `CONTRACT`-type Employee                                            | Processed identically to `FULL_TIME`/`PART_TIME`/`INTERN` — no per-invoice branch exists (`docs/domain-payroll.md` §6/§8 item 2, an explicitly accepted trade-off, not a bug) |
+| Zero active employees at all                                        | `200`, run moves to `PROCESSING`, `payslipCount` is `0` — not an error |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER`/`EMPLOYEE` cannot trigger
+  processing — no `payrollRun:process` grant exists for either.
+- **Internal cross-domain read is not a privilege-escalation surface**:
+  the synthetic `{ grantedPermissions: ['attendance:read:any'] }` reader
+  passed to `attendanceService.getEffectiveStatus` is constructed
+  server-side inside `payroll.service.js` and never derived from or
+  influenced by the actual caller's own token/permissions — a caller
+  cannot widen or narrow what this internal read is allowed to see.
+
+## 14. Database Impact
+
+- **Tables affected**: `PayrollRun` (update), `Payslip` (N inserts, one
+  per successfully built employee), `PayslipLineItem` (one or two
+  inserts per Payslip via `createMany`), `AuditLog` (N+1 inserts — one
+  per Payslip, plus one for the run update).
+- **Transactions**: **all** of the above writes happen inside **one**
+  `prisma.$transaction` — but the expensive read work that builds each
+  Payslip's data happens **before** that transaction opens, awaited one
+  employee at a time.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/payroll-runs/:id/process
+    ↓
+authMiddleware
+    ↓
+requirePermission('payrollRun:process')
+    ↓ (403 if not granted)
+payroll.controller.process → payroll.service.processPayrollRun(id, actor)
+    ├─ payrollRunRepository.findById(id) → not found → 404
+    ├─ run.status !== 'DRAFT' → 409
+    ├─ employeeRepository.findAllActiveWithOrgContext()  [snapshot, outside any transaction]
+    ├─ for each employee (sequential, awaited):
+    │    └─ buildPayslipForEmployee(employee, run.id, periodMonth, periodYear, actor)
+    │         ├─ summarizeAttendanceForPeriod: for each day 1..daysInMonth
+    │         │    └─ attendanceService.getEffectiveStatus(employeeId, date, internalReader)
+    │         │         └─ (ON_LEAVE) leaveService.hasApprovedLeaveOnDate(employeeId, date)
+    │         ├─ (NotFoundError from a since-offboarded employee) → caught, skipped
+    │         └─ compute baseSalary/perDayRate/deduction/netPay/lineItems
+    └─ prisma.$transaction:
+         ├─ payrollRunRepository.update(id, { status: 'PROCESSING' }, tx)
+         ├─ for each built payslip:
+         │    ├─ payslipRepository.create(payslipData, tx)
+         │    ├─ payslipRepository.createLineItems(lineItems, tx)
+         │    └─ auditLogRepository.create({ action: 'CREATE', entityType: 'Payslip', ... }, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'PayrollRun', ... }, tx)
+    ↓
+200 { run }
+```
+
+## 16. Performance Notes
+
+**The single most expensive operation in this entire API.** Per active
+Employee, `summarizeAttendanceForPeriod` calls
+`attendanceService.getEffectiveStatus` once for **every calendar day**
+in the period (28-31 times), and each of those calls can itself perform
+up to five sequential single-row lookups (`GET
+/attendance/effective-status`, endpoint 52, §16) plus, on an `ON_LEAVE`
+day, one more `leaveService.hasApprovedLeaveOnDate` read. For a
+30-employee company on a 30-day month, that's on the order of 900
+`getEffectiveStatus` calls, each up to five lookups deep, run
+**sequentially** (not `Promise.all`'d across employees or days) before
+the database transaction ever opens. `docs/domain-payroll.md` §10 names
+this explicitly as a real, medium-likelihood risk ("Five-domain read
+orchestration ... at run time could be a real performance concern for
+large employee counts"), mitigated for now only by keeping the slow
+read phase entirely outside the transaction (avoiding a Prisma
+interactive-transaction timeout), not by batching or caching the
+per-day status lookups — a deliberate, named deferral, not an oversight.
+`GET /attendance/effective-status`'s own Performance Notes (endpoint 52,
+§16) had already flagged "a company-wide monthly report calling this
+once per employee per day" as the exact future scenario a
+read-model/cache might be needed for — this endpoint is that scenario,
+materialized.
+
+## 17. Interview Notes
+
+- **Q: Why does the expensive read work happen outside the database
+  transaction?** `payroll.service.js`'s own comment on
+  `processPayrollRun` is explicit: computing all of it inside one
+  long-held `prisma.$transaction` risked exceeding Prisma's interactive-
+  transaction timeout for any realistic employee count — a real
+  correctness risk, not just a performance nicety. Only the actual
+  writes (run status, Payslips, line items, audit logs) are
+  transactional; the reads that produce their data happen first,
+  awaited one employee at a time.
+- **Q: What happens if an employee is offboarded mid-processing?**
+  Snapshotting the employee list once, then processing one at a time via
+  several slow awaited cross-domain reads each, opens a real window in
+  which an employee could be soft-deleted between the snapshot and their
+  own turn. The code explicitly catches only `NotFoundError` around each
+  employee's build step and skips that employee rather than failing the
+  whole run — a deliberate choice for that specific race, not a general
+  error-suppression pattern (any other exception still aborts
+  processing).
+- **Q: Why is there no overtime line item despite `docs/domain-payroll.md`
+  §3 mentioning "overtime" as an attendance input?** `AttendanceRecord`
+  has no overtime field or verified overtime-rate concept anywhere in
+  this project — only `checkIn`/`checkOut` timestamps exist. Inventing
+  an overtime calculation now would repeat exactly the mistake Leave's
+  own sign-off avoided around employment-type entitlement adjustment:
+  building a rule nobody verified. Named explicitly as a known
+  limitation in ADR-PR02's implementation note, not silently dropped.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/payroll-runs/$PAYROLL_RUN_ID/process \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Seed at least one employee with a mix of `PRESENT`/`ABSENT`/`HALF_DAY`
+attendance and one approved leave (both paid and unpaid `LeaveType`s) in
+the target period before calling this, then follow with `GET
+/payslips?payrollRunId={{payrollRunId}}` to inspect the generated
+Payslips' computed fields — mirrors `payroll.service.test.js`'s own
+fixture-building pattern.
+
+## 20. Testing Checklist
+
+- ✅ `DRAFT` → `PROCESSING`, one Payslip per active employee (verified live)
+- ✅ Correct `paidDays`/`unpaidDays`/`grossPay`/`totalDeductions`/`netPay`
+  across `PRESENT`/`ABSENT`/`HALF_DAY`/paid-leave/unpaid-leave (verified live)
+- ✅ `EARNING` "Base Salary" line always present; `DEDUCTION` line only
+  when `deduction > 0` (verified live)
+- ✅ Non-`DRAFT` run → `409` (verified live)
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ Zero active employees → `200`, 0 Payslips
+- ✅ `AuditLog` rows created for every Payslip plus the run update
+
+---
+
+---
+
+# 74. `PATCH /payroll-runs/:id/finalize`
+
+## 1. Endpoint Information
+
+```
+Feature:            Payroll Domain (2026-09-15, feature/23-payroll-domain)
+Endpoint:           Finalize a PROCESSING run
+Description:        Moves a run from PROCESSING to FINALIZED - the point at which its Payslips become immutable
+Method:             PATCH
+URL:                /api/v1/payroll-runs/:id/finalize
+API Version:        v1
+Module:             modules/payroll
+Authentication:     Yes (Bearer access token)
+Authorization:      `payrollRun:finalize` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: enacts this domain's central lifecycle rule
+  (`docs/domain-payroll.md` §2, ADR-PR01): **"once a PayrollRun is
+  FINALIZED, its Payslips become immutable."** This transition is the
+  moment that rule takes effect.
+- **The rule is enforced by omission, not a guard**: there is no
+  `PATCH`/`PUT` endpoint for a `Payslip` at **any** lifecycle status —
+  not just once `FINALIZED` (ADR-PR01's own summary: "There is no edit
+  endpoint for a Payslip at any status, not just at FINALIZED — the rule
+  is enforced by omission, not a guarded update path"). `/finalize`
+  itself doesn't need to lock anything down at the Payslip level,
+  because nothing could ever unlock it in the first place.
+- **No "unfinalize"**: this is a one-way transition — there is no
+  endpoint anywhere to move a run back from `FINALIZED` to
+  `PROCESSING`. A correction to a past period is made via an adjustment
+  entry in a **subsequent** run, never by editing history (mirroring
+  standard accounting practice — never edit closed books, post
+  correcting entries instead).
+- **Expected callers**: `ADMIN` only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                             |
+| --------------------------------------- | -------- | ------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `payrollRun:finalize` permission |
+
+No `Content-Type` is needed — no body is sent.
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ------------------------ |
+| `id` | string (UUID) | **Yes**  | The PayrollRun's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None. **This endpoint never accepts a body** — verified against
+`payrollRun.routes.js`: the `/finalize` route wires only
+`requirePermission('payrollRun:finalize')` and the controller.
+
+## 7. Validation Rules
+
+No body to validate.
+
+1. `payrollRunRepository.findById(id)` → `404` if missing.
+2. `run.status !== 'PROCESSING'` → `409`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "run": {
+    "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "periodMonth": 9,
+    "periodYear": 2026,
+    "status": "FINALIZED",
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:10:00.000Z"
+  }
+}
+```
+
+Verified live (`payroll.service.test.js`'s lifecycle-guard test:
+`finalizePayrollRun` after `processPayrollRun` asserts
+`finalized.status === 'FINALIZED'`).
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                            | When                                                                 |
+| ------ | ------------------------------------ | ------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks `payrollRun:finalize`  | `"You do not have permission to perform this action"` | `MANAGER`/`EMPLOYEE` token                                                  |
+| `404`  | No such run                         | `"Payroll run not found"`                              | Invalid/nonexistent `id`                                                   |
+| `409`  | Run is not `PROCESSING`             | `"Only a PROCESSING payroll run can be finalized"`    | `DRAFT`/`FINALIZED`/`PAID` — verified live for the `DRAFT` case (lifecycle-guard test asserts this exact message before processing) |
+
+## 10. Postman Test Cases
+
+| #   | Case                                     | Expected |
+| --- | ------------------------------------------- | -------- |
+| 1   | Finalize a `PROCESSING` run                  | `200` — verified live |
+| 2   | Finalize a `DRAFT` run                       | `409` — verified live |
+| 3   | Finalize an already-`FINALIZED` run           | `409`    |
+| 4   | Finalize a `PAID` run                        | `409`    |
+| 5   | Nonexistent `id`                             | `404`    |
+| 6   | As `MANAGER`/`EMPLOYEE` token                 | `403`    |
+| 7   | No token                                     | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Body sent anyway                    | `200` — the body is never read                                              |
+| Tampered/expired JWT                | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                       |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| A run with `payslipCount: 0` (all employees skipped mid-`/process` via the offboarding race, endpoint 73 §12) | `200` — finalization has no minimum-Payslip-count requirement; a run with zero generated Payslips can still be finalized |
+| Concurrent `/finalize` calls                                       | Only one can win the `status !== 'PROCESSING'` check against a consistent read — not independently verified under true concurrency        |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER`/`EMPLOYEE` cannot finalize a run
+  — no `payrollRun:finalize` grant exists for either.
+
+## 14. Database Impact
+
+- **Tables affected**: `PayrollRun` (update), `AuditLog` (insert), inside
+  one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/payroll-runs/:id/finalize
+    ↓
+authMiddleware
+    ↓
+requirePermission('payrollRun:finalize')
+    ↓ (403 if not granted)
+payroll.controller.finalize → payroll.service.finalizePayrollRun(id, actor)
+    ├─ payrollRunRepository.findById(id) → not found → 404
+    ├─ run.status !== 'PROCESSING' → 409
+    └─ prisma.$transaction:
+         ├─ payrollRunRepository.update(id, { status: 'FINALIZED' }, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'PayrollRun', ... }, tx)
+    ↓
+200 { run }
+```
+
+## 16. Performance Notes
+
+One indexed lookup, one update, one audit-log insert — no notable
+performance concerns, unlike `/process`. This endpoint does not touch
+`Payslip` rows at all; their immutability is structural (no edit
+endpoint exists), not something `/finalize` has to actively lock.
+
+## 17. Interview Notes
+
+- **Q: Why doesn't `/finalize` itself do anything to the Payslip rows —
+  set a "locked" flag, for instance?** Because nothing in this API can
+  ever modify a Payslip regardless of its run's status — there is no
+  `PATCH /payslips/:id` at all (ADR-PR01). A "locked" flag would be
+  redundant state to keep in sync for a rule that's already true by
+  construction.
+- **Q: Why is there no "unfinalize" path?** `docs/domain-payroll.md` §2
+  frames this explicitly as mirroring standard accounting practice:
+  never edit closed books, post correcting entries instead. Allowing a
+  reversal would reopen exactly the immutability guarantee this
+  transition exists to provide.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/payroll-runs/$PAYROLL_RUN_ID/finalize \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run only after a successful `/process` (endpoint 73); assert `409` when
+attempted directly from `DRAFT` to confirm the lifecycle guard.
+
+## 20. Testing Checklist
+
+- ✅ `PROCESSING` → `FINALIZED` → `200` (verified live)
+- ✅ From `DRAFT`/`FINALIZED`/`PAID` → `409` (verified live for `DRAFT`)
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 75. `PATCH /payroll-runs/:id/mark-paid`
+
+## 1. Endpoint Information
+
+```
+Feature:            Payroll Domain (2026-09-15, feature/23-payroll-domain)
+Endpoint:           Record that a FINALIZED run has been paid out
+Description:        A pure status transition (FINALIZED to PAID) - no recalculation of any kind
+Method:             PATCH
+URL:                /api/v1/payroll-runs/:id/mark-paid
+API Version:        v1
+Module:             modules/payroll
+Authentication:     Yes (Bearer access token)
+Authorization:      `payrollRun:markPaid` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: records the final lifecycle fact — that the
+  amounts a `FINALIZED` run calculated were actually disbursed
+  (`docs/domain-payroll.md` §2). `PAID` is the terminal status; nothing
+  in this API transitions a run away from it.
+- **A pure status transition, not a recalculation** — the service
+  function's own comment is explicit about this: `markPayrollRunPaid`
+  does not touch `Payslip` data, recompute anything, or interact with
+  any bank/payment system. It only records that disbursement happened,
+  presumably by some external process this domain deliberately does not
+  model (`docs/domain-payroll.md` §6/§9: "external systems (bank file
+  export, statutory filing)" are explicitly out of scope).
+- **Expected callers**: `ADMIN` only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                             |
+| --------------------------------------- | -------- | ------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `payrollRun:markPaid` permission |
+
+No `Content-Type` is needed — no body is sent.
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ------------------------ |
+| `id` | string (UUID) | **Yes**  | The PayrollRun's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None. **This endpoint never accepts a body** — verified against
+`payrollRun.routes.js`: the `/mark-paid` route wires only
+`requirePermission('payrollRun:markPaid')` and the controller.
+
+## 7. Validation Rules
+
+No body to validate.
+
+1. `payrollRunRepository.findById(id)` → `404` if missing.
+2. `run.status !== 'FINALIZED'` → `409`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "run": {
+    "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "periodMonth": 9,
+    "periodYear": 2026,
+    "status": "PAID",
+    "createdAt": "2026-09-15T10:00:00.000Z",
+    "updatedAt": "2026-09-15T10:15:00.000Z"
+  }
+}
+```
+
+Verified live (`payroll.service.test.js`'s lifecycle-guard test:
+`markPayrollRunPaid` after `finalizePayrollRun` asserts `paid.status ===
+'PAID'`).
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                  | When                                                                 |
+| ------ | ------------------------------------ | -------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                        | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks `payrollRun:markPaid`  | `"You do not have permission to perform this action"`         | `MANAGER`/`EMPLOYEE` token                                                  |
+| `404`  | No such run                         | `"Payroll run not found"`                                      | Invalid/nonexistent `id`                                                   |
+| `409`  | Run is not `FINALIZED`              | `"Only a FINALIZED payroll run can be marked as paid"`        | `DRAFT`/`PROCESSING`/`PAID` — verified live for the `DRAFT` case (lifecycle-guard test asserts this exact message before processing) |
+
+## 10. Postman Test Cases
+
+| #   | Case                                     | Expected |
+| --- | ------------------------------------------- | -------- |
+| 1   | Mark a `FINALIZED` run paid                  | `200` — verified live |
+| 2   | Mark a `DRAFT` run paid                      | `409` — verified live |
+| 3   | Mark a `PROCESSING` run paid                 | `409`    |
+| 4   | Mark an already-`PAID` run paid               | `409`    |
+| 5   | Nonexistent `id`                             | `404`    |
+| 6   | As `MANAGER`/`EMPLOYEE` token                 | `403`    |
+| 7   | No token                                     | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Body sent anyway                    | `200` — the body is never read                                              |
+| Tampered/expired JWT                | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                     |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| Concurrent `/mark-paid` calls                                      | Only one can win the `status !== 'FINALIZED'` check against a consistent read — not independently verified under true concurrency |
+| A run with `payslipCount: 0`                                        | `200` — no minimum-Payslip-count requirement, same as `/finalize` |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER`/`EMPLOYEE` cannot mark a run
+  paid — no `payrollRun:markPaid` grant exists for either.
+
+## 14. Database Impact
+
+- **Tables affected**: `PayrollRun` (update), `AuditLog` (insert), inside
+  one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/payroll-runs/:id/mark-paid
+    ↓
+authMiddleware
+    ↓
+requirePermission('payrollRun:markPaid')
+    ↓ (403 if not granted)
+payroll.controller.markPaid → payroll.service.markPayrollRunPaid(id, actor)
+    ├─ payrollRunRepository.findById(id) → not found → 404
+    ├─ run.status !== 'FINALIZED' → 409
+    └─ prisma.$transaction:
+         ├─ payrollRunRepository.update(id, { status: 'PAID' }, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'PayrollRun', ... }, tx)
+    ↓
+200 { run }
+```
+
+## 16. Performance Notes
+
+One indexed lookup, one update, one audit-log insert — no notable
+performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why must a run be `FINALIZED` before it can be marked `PAID`,
+  rather than allowing `PROCESSING` → `PAID` directly?** The
+  immutability guarantee (ADR-PR01) is meant to apply before a run is
+  ever recorded as paid — allowing payment to be recorded against
+  Payslips that could, in principle, still be part of an in-progress
+  `PROCESSING` run would undercut the "pay only what was finalized"
+  guarantee this lifecycle is built around.
+- **Q: Why does this domain model "paid" as a status on the run rather
+  than a boolean/timestamp on each Payslip?** `docs/domain-payroll.md`
+  §2 treats payment as a whole-run event ("Payment recording: moving to
+  PAID records that the calculated amounts were actually disbursed") —
+  no verified requirement calls for per-Payslip partial-payment
+  tracking, so the simpler run-level status is what was built.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/payroll-runs/$PAYROLL_RUN_ID/mark-paid \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run only after a successful `/finalize` (endpoint 74); assert `409` when
+attempted directly from `DRAFT`/`PROCESSING` to confirm the lifecycle
+guard.
+
+## 20. Testing Checklist
+
+- ✅ `FINALIZED` → `PAID` → `200` (verified live)
+- ✅ From `DRAFT`/`PROCESSING`/`PAID` → `409` (verified live for `DRAFT`)
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 76. `DELETE /payroll-runs/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Payroll Domain (2026-09-15, feature/23-payroll-domain)
+Endpoint:           Delete a DRAFT Payroll Run
+Description:        Permanently removes a PayrollRun row - only while it is still DRAFT
+Method:             DELETE
+URL:                /api/v1/payroll-runs/:id
+API Version:        v1
+Module:             modules/payroll
+Authentication:     Yes (Bearer access token)
+Authorization:      `payrollRun:delete` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: covers the genuine data-entry-mistake case — a run
+  created for the wrong period, never processed — without leaving a
+  permanent `DRAFT` row behind.
+- **DRAFT-only, by construction rather than by reference count**: every
+  prior master-data domain's delete guard (Branch/Department/
+  Designation/Shift/Holiday Calendar/Leave Type) counts **references**
+  from other tables before allowing a hard delete. This endpoint instead
+  guards on **lifecycle status**: only a `DRAFT` run may be deleted, and
+  a `DRAFT` run has, by construction, **zero** Payslips — they only ever
+  come into existence via `/process` (endpoint 73), which is also the
+  transition out of `DRAFT`. The two guards are equivalent in practice
+  here, expressed through status instead of a `count(...)` query.
+- **A direct, structural consequence**: because `/process`,
+  `/finalize`, and `/mark-paid` only ever move a run **forward**
+  (`DRAFT` → `PROCESSING` → `FINALIZED` → `PAID`, with no reverse path
+  anywhere in this API), once a run leaves `DRAFT` it can **never** be
+  deleted through this API again — not at `PROCESSING`, `FINALIZED`, or
+  `PAID`. A Payslip, once generated, is therefore permanent for the
+  lifetime of the application, with no delete path at all.
+- **Expected callers**: `ADMIN` only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| --------------------------------------- | -------- | ---------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `payrollRun:delete` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ------------------------ |
+| `id` | string (UUID) | **Yes**  | The PayrollRun's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check, the record's existence, and the
+`status === 'DRAFT'` check.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Payroll run deleted successfully"
+}
+```
+
+Verified live (`payroll.service.test.js`'s "deletePayrollRun succeeds
+for a DRAFT run with zero Payslips" case — confirms the row is gone via
+a direct `prisma.payrollRun.findUnique` returning `null` afterward).
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                             | When                                                                 |
+| ------ | ------------------------------------ | -------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks `payrollRun:delete`    | `"You do not have permission to perform this action"`   | `MANAGER`/`EMPLOYEE` token                                                  |
+| `404`  | No such run                         | `"Payroll run not found"`                                | Invalid/nonexistent `id`                                                   |
+| `409`  | Run is not `DRAFT`                  | `"Only a DRAFT payroll run can be deleted"`             | `PROCESSING`/`FINALIZED`/`PAID` — verified live (lifecycle-guard test, after processing) |
+
+## 10. Postman Test Cases
+
+| #   | Case                                     | Expected |
+| --- | ------------------------------------------- | -------- |
+| 1   | Delete a `DRAFT` run                         | `200` — verified live |
+| 2   | Delete a `PROCESSING`/`FINALIZED`/`PAID` run  | `409` — verified live for `PROCESSING` |
+| 3   | Nonexistent `id`                             | `404`    |
+| 4   | As `MANAGER`/`EMPLOYEE` token                 | `403`    |
+| 5   | No token                                     | `401`    |
+
+## 11. Negative Testing
+
+| Scenario              | Expected |
+| ------------------------ | -------- |
+| Malformed (non-UUID) `id` | `404`    |
+| Tampered/expired JWT      | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                       |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Concurrent delete requests for the same `id`                       | One succeeds, the other sees `404` — not independently verified under true concurrency                                                    |
+| Attempting to delete any run that has ever been processed          | Always `409`, permanently — there is no scenario in which a `PROCESSING`/`FINALIZED`/`PAID` run becomes deletable again, since no endpoint moves a run backward in status |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER`/`EMPLOYEE` cannot delete a run —
+  no `payrollRun:delete` grant exists for either.
+- **Idempotency under retry**: a retried `DELETE` gets a safe `404` on
+  the second attempt.
+
+## 14. Database Impact
+
+- **Tables affected**: `PayrollRun` (delete), `AuditLog` (insert), inside
+  one `prisma.$transaction`.
+- **DB-level backstop**: `Payslip.payrollRunId`'s `onDelete: Cascade`
+  means that even if a `PayrollRun` with existing Payslips were somehow
+  deleted, its Payslips would cascade-delete with it — but this is
+  structurally unreachable through the API, since the `status ===
+  'DRAFT'` guard above always blocks deletion once any Payslip exists.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/payroll-runs/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('payrollRun:delete')
+    ↓ (403 if not granted)
+payroll.controller.remove → payroll.service.deletePayrollRun(id, actor)
+    ├─ payrollRunRepository.findById(id) → not found → 404
+    ├─ run.status !== 'DRAFT' → 409
+    └─ prisma.$transaction:
+         ├─ payrollRunRepository.remove(id, tx)
+         └─ auditLogRepository.create({ action: 'DELETE', beforeData, afterData: null, ... }, tx)
+    ↓
+200 { message: "Payroll run deleted successfully" }
+```
+
+## 16. Performance Notes
+
+One indexed existence lookup, one delete, one audit-log insert — no
+notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why guard on lifecycle status instead of counting Payslip
+  references, like every other master-data domain's delete guard?** A
+  `DRAFT` run's Payslip count is always and unconditionally zero by
+  construction — `/process` is the only path that creates Payslips, and
+  it's also the only transition out of `DRAFT`. A reference-count query
+  would be functionally equivalent but strictly more expensive for a
+  fact that's already guaranteed true by the state machine itself.
+- **Q: Is there any way to remove a processed run's data at all?** No —
+  once a run leaves `DRAFT`, this API provides no delete path for it or
+  its Payslips at any later status. This is a deliberate consequence of
+  the immutability rule (ADR-PR01), not a missing feature: allowing
+  deletion of a `FINALIZED`/`PAID` run's financial records would defeat
+  the entire point of finalization.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/payroll-runs/$PAYROLL_RUN_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this only against a `{{payrollRunId}}` still in `DRAFT`; for any
+already-processed run, expect and assert on the `409`.
+
+## 20. Testing Checklist
+
+- ✅ Delete a `DRAFT` run → `200` (verified live)
+- ✅ Delete a non-`DRAFT` run → `409` (verified live)
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `404` for nonexistent `id`
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 77. `GET /payslips`
+
+## 1. Endpoint Information
+
+```
+Feature:            Payroll Domain (2026-09-15, feature/23-payroll-domain)
+Endpoint:           List Payslips
+Method:             GET
+URL:                /api/v1/payslips
+API Version:        v1
+Module:             modules/payroll
+Authentication:     Yes (Bearer access token)
+Authorization:      `payslip:read:any` OR `payslip:read:own`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: browse Payslips — for `ADMIN` payroll
+  administration across every employee, and for an employee's own pay
+  history (`docs/domain-payroll.md` §2: "who consumes: the employee").
+- **Same auto-scoping shape as `GET /leave-requests`/`GET
+  /leave-balances`** (endpoints 62/67): a caller **without**
+  `payslip:read:any` is not refused — they are auto-scoped to their own
+  Employee's Payslips instead (`listPayslips` in `payroll.service.js`).
+  Any `employeeId` filter such a caller supplies is silently overridden
+  by their own Employee id.
+- **`MANAGER` does not get `:any` here — a real divergence from
+  Leave's pattern, verified in `prisma/seed.js`**: `MANAGER` holds only
+  `payslip:read:own`, the exact same single grant `EMPLOYEE` has — unlike
+  `leaveRequest:read:any`/`leaveBalance:read:any`, which `MANAGER` **does**
+  hold. `docs/domain-payroll.md` ADR-PR06 states the reasoning directly:
+  no verified requirement extends payroll visibility to managers over
+  their reports, and pay is treated as more sensitive than leave status.
+  A `MANAGER` calling this endpoint sees only **their own** Payslips (if
+  they have a linked Employee record at all), never their reports'.
+- **List items never include `lineItems`** — only `GET /payslips/:id`
+  (endpoint 78) does, per `PayslipSchema`'s own `.meta()` description.
+- **Expected callers**: any authenticated user — `EMPLOYEE`/`MANAGER`
+  see only their own pay history; `ADMIN` sees everyone's via `:any`.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                  |
+| --------------------------------------- | -------- | ------------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `payslip:read:any` or `payslip:read:own` |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name           | Type          | Required | Default     | Description                                                                 |
+| ---------------- | ------------- | -------- | ------------- | --------------------------------------------------------------------------- |
+| `page`         | integer       | No       | `1`         | 1-indexed page number                                                        |
+| `limit`        | integer       | No       | `10` (max 100) | Page size                                                                    |
+| `employeeId`   | string (UUID) | No       | —           | **Only honored when the caller holds `:any`** — silently overridden to the caller's own Employee id otherwise |
+| `payrollRunId` | string (UUID) | No       | —           | Filter to one run — honored regardless of `:own`/`:any` scope, combinable with the (possibly overridden) `employeeId` |
+| `sortBy`       | enum          | No       | `periodYear` | `periodYear`, `periodMonth`, `netPay`, `createdAt`                            |
+| `order`        | enum          | No       | `desc`      | `asc` or `desc`                                                              |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same `page`/`limit`/sort shape as every other list endpoint
+(`listPayslipsQuerySchema`). `employeeId`/`payrollRunId` must be valid
+UUIDs when present but are **not** checked for existence — filtering by
+a nonexistent id simply returns an empty `payslips` array. `sortBy`
+accepts `netPay`, sorting by a `Decimal` column directly — no numeric
+precision concern in practice at this scale.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "payslips": [
+    {
+      "id": "a7b8c9d0-e1f2-4a3b-4c5d-6f7a8b9c0d1e",
+      "payrollRunId": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+      "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "periodMonth": 9,
+      "periodYear": 2026,
+      "employeeName": "Priya Sharma",
+      "departmentName": "Engineering",
+      "designationName": "Senior Software Engineer",
+      "branchName": "Bengaluru HQ",
+      "employmentType": "FULL_TIME",
+      "baseSalary": "50000",
+      "workingDaysInPeriod": "22",
+      "paidDays": "21",
+      "unpaidDays": "1",
+      "grossPay": "50000",
+      "totalDeductions": "2272.73",
+      "netPay": "47727.27",
+      "generatedAt": "2026-09-15T10:05:00.000Z",
+      "createdAt": "2026-09-15T10:05:00.000Z",
+      "updatedAt": "2026-09-15T10:05:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+**Every `Decimal` field (`baseSalary`, `workingDaysInPeriod`, `paidDays`,
+`unpaidDays`, `grossPay`, `totalDeductions`, `netPay`) serializes as a
+JSON string, not a number** — the same Prisma-`Decimal`-as-string
+convention already established for Leave's `entitlement`/`consumed`/
+`durationDays` (endpoints 67-69). `lineItems` is **absent** from every
+item in this list response. Verified live
+(`payroll.service.test.js`'s "listPayslips auto-scopes to the caller's
+own employeeId without payslip:read:any" case).
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                                       |
+| ------ | ------------------------------------ | -------------------------------------------------------- | --------------------------------------------- |
+| `400`  | A query parameter failed validation | e.g. `"limit: Too big: expected number to be <=100"`     | Out-of-bounds `limit`, invalid `sortBy`       |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                    |
+| `403`  | Caller lacks both `payslip:read:any` and `payslip:read:own` | `"You do not have permission to perform this action"` | Not expected in practice — every seeded role has at least `payslip:read:own` |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                        | Expected |
+| --- | ------------------------------------------------------------- | -------- |
+| 1   | `ADMIN`, default pagination (`:any`)                            | `200`, all employees' Payslips |
+| 2   | `EMPLOYEE`, default pagination (`:own`, auto-scoped)             | `200`, only their own Payslips — verified live |
+| 3   | `MANAGER`, default pagination                                    | `200`, only **their own** Payslips (not their reports') — `MANAGER` has no `:any` grant |
+| 4   | `EMPLOYEE`/`MANAGER` supplies a different `employeeId`           | `200`, silently ignored — still only their own Payslips |
+| 5   | `payrollRunId` filter combined with auto-scoped `employeeId`     | `200`, only that run's Payslip for the caller's own employee |
+| 6   | `sortBy=netPay&order=asc`                                        | `200`    |
+| 7   | `limit=101`                                                      | `400`    |
+| 8   | No token                                                        | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                | Expected                                                          |
+| -------------------------------------------- | -------------------------------------------------------------------------- |
+| `sortBy` value outside the allowlist          | `400`                                                                       |
+| A `:own`-only caller with no linked Employee record | `200` with an empty `payslips` array, not an error — mirrors Leave's identical `listLeaveRequests` code path; not independently exercised by a dedicated Payroll test, but the same `!ownEmployee` early return |
+| Tampered/expired JWT                         | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                             | Expected Behavior                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `page` beyond the last page             | `200` with an empty `payslips` array, not an error                                                     |
+| Two Payslips with identical `periodYear` (the default sort key) | Deterministic ordering via the unconditional secondary `id ASC` tiebreaker                              |
+| `:own`-only caller combines `payrollRunId` with the (ignored) `employeeId` | `payrollRunId` still applies normally, only `employeeId` is overridden to the caller's own |
+| `MANAGER` with a linked Employee record and direct reports          | Sees only their own Payslips — their reports' Payslips are invisible to them through this endpoint, a genuine capability gap relative to `GET /leave-requests` for the same role |
+
+## 13. Security Testing
+
+- **No BOLA on the `employeeId` filter for non-`:any` callers**: the
+  filter is silently overridden server-side rather than merely
+  unchecked — verified live for the auto-scoping behavior itself
+  (though the specific "supplies someone else's id and it's ignored"
+  variant isn't its own dedicated assertion in
+  `payroll.service.test.js`, the code path is identical to Leave's own
+  verified equivalent).
+- **Authorization layering**: `requirePermission` accepts either key at
+  the middleware level; the service layer decides the actual scope,
+  same two-layer model as `GET /leave-requests`.
+
+## 14. Database Impact
+
+Read-only — one optional `Employee` lookup by `userId` (only for
+non-`:any` callers) plus `Payslip.findMany` + `Payslip.count`, the
+latter two run in parallel via `Promise.all`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/payslips
+    ↓
+authMiddleware
+    ↓
+requirePermission('payslip:read:any', 'payslip:read:own')
+    ↓ (403 if neither granted)
+validateMiddleware(listPayslipsQuerySchema, 'query')
+    ↓ (400 if invalid)
+payroll.controller.listPayslips → payroll.service.listPayslips(query, requester)
+    ├─ !grantedPermissions.includes('payslip:read:any')?
+    │    → employeeRepository.findByUserId(requester.id)
+    │    → no Employee? return { payslips: [], pagination: { total: 0, ... } }
+    │    → filters.employeeId = ownEmployee.id (overrides any supplied value)
+    └─ Promise.all([payslipRepository.findAll(...), payslipRepository.count(...)])
+    ↓
+200 { payslips, pagination }
+```
+
+## 16. Performance Notes
+
+Indexed on `payrollRunId`/`employeeId` individually (and their
+composite `@@unique([employeeId, payrollRunId])`) — filtering by either
+stays index-backed. Sorting by `netPay` (a `Decimal` column, not
+indexed) falls back to a sort over the filtered result set, bounded by
+pagination the same as every other list endpoint in this API.
+
+## 17. Interview Notes
+
+- **Q: Why does `MANAGER` get `:own` only here, when it gets `:any` for
+  Leave?** `docs/domain-payroll.md` ADR-PR06 is explicit: no dedicated
+  Finance/Payroll role exists in this system, and rather than reuse
+  `MANAGER`'s existing report-visibility pattern from Leave, this
+  domain's sign-off treated pay data as categorically more sensitive
+  than leave status, with no verified requirement to extend visibility
+  to a report's manager. This is a deliberate, named divergence — worth
+  double-checking against `prisma/seed.js` directly rather than assuming
+  it mirrors Leave, since the permission *name* shape (`:read:own`/
+  `:read:any`) is identical and easy to mistake for identical grants.
+- **Q: Why does this endpoint auto-scope instead of refusing access
+  outright, like `GET /attendance`?** The same self-service reasoning
+  `GET /leave-requests` (endpoint 62) already established, applied here
+  to pay history — arguably an even stronger case for self-service than
+  leave, since viewing one's own payslips is close to a legal/contractual
+  expectation in most real deployments (though that expectation itself
+  is outside this project's verified scope).
+
+## 18. cURL Examples
+
+```bash
+# ADMIN browsing everyone's Payslips
+curl -s "http://localhost:3000/api/v1/payslips?payrollRunId=$PAYROLL_RUN_ID" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+```bash
+# EMPLOYEE viewing their own pay history (auto-scoped)
+curl -s "http://localhost:3000/api/v1/payslips" \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run once as `ADMIN` (expect Payslips across employees), once as
+`EMPLOYEE`, and once as `MANAGER` in the same collection — the
+`MANAGER` run is the interesting one, since it should return the same
+narrow, self-only result as `EMPLOYEE`, not a reports-inclusive one.
+
+## 20. Testing Checklist
+
+- ✅ `:any` (`ADMIN`) caller sees all employees' Payslips
+- ✅ `:own`-only (`EMPLOYEE`/`MANAGER`) caller auto-scoped to their own
+  `employeeId` (verified live)
+- ✅ `MANAGER` does **not** see reports' Payslips (no `:any` grant)
+- ✅ Supplied `employeeId` silently ignored for non-`:any` callers
+- ✅ `payrollRunId` filter combinable with auto-scoping
+- ✅ Sort both directions with deterministic tiebreaker
+- ✅ List items omit `lineItems`
+- ✅ Decimal fields serialize as strings
+- ✅ `401` with no token
+- ✅ `400` on out-of-bounds `limit`
+
+---
+
+---
+
+# 78. `GET /payslips/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Payroll Domain (2026-09-15, feature/23-payroll-domain)
+Endpoint:           Get one Payslip
+Description:        Returns a single Payslip with its full lineItems breakdown, subject to an ownership check
+Method:             GET
+URL:                /api/v1/payslips/:id
+API Version:        v1
+Module:             modules/payroll
+Authentication:     Yes (Bearer access token)
+Authorization:      `payslip:read:any` OR `payslip:read:own` (the latter requires the record's employeeId to match the caller's own Employee record)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the one place a plain `EMPLOYEE` (or, here,
+  `MANAGER` — see endpoint 77) can see a specific Payslip's full detail,
+  including its line-item breakdown — their own — same own/any shape as
+  `GET /leave-requests/:id`/`GET /leave-balances/:id` (endpoints 63/68).
+- **`GET /payslips` and `GET /payslips/:id` are the only two
+  Payslip-facing endpoints in this API** — verified against
+  `payslip.routes.js`, which wires exactly these two `GET` routes and
+  nothing else. There is no `POST /payslips` (Payslips are only ever
+  created as a side effect of `PATCH /payroll-runs/:id/process`,
+  endpoint 73) and **no `PATCH`/`PUT`/`DELETE` at any status** — this is
+  deliberate, not an omission: ADR-PR01's immutability rule
+  (`docs/domain-payroll.md` §2/§4) is enforced by never building an edit
+  path in the first place, the same "no unfinalize" reasoning covered in
+  endpoint 74. A correction to a Payslip is made as an adjustment entry
+  in a **subsequent** PayrollRun, never by editing this record.
+- **`lineItems` is only present here**, not on the list endpoint
+  (`PayslipSchema`'s own `.meta()` note) — `payslipRepository.findById`
+  is the only repository method that `include`s the `lineItems`
+  relation.
+- **Expected callers**: any authenticated user, with two different
+  access paths depending on their permissions.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                  |
+| --------------------------------------- | -------- | ------------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `payslip:read:any` or `payslip:read:own` |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description         |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Payslip's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No format validation on `id` — an invalid UUID or a well-formed UUID
+that doesn't exist both simply fail to match any row and produce the
+same `404`. Two-layer authorization: middleware checks for either
+permission key, then the service (`getPayslipById` →
+`assertOwnershipOrAny`, defined locally in `payroll.service.js` — a
+separate implementation from Leave's own identically-named helper, not
+a shared utility) fetches the record (`404` if missing) and, only for
+non-`:any` callers, compares its `employeeId` to the caller's own.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "payslip": {
+    "id": "a7b8c9d0-e1f2-4a3b-4c5d-6f7a8b9c0d1e",
+    "payrollRunId": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "periodMonth": 9,
+    "periodYear": 2026,
+    "employeeName": "Priya Sharma",
+    "departmentName": "Engineering",
+    "designationName": "Senior Software Engineer",
+    "branchName": "Bengaluru HQ",
+    "employmentType": "FULL_TIME",
+    "baseSalary": "50000",
+    "workingDaysInPeriod": "22",
+    "paidDays": "21",
+    "unpaidDays": "1",
+    "grossPay": "50000",
+    "totalDeductions": "2272.73",
+    "netPay": "47727.27",
+    "lineItems": [
+      {
+        "id": "f6a7b8c9-d0e1-4f2a-3b4c-5d6f7a8b9c0d",
+        "type": "EARNING",
+        "label": "Base Salary",
+        "amount": "50000",
+        "createdAt": "2026-09-15T10:05:00.000Z"
+      },
+      {
+        "id": "07f8a9b0-c1d2-4e3f-4a5b-6c7d8e9f0a1b",
+        "type": "DEDUCTION",
+        "label": "Unpaid Absence (1 day)",
+        "amount": "2272.73",
+        "createdAt": "2026-09-15T10:05:00.000Z"
+      }
+    ],
+    "generatedAt": "2026-09-15T10:05:00.000Z",
+    "createdAt": "2026-09-15T10:05:00.000Z",
+    "updatedAt": "2026-09-15T10:05:00.000Z"
+  }
+}
+```
+
+`lineItems` always contains at least the `EARNING` "Base Salary" line;
+a `DEDUCTION` line appears only when `totalDeductions > 0` (see endpoint
+73 §12 for the `unpaidDays > 0`-with-no-deduction-line edge case, which
+also means no `DEDUCTION` line item in that scenario). `amount`, like
+every other monetary/day-count field on this record, is a Prisma
+`Decimal` serialized as a string. Verified live
+(`payroll.service.test.js`'s calculation test asserts both an `EARNING`
+"Base Salary" line and a `DEDUCTION` line are present via
+`getPayslipById`).
+
+## 9. Error Responses
+
+| Status | Reason                                                   | Response (`message`)                                       | When                                                                 |
+| ------ | ----------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token                        | Same as every other protected endpoint                             | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks both permissions at the middleware layer        | `"You do not have permission to perform this action"`             | No `payslip:read:*` grant at all — not expected in practice, every seeded role has at least `:own` |
+| `403`  | Caller only has `payslip:read:own`, and the record isn't theirs | `"You do not have permission to view this payslip"`               | Verified live (`payroll.service.test.js`'s "getPayslipById enforces ownership without payslip:read:any" case) |
+| `404`  | No such Payslip                                             | `"Payslip not found"`                                               | Invalid/nonexistent `id`                                                   |
+
+## 10. Postman Test Cases
+
+| #   | Case                                              | Expected |
+| --- | ------------------------------------------------------ | -------- |
+| 1   | `ADMIN`, any valid `id`                                 | `200` — verified live (via `anyRequester()` in tests) |
+| 2   | Owning `EMPLOYEE`/`MANAGER`, own Payslip's `id`         | `200` — verified live |
+| 3   | Different `EMPLOYEE`, someone else's Payslip's `id`      | `403` — verified live |
+| 4   | Valid UUID, nonexistent Payslip                          | `404`    |
+| 5   | No token                                                | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                     | Expected |
+| -------------------------------- | -------- |
+| Malformed (non-UUID) `id`        | `404`    |
+| Tampered/expired JWT             | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                                                      | Expected Behavior                                                                                                                        |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| A caller with **no** Employee record, holding only `payslip:read:own`, requests any `id`       | `403` — `assertOwnershipOrAny` resolves `ownEmployee` as `null`, which never equals `payslip.employeeId`                                  |
+| `MANAGER` requesting a direct report's Payslip `id`                                             | `403` — `MANAGER` has no `payslip:read:any`, and a report's Payslip is never "their own" regardless of the reporting relationship          |
+| Requesting a Payslip belonging to a `PAID` (fully closed) run                                   | `200` — read access has no dependency on the parent run's lifecycle status; a `PAID` run's Payslips remain fully readable forever          |
+
+## 13. Security Testing
+
+- **BOLA**: the primary BOLA test case for this endpoint — confirm a
+  `payslip:read:own`-only caller cannot read another employee's Payslip
+  by id, verified live.
+- **Sensitive-data exposure**: this endpoint returns full compensation
+  detail (`baseSalary`, `netPay`, line-item breakdown) — the ownership
+  check here is the *only* thing standing between any authenticated
+  token and another employee's actual pay, since there is no field-level
+  redaction for a partial/summary view.
+
+## 14. Database Impact
+
+- **Tables affected**: `Payslip` (read, with a joined `lineItems`
+  fetch); an additional `Employee` lookup by `userId` when the ownership
+  check runs.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/payslips/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('payslip:read:any', 'payslip:read:own')
+    ↓ (403 if neither granted)
+payroll.controller.getPayslipById
+    → payroll.service.getPayslipById(id, { id: req.user.id, grantedPermissions })
+        ├─ payslipRepository.findById(id) [includes lineItems] → not found → 404
+        └─ assertOwnershipOrAny(payslip.employeeId, requester)
+             ├─ grantedPermissions.includes('payslip:read:any')? → pass
+             └─ else → employeeRepository.findByUserId(requester.id)
+                  → ownEmployee?.id !== payslip.employeeId → 403
+    ↓
+200 { payslip }
+```
+
+## 16. Performance Notes
+
+Single indexed `Payslip.findUnique` by primary key with a joined
+`lineItems` fetch (at most two rows per Payslip in this domain's current
+shape — one `EARNING`, at most one `DEDUCTION`), plus one additional
+indexed `Employee` lookup by `userId` only when the ownership check path
+runs.
+
+## 17. Interview Notes
+
+- **Q: Why is there no edit endpoint for a Payslip, at any status —
+  not even while its parent run is still `DRAFT`/`PROCESSING`?**
+  ADR-PR01's own summary is explicit that this isn't a status-gated
+  restriction (like `/finalize` locking things down) — there is simply
+  **no** `PATCH`/`PUT /payslips/:id` route defined anywhere, at any
+  lifecycle stage. The rule is enforced by omission: nothing was ever
+  built that could mutate a Payslip after creation, which is a stronger
+  guarantee than a guard that checks status on every call.
+- **Q: If a Payslip's numbers are wrong, how is that fixed?**
+  `docs/domain-payroll.md` §2/§4: via an adjustment entry in a
+  **subsequent** PayrollRun — e.g., a correcting `EARNING`/`DEDUCTION`
+  line item on next period's Payslip — never by editing the original
+  record. This mirrors standard accounting practice and is the same
+  reasoning behind `/finalize` having no "unfinalize" path (endpoint 74).
+- **Q: Why does `assertOwnershipOrAny` exist twice in this codebase (here
+  and in `leave.service.js`) instead of being a shared utility?** Each
+  domain's build implemented its own local version against its own
+  entity shape and permission key name — a small amount of accepted
+  duplication rather than introducing a shared cross-domain authorization
+  helper for a two-line comparison, consistent with this project's
+  general preference for the simpler option absent a demonstrated need.
+
+## 18. cURL Examples
+
+```bash
+curl -i http://localhost:3000/api/v1/payslips/$PAYSLIP_ID \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Save a `{{payslipId}}` from a `GET /payslips` list response (there is no
+`POST /payslips` to source one from directly — rows only ever come into
+existence via `PATCH /payroll-runs/:id/process`, endpoint 73). Run once
+as the owning `EMPLOYEE` (expect `200` with full `lineItems`) and once
+as a different `EMPLOYEE` (expect `403`) in the same collection.
+
+## 20. Testing Checklist
+
+- ✅ `200` as `ADMIN` for any Payslip (verified live)
+- ✅ `200` as the owning `EMPLOYEE`/`MANAGER`
+- ✅ `403` (ownership message) as a different `EMPLOYEE` (verified live)
+- ✅ `404` for nonexistent `id`
+- ✅ `401` with no token
+- ✅ `lineItems` present with correct `EARNING`/`DEDUCTION` entries (verified live)
+- ✅ Decimal fields serialize as strings

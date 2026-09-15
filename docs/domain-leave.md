@@ -164,11 +164,15 @@ Summary: `LeaveType` follows the established `ADMIN`-only-mutation/read-for-all 
 Status: Accepted; Implemented (2026-09-15)
 Summary: `leaveService.hasApprovedLeaveOnDate(employeeId, date)` is the query ADR-AT03/§12 named as a requirement for Leave to expose. `attendanceService.getEffectiveStatus()` now consumes it, inserted into the resolution order as `HOLIDAY → WEEK_OFF → ON_LEAVE → ABSENT → HALF_DAY → LATE → PRESENT`. Pure read; Attendance's schema and write paths are untouched, honoring the "no cross-domain writes" contract from both sides.
 
+**ADR-LV09 — `LeaveType.isPaid` (Resolves Payroll's Named Consumption Gap)**
+Status: Accepted; Implemented (2026-09-15, during Payroll's build)
+Summary: This domain's own sign-off explicitly declined to decide whether any leave types are unpaid, naming it "not decided here" and handing the decision to Payroll (§2, §12). `LeaveType` gained an additive `isPaid` boolean (`@default(true)`), consumed by `payrollService`'s per-day pay calculation to distinguish a paid `ON_LEAVE` day (no deduction) from an unpaid one (full-day deduction). No existing `LeaveType` rows existed to migrate at the time this was added, so the default was a pure forward-looking choice, not a data-migration decision - defaults `true` since most real leave catalogs are dominated by paid types (Annual, Sick), with unpaid leave ("Leave Without Pay") as the named exception. This is a small, additive touch to an already-implemented domain, not a reopening of any Leave ADR - exactly the kind of downstream discovery Leave's own §12 anticipated Payroll would surface.
+
 ## Final Sign-off
 
-**Implementation readiness:** Implemented (2026-09-15). Remaining open items (§8) are policy parameters, not structural blockers.
+**Implementation readiness:** Implemented (2026-09-15; ADR-LV09 added 2026-09-15 during Payroll's build). Remaining open items (§8) are policy parameters, not structural blockers.
 
-**Confidence score: 87%** — up from 83%, reflecting successful implementation of all three aggregates, the approval workflow, holiday-aware duration, and the Attendance integration. Not higher: the genuine policy ambiguity around negative-balance/carry-forward/encashment/entitlement-proration remains unconfirmed with real business stakeholders, exactly as this section originally flagged.
+**Confidence score: 88%** — up from 87%, reflecting ADR-LV09 closing the one named forward-reference this domain's own sign-off left open for Payroll. Not higher: the genuine policy ambiguity around negative-balance/carry-forward/encashment/entitlement-proration remains unconfirmed with real business stakeholders, exactly as this section originally flagged.
 
 **Remaining blockers:** None structural. The entitlement-proration formula and any employment-type-based adjustment still await real business-stakeholder confirmation, as this section originally requested - what's implemented is a concrete, reasoned default (§4's own recommendation made concrete), not a verified requirement.
 

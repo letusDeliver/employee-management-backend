@@ -20,9 +20,14 @@ const findActiveByEmployee = (employeeId) => {
 // The query docs/domain-attendance.md §3/§12 names as a requirement for
 // Leave to expose - "does employee X have an approved leave covering date
 // Y" - consumed by attendance.service.js's getEffectiveStatus.
+// `leaveType` is included so Payroll (the newer of this function's two
+// consumers) can read `.leaveType.isPaid` without a second query -
+// Attendance's own consumer only ever checks truthiness and ignores the
+// extra field.
 const findApprovedCoveringDate = (employeeId, date) => {
   return prisma.leaveRequest.findFirst({
     where: { employeeId, status: 'APPROVED', startDate: { lte: date }, endDate: { gte: date } },
+    include: { leaveType: true },
   });
 };
 

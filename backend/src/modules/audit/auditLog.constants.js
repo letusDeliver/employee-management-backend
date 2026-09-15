@@ -18,4 +18,6 @@ export const AUDIT_ENTITY_TYPES = Object.freeze({
   LEAVE_TYPE: 'LeaveType',
   LEAVE_REQUEST: 'LeaveRequest',
   LEAVE_BALANCE: 'LeaveBalance',
+  PAYROLL_RUN: 'PayrollRun',
+  PAYSLIP: 'Payslip',
 });

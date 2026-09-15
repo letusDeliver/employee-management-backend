@@ -21,6 +21,17 @@ const findAll = ({ where = {}, orderBy, skip, take }) => {
   });
 };
 
+// Payroll's own read (docs/domain-payroll.md §5's "read current department/
+// designation/branch names for snapshotting") - the only consumer that
+// needs Department/Designation/Branch/User names in the same query rather
+// than the bare Employee row every other findAll/findById caller uses.
+const findAllActiveWithOrgContext = () => {
+  return prisma.employee.findMany({
+    where: { deletedAt: null },
+    include: { department: true, designation: true, branch: true, user: true },
+  });
+};
+
 const count = (where = {}) => {
   return prisma.employee.count({ where: { ...where, deletedAt: null } });
 };
@@ -33,4 +44,13 @@ const softDelete = (id, client = prisma) => {
   return client.employee.update({ where: { id }, data: { deletedAt: new Date() } });
 };
 
-export default { create, findById, findByUserId, findAll, count, update, softDelete };
+export default {
+  create,
+  findById,
+  findByUserId,
+  findAll,
+  findAllActiveWithOrgContext,
+  count,
+  update,
+  softDelete,
+};

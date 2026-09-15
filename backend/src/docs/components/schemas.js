@@ -170,6 +170,7 @@ export const LeaveTypeSchema = z
     id: z.uuid().meta({ example: 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f' }),
     name: z.string().meta({ example: 'Annual Leave' }),
     defaultAnnualEntitlement: z.int().meta({ example: 18 }),
+    isPaid: z.boolean().meta({ example: true }),
     status: z.enum(['ACTIVE', 'INACTIVE']).meta({ example: 'ACTIVE' }),
     createdAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
     updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
@@ -206,6 +207,70 @@ export const LeaveBalanceSchema = z
     updatedAt: z.iso.datetime().meta({ example: '2026-07-01T10:00:00.000Z' }),
   })
   .meta({ id: 'LeaveBalance' });
+
+export const PayrollRunSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c' }),
+    periodMonth: z.int().meta({ example: 9 }),
+    periodYear: z.int().meta({ example: 2026 }),
+    status: z.enum(['DRAFT', 'PROCESSING', 'FINALIZED', 'PAID']).meta({ example: 'DRAFT' }),
+    payslipCount: z.int().optional().meta({
+      description: 'Only present on GET /payroll-runs/:id - the number of Payslips generated so far',
+      example: 30,
+    }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-15T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-15T10:00:00.000Z' }),
+  })
+  .meta({ id: 'PayrollRun' });
+
+export const PayslipLineItemSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'f6a7b8c9-d0e1-4f2a-3b4c-5d6f7a8b9c0d' }),
+    type: z.enum(['EARNING', 'DEDUCTION']).meta({ example: 'EARNING' }),
+    label: z.string().meta({ example: 'Base Salary' }),
+    amount: z.string().meta({ description: 'Prisma Decimal - serializes as a string', example: '50000' }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-15T10:00:00.000Z' }),
+  })
+  .meta({ id: 'PayslipLineItem' });
+
+export const PayslipSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'a7b8c9d0-e1f2-4a3b-4c5d-6f7a8b9c0d1e' }),
+    payrollRunId: z.uuid().meta({ example: 'e5f6a7b8-c9d0-4e1f-2a3b-4c5d6f7a8b9c' }),
+    employeeId: z.uuid().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    periodMonth: z.int().meta({ example: 9 }),
+    periodYear: z.int().meta({ example: 2026 }),
+    employeeName: z.string().nullable().meta({
+      description: 'Snapshot of Employee.user.name at generation time - null if no User is linked',
+      example: 'Priya Sharma',
+    }),
+    departmentName: z.string().meta({ example: 'Engineering' }),
+    designationName: z.string().meta({ example: 'Senior Software Engineer' }),
+    branchName: z.string().nullable().meta({ example: 'Bengaluru HQ' }),
+    employmentType: z.enum(['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERN']).meta({
+      example: 'FULL_TIME',
+    }),
+    baseSalary: z.string().meta({ description: 'Prisma Decimal - serializes as a string', example: '50000' }),
+    workingDaysInPeriod: z.string().meta({
+      description: 'Prisma Decimal - serializes as a string',
+      example: '22',
+    }),
+    paidDays: z.string().meta({ description: 'Prisma Decimal - serializes as a string', example: '21' }),
+    unpaidDays: z.string().meta({ description: 'Prisma Decimal - serializes as a string', example: '1' }),
+    grossPay: z.string().meta({ description: 'Prisma Decimal - serializes as a string', example: '50000' }),
+    totalDeductions: z.string().meta({
+      description: 'Prisma Decimal - serializes as a string',
+      example: '2272.73',
+    }),
+    netPay: z.string().meta({ description: 'Prisma Decimal - serializes as a string', example: '47727.27' }),
+    lineItems: z.array(PayslipLineItemSchema).optional().meta({
+      description: 'Only present on GET /payslips/:id, not the list endpoint',
+    }),
+    generatedAt: z.iso.datetime().meta({ example: '2026-09-15T10:00:00.000Z' }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-15T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-15T10:00:00.000Z' }),
+  })
+  .meta({ id: 'Payslip' });
 
 export const EmployeeDocumentSchema = z
   .object({

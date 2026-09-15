@@ -180,6 +180,15 @@ All routes are mounted under `/api/v1`.
 | `GET`    | `/leave-balances`                      | Access token, `leaveBalance:read:any` or `:own` permission | List Leave Balances — same own-vs-any auto-scoping as `GET /leave-requests`; `remaining` is not stored, compute as `entitlement - consumed`                                                                     |
 | `GET`    | `/leave-balances/:id`                  | Access token, `leaveBalance:read:any` or `:own` permission | Get one Leave Balance                                                                                                                                                                                              |
 | `PATCH`  | `/leave-balances/:id`                  | Access token, `leaveBalance:adjust:any` permission (ADMIN only) | Manually adjust `entitlement`/`consumed` — the escape hatch for the strict no-negative-balance default, always audit-logged                                                                                  |
+| `POST`   | `/payroll-runs`                        | Access token, `payrollRun:create` permission (ADMIN only) | Create a DRAFT PayrollRun for a calendar month (`periodMonth`/`periodYear`) — periods must not overlap                                                                                                          |
+| `GET`    | `/payroll-runs`                        | Access token, `payrollRun:read` permission (ADMIN only) | List PayrollRun records — paginated, filterable (`status`, `periodYear`), sortable                                                                                                                              |
+| `GET`    | `/payroll-runs/:id`                    | Access token, `payrollRun:read` permission (ADMIN only) | Get one PayrollRun record, including `payslipCount`                                                                                                                                                              |
+| `PATCH`  | `/payroll-runs/:id/process`            | Access token, `payrollRun:process` permission (ADMIN only) | Generate one Payslip per active Employee and move DRAFT → PROCESSING                                                                                                                                            |
+| `PATCH`  | `/payroll-runs/:id/finalize`           | Access token, `payrollRun:finalize` permission (ADMIN only) | Move PROCESSING → FINALIZED — the run's Payslips become immutable                                                                                                                                               |
+| `PATCH`  | `/payroll-runs/:id/mark-paid`          | Access token, `payrollRun:markPaid` permission (ADMIN only) | Move FINALIZED → PAID — a pure status transition, not a recalculation                                                                                                                                           |
+| `DELETE` | `/payroll-runs/:id`                    | Access token, `payrollRun:delete` permission (ADMIN only) | Delete a DRAFT PayrollRun — by construction it has zero Payslips yet                                                                                                                                            |
+| `GET`    | `/payslips`                            | Access token, `payslip:read:any` or `:own` permission | List Payslips — same own-vs-any auto-scoping as `GET /leave-requests`; filterable (`employeeId` [`:any` only], `payrollRunId`), sortable                                                                        |
+| `GET`    | `/payslips/:id`                        | Access token, `payslip:read:any` or `:own` permission | Get one Payslip, including its `lineItems` breakdown — no edit endpoint exists at any status                                                                                                                    |
 
 `POST`/`PATCH /employees` also accept an optional `branchId`, validated
 against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
@@ -231,6 +240,33 @@ default. This domain also closes the gap Attendance's `GET
 `leaveService.hasApprovedLeaveOnDate()` now feeds an `ON_LEAVE` branch
 into that endpoint's resolution order, a pure read with no write back
 into Attendance.
+
+**New domain (2026-09-15):** Payroll (`docs/domain-payroll.md`) is the
+domain every prior domain in this review was building toward — given an
+Employee's base salary, attendance record, and approved leave, what did
+they actually earn this period, and what is the permanent record of that
+calculation. Two aggregates, `PayrollRun` (`DRAFT → PROCESSING →
+FINALIZED → PAID`) and `Payslip` (plus a generic `PayslipLineItem` child,
+`{type, label, amount}` — the same "avoid a wide, brittle schema"
+reasoning already applied to `AuditLog`/`EmployeeDocument`). Processing
+generates one Payslip per active Employee in the same step, computing
+gross pay, an unpaid-day deduction, and net pay by calling
+`attendanceService.getEffectiveStatus()` for each calendar day of the
+period — the third consumer of that read chain after Attendance's own
+endpoints and Leave's `ON_LEAVE` integration. `Employee.salary` is
+confirmed to represent a **monthly** figure (stakeholder-confirmed before
+implementation, not assumed). Every input — salary, department/
+designation/branch names, employment type, the computed attendance/leave
+outcome — is snapshotted onto the Payslip at generation time and never
+live-joined afterward: a January Payslip must not silently reflect a
+department transfer that happened in February. There is no edit endpoint
+for a Payslip at any status; a correction is an adjustment line item in a
+later run. `LeaveType` gained an additive `isPaid` field
+(`docs/domain-leave.md` ADR-LV09) so an approved leave day can be told
+apart as paid or unpaid for this calculation. `PayrollRun` follows the
+`ADMIN`-only-mutation pattern (no dedicated Finance/Payroll role exists);
+`Payslip` reads split own/any, but `MANAGER` gets only `:own`, not
+visibility into their reports' pay.
 
 **Breaking change (2026-09-13):** Employee's free-text `department`
 (`String`) field was removed and replaced by a **mandatory**

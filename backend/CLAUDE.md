@@ -1631,3 +1631,138 @@ given the expected size, then verified). `backend/README.md` updated to
 match.
 
 Deliberately **backend-only**, same as every prior domain.)_
+
+_(Payroll Domain — 2026-09-15, on branch `feature/23-payroll-domain` (based
+on `feature/22-leave-domain`). Ninth domain from the HRMS/ERP Business
+Architecture Review (`docs/domain-payroll.md`) - the domain every prior
+domain in this review was building toward: given an employee's base
+salary, attendance record, and approved leave, what did they actually
+earn this period, and what is the permanent record of that calculation.
+
+**One genuinely blocking open question, resolved with the user as
+stakeholder before writing any code:** the domain doc's own ADR-PR05
+named the salary-period-unit assumption (monthly vs. annual vs. other) as
+requiring real stakeholder confirmation, not an architectural judgment
+call - unlike Leave's proration formula, the doc deliberately declined to
+recommend an answer. Confirmed: monthly. `PayrollRun` is keyed on
+`(periodMonth, periodYear)`.
+
+**Two aggregates, `PayrollRun` and `Payslip`, plus a generic
+`PayslipLineItem` child (ADR-PR01/PR03):** `DRAFT → PROCESSING →
+FINALIZED → PAID`. Processing generates exactly one `Payslip` per active
+Employee in the same step (`docs/domain-payroll.md` §2's own wording) -
+there is no separate "generate" action. A `Payslip` has no edit endpoint
+at any status, not just once `FINALIZED` - the domain's central
+immutability rule (ADR-PR01) is enforced by the absence of a `PATCH`
+route entirely, not a guarded one.
+
+**Every input is snapshotted at generation time (ADR-PR02)** - salary,
+department/designation/branch names, employment type, and the computed
+attendance/leave outcome for the period. This is the direct, concrete
+cost of Branch/Department/Designation's earlier "single current value, no
+history" decisions (ADR-B03/ADR-D03/ADR-DS03) finally surfacing, exactly
+as those domains' own docs anticipated three domains ago - a January
+Payslip must not silently show February's department if an employee
+transferred mid-month. `employeeName` comes from `Employee.user.name` and
+is nullable, since `Employee.userId` is itself optional - a pre-existing
+identity-model gap, not something this domain introduces.
+
+**The calculation reuses Attendance's own coordinating service directly,
+not a third re-derivation of Shift/Holiday-Calendar logic:** for every
+calendar day in the period, `payrollService` calls
+`attendanceService.getEffectiveStatus()` - the same function Attendance's
+own endpoints and Leave's `ON_LEAVE` integration already call.
+`HOLIDAY`/`WEEK_OFF` are excluded from the working-day denominator
+entirely; `PRESENT`/`LATE` are paid (no lateness-pay deduction rule
+exists anywhere in this project, so none was invented); `HALF_DAY` is
+half paid, half unpaid; `ABSENT` is fully unpaid; `ON_LEAVE` is paid or
+unpaid per that request's `LeaveType.isPaid`. No overtime line item -
+`AttendanceRecord` has no overtime field or verified overtime-rate
+concept anywhere in this project (only `checkIn`/`checkOut` timestamps),
+so despite the domain doc's own passing mention of "overtime" as an
+input, there was nothing verified to calculate it from.
+
+**One small, additive touch to the already-shipped Leave domain,
+flagged transparently:** Leave's own sign-off explicitly declined to
+decide whether any leave types are unpaid, naming it "not decided here"
+and handing the decision to Payroll (`docs/domain-leave.md` §2/§12).
+Added `LeaveType.isPaid` (`Boolean @default(true)`, new ADR-LV09) - no
+existing `LeaveType` rows existed to migrate, so this was a pure
+forward-looking addition, not a data-migration decision. `leave.service.js`'s
+`hasApprovedLeaveOnDate` now includes the `leaveType` relation so Payroll
+can read `.isPaid` without a second query; Attendance's own consumer of
+the same function is unaffected, since it only ever checked truthiness.
+
+**A real race condition surfaced by testing, fixed as a genuine
+production hardening, not a test workaround:** `processPayrollRun`
+snapshots every active Employee once, then processes each one through
+several slow, awaited cross-domain reads (up to 31 calendar days ×
+Attendance + Leave lookups per employee). That snapshot-then-slowly-
+process shape leaves a real window in which an employee could be
+offboarded between the snapshot and their own turn - discovered when
+running the full test suite (where `node --test`'s default cross-file
+concurrency raced this exact scenario against other domains' test
+cleanup). Fixed by skipping a since-deleted employee rather than failing
+the entire run, and by moving the slow read/compute phase entirely
+outside the database transaction that follows - only the actual writes
+(run status, Payslips, line items, audit logs) are transactional, which
+also sidesteps a real risk of exceeding Prisma's interactive-transaction
+timeout for any realistic employee count.
+
+**A real gap caught by the handbook-documentation agent's own source
+verification, not by review:** `createPayrollRun` initially checked for
+an existing period via a plain `findByPeriod` lookup before creating,
+with no `try/catch` around the create transaction - unlike every other
+create-with-uniqueness endpoint in this codebase (Branch, Department,
+Designation, Shift, Holiday Calendar, LeaveType, Employee, Attendance all
+wrap their create in a `P2002` catch as the defense-in-depth backstop
+against the check-then-create race). Fixed to match that established
+pattern before committing.
+
+**Permission scoping (new ADR-PR06):** no dedicated Finance/Payroll role
+exists in this system, so `PayrollRun` (create/read/process/finalize/
+markPaid/delete) follows the `ADMIN`-only master-data pattern rather than
+inventing a fourth system role without a verified requirement. `Payslip`
+reads split own/any, mirroring Leave/Attendance - but `MANAGER` gets only
+`payslip:read:own`, not `:read:any` over their reports, a deliberate
+divergence from Leave's manager-visibility pattern since no verified
+requirement extends pay visibility to managers and pay is materially more
+sensitive than leave status. 8 new permissions (46 → 54 total).
+
+New module `src/modules/payroll/` (two repositories -
+`payrollRun.repository.js`, `payslip.repository.js` - one orchestrating
+`payroll.service.js`, the same two-repositories-one-service shape as
+Holiday Calendar and Leave). 9 new endpoints: 7 for `/payroll-runs`
+(create/list/get/process/finalize/mark-paid/delete) and 2 for `/payslips`
+(list/get). Migration was purely additive (2 enums, 3 tables, one new
+additive column on the existing `LeaveType` table) - applied cleanly on
+the first attempt.
+
+New `payroll.service.test.js` (6 tests: run creation and period-
+uniqueness, the full pay calculation across present/absent/half-day/
+paid-leave/unpaid-leave in one deterministic scenario, the complete
+lifecycle-guard matrix, DRAFT deletion, and both list/get Payslip
+ownership scoping). All 75 tests across all nine domains pass together,
+confirmed stable across three consecutive full-suite runs after the race
+fix.
+
+Verified live end-to-end against the running server with scratch ADMIN
+and EMPLOYEE users: run creation and duplicate-period 409, EMPLOYEE
+blocked from creating a run (403), processing generated a real Payslip
+for every one of the 18 active employees in the dev database at the
+time, the employee's own self-service payslip view, cross-employee
+ownership enforcement (403), the full DRAFT→PROCESSING→FINALIZED→PAID
+transition sequence with every out-of-order transition correctly
+rejected (409), DRAFT-only deletion succeeding and a subsequent 404, and
+`LeaveType.isPaid` both explicit and defaulted via `POST /leave-types`.
+Audit log entries confirmed for every PayrollRun transition and all 18
+generated Payslips. All live-verification fixtures cleaned up afterward.
+
+`docs/domain-payroll.md` (ADR-PR01-06, salary-unit question resolved,
+confidence 78%→90%), `docs/domain-leave.md` (new ADR-LV09, confidence
+87%→88%), `docs/adr-index.md`, `docs/deferred-decisions-register.md`
+updated. `handbook/API_ENDPOINTS.md` gained new endpoint docs for
+`/payroll-runs` and `/payslips` (delegated to a background agent, then
+verified). `backend/README.md` updated to match.
+
+Deliberately **backend-only**, same as every prior domain.)_

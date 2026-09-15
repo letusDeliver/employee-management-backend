@@ -17,6 +17,7 @@ import '../modules/shifts/shift.docs.js';
 import '../modules/attendance/attendance.docs.js';
 import '../modules/leaveTypes/leaveType.docs.js';
 import '../modules/leave/leave.docs.js';
+import '../modules/payroll/payroll.docs.js';
 
 // Import order matters: every *.docs.js file must finish calling
 // registry.registerPath() (a side effect of import) before
