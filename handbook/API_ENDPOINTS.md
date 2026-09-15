@@ -14569,3 +14569,600 @@ future-dated request (assert the balance restoration via
 ---
 
 ---
+
+# 67. `GET /leave-balances`
+
+## 1. Endpoint Information
+
+```
+Feature:            Leave Domain (2026-09-15, feature/22-leave-domain)
+Endpoint:           List Leave Balances
+Method:             GET
+URL:                /api/v1/leave-balances
+API Version:        v1
+Module:             modules/leave
+Authentication:     Yes (Bearer access token)
+Authorization:      `leaveBalance:read:any` OR `leaveBalance:read:own`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: lets an employee check their own remaining leave,
+  and lets `ADMIN`/`MANAGER` review balances across employees.
+- **Business problem solved**: "how many Annual Leave days do I have
+  left this year," and "show me everyone's Sick Leave balances for this
+  year" for HR review.
+- **Same own-vs-any auto-scoping shape as `GET /leave-requests`**
+  (endpoint 62): a caller without `leaveBalance:read:any` is auto-scoped
+  to their own Employee's balances rather than refused; any `employeeId`
+  filter they supply is silently overridden.
+- **Expected callers**: any authenticated user — `EMPLOYEE` sees only
+  their own; `ADMIN`/`MANAGER` see everyone's via `:any`.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                          |
+| -------------------------------------- | -------- | -------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `leaveBalance:read:any` or `leaveBalance:read:own` |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name         | Type            | Required | Default | Description                                                                 |
+| -------------- | --------------- | -------- | --------- | --------------------------------------------------------------------------- |
+| `page`       | integer         | No       | `1`     | 1-indexed page number                                                        |
+| `limit`      | integer         | No       | `10` (max 100) | Page size                                                             |
+| `employeeId` | string (UUID)   | No       | —       | **Only honored when the caller holds `:any`** — silently overridden otherwise |
+| `leaveTypeId`| string (UUID)   | No       | —       | Filter to one leave type                                                     |
+| `year`       | integer         | No       | —       | Filter to one calendar year                                                  |
+| `sortBy`     | enum            | No       | `year`  | `year`, `entitlement`, `consumed`, `createdAt`                               |
+| `order`      | enum            | No       | `desc`  | `asc` or `desc`                                                              |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same page/limit/sort shape as every other list endpoint
+(`listLeaveBalancesQuerySchema`). `employeeId`/`leaveTypeId` must be
+valid UUIDs when present but are **not** checked for existence.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "balances": [
+    {
+      "id": "d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6f7a8b",
+      "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "leaveTypeId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+      "year": 2026,
+      "entitlement": "18",
+      "consumed": "4",
+      "createdAt": "2026-09-15T10:20:00.000Z",
+      "updatedAt": "2026-09-15T10:20:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+`entitlement`/`consumed` are Prisma `Decimal`s, serialized as strings.
+**`remaining` is not stored or returned** — compute it client-side as
+`entitlement - consumed`. Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                  | When                                       |
+| ------ | ------------------------------------ | ---------------------------------------------------------- | --------------------------------------------- |
+| `400`  | A query parameter failed validation | e.g. `"limit: Too big: expected number to be <=100"`      | Out-of-bounds `limit`, invalid `sortBy`     |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                   |
+| `403`  | Caller lacks both `leaveBalance:read:any` and `leaveBalance:read:own` | `"You do not have permission to perform this action"`   | Not expected in practice — every seeded role has at least one grant |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                | Expected |
+| --- | -------------------------------------------------------- | -------- |
+| 1   | `ADMIN`/`MANAGER`, default pagination (`:any`)             | `200`, all employees' balances |
+| 2   | `EMPLOYEE`, default pagination (`:own`, auto-scoped)       | `200`, only their own balances |
+| 3   | `year` filter                                              | `200`, only that year's balances |
+| 4   | `sortBy=consumed&order=desc`                                | `200`    |
+| 5   | `limit=101`                                                | `400`    |
+| 6   | No token                                                   | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                | Expected                                                          |
+| -------------------------------------------- | -------------------------------------------------------------------------- |
+| `sortBy` value outside the allowlist          | `400`                                                                       |
+| A caller with `:own` only and no linked Employee record | `200` with an empty `balances` array, not an error                     |
+| Tampered/expired JWT                         | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                             | Expected Behavior                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `page` beyond the last page             | `200` with an empty `balances` array, not an error                                                     |
+| An employee with a `LeaveType` they've never had a balance computed for | Simply absent from the list — `LeaveBalance` rows are created lazily (§ endpoint 68), there is no "virtual" zero-balance row shown for a type never touched |
+
+## 13. Security Testing
+
+- **No BOLA on the `employeeId` filter for `:own`-only callers**: same
+  silent-override protection as `GET /leave-requests`.
+- **Authorization layering**: `requirePermission` accepts either key;
+  the service layer decides the actual scope.
+
+## 14. Database Impact
+
+Read-only — one optional `Employee` lookup by `userId` (only for
+non-`:any` callers) plus `LeaveBalance.findMany` + `LeaveBalance.count`,
+run in parallel via `Promise.all`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/leave-balances
+    ↓
+authMiddleware
+    ↓
+requirePermission('leaveBalance:read:any', 'leaveBalance:read:own')
+    ↓ (403 if neither granted)
+validateMiddleware(listLeaveBalancesQuerySchema, 'query')
+    ↓ (400 if invalid)
+leave.controller.listBalances → leave.service.listLeaveBalances(query, requester)
+    ├─ !grantedPermissions.includes('leaveBalance:read:any')?
+    │    → employeeRepository.findByUserId(requester.id)
+    │    → no Employee? return { balances: [], pagination: { total: 0, ... } }
+    │    → filters.employeeId = ownEmployee.id (overrides any supplied value)
+    └─ Promise.all([leaveBalanceRepository.findAll(...), leaveBalanceRepository.count(...)])
+    ↓
+200 { balances, pagination }
+```
+
+## 16. Performance Notes
+
+Indexed on `employeeId`/`leaveTypeId` individually — filtering by either
+stays index-backed. Balance row counts are expected to be modest (one
+per employee per leave type per year touched).
+
+## 17. Interview Notes
+
+- **Q: Why is `remaining` never returned?** `docs/domain-leave.md` §5
+  keeps `LeaveBalance` minimal — `entitlement` and `consumed` are the
+  two independently meaningful, independently mutated fields (via
+  approval/cancellation/manual adjustment); `remaining` is a pure
+  derived value with no independent state of its own, so storing or
+  serializing it would just be redundant data that could drift out of
+  sync if ever computed differently in two places.
+
+## 18. cURL Examples
+
+```bash
+# EMPLOYEE viewing their own balances (auto-scoped)
+curl -s "http://localhost:3000/api/v1/leave-balances?year=2026" \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run after `PATCH /leave-requests/:id/approve` to confirm the deduction
+is reflected here.
+
+## 20. Testing Checklist
+
+- ✅ `:any` caller sees all employees' balances
+- ✅ `:own`-only caller auto-scoped to their own `employeeId`
+- ✅ `year`/`leaveTypeId` filters
+- ✅ Sort both directions with deterministic tiebreaker
+- ✅ `401` with no token
+- ✅ `400` on out-of-bounds `limit`
+
+---
+
+---
+
+# 68. `GET /leave-balances/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Leave Domain (2026-09-15, feature/22-leave-domain)
+Endpoint:           Get one Leave Balance
+Description:        Returns a single LeaveBalance, subject to an ownership check
+Method:             GET
+URL:                /api/v1/leave-balances/:id
+API Version:        v1
+Module:             modules/leave
+Authentication:     Yes (Bearer access token)
+Authorization:      `leaveBalance:read:any` OR `leaveBalance:read:own` (the latter requires the record's employeeId to match the caller's own Employee record)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the one place a plain `EMPLOYEE` can see a specific
+  `LeaveBalance` record's full detail — their own — same own/any shape
+  as `GET /leave-requests/:id` (endpoint 63).
+- **Business problem solved**: "exactly how many days of Sick Leave do I
+  have left for 2026."
+- **`LeaveBalance` rows are created lazily**: a balance only comes into
+  existence on first need — the first `PATCH .../approve` that touches a
+  given `(employeeId, leaveTypeId, year)`, or an explicit `PATCH
+  /leave-balances/:id` adjustment (endpoint 69, which itself requires an
+  existing row — see that endpoint's own notes). There is **no way to
+  "pre-list" or fetch a balance for a combination nobody has touched
+  yet** — a nonexistent balance is indistinguishable from a genuinely
+  untouched one, both return `404`.
+- **Expected callers**: any authenticated user, with two different access
+  paths depending on their permissions.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                          |
+| -------------------------------------- | -------- | -------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `leaveBalance:read:any` or `leaveBalance:read:own` |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                    |
+| ---- | ------------- | -------- | ---------------------------------- |
+| `id` | string (UUID) | **Yes**  | The LeaveBalance's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same two-layer authorization shape as `GET /leave-requests/:id`
+(endpoint 63) — middleware checks for either permission key, then the
+service (`getLeaveBalanceById` → `assertOwnershipOrAny`) fetches the
+record (`404` if missing) and, only for non-`:any` callers, compares its
+`employeeId` to the caller's own.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "balance": {
+    "id": "d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6f7a8b",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "leaveTypeId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "year": 2026,
+    "entitlement": "18",
+    "consumed": "4",
+    "createdAt": "2026-09-15T10:20:00.000Z",
+    "updatedAt": "2026-09-15T10:20:00.000Z"
+  }
+}
+```
+
+Verified live.
+
+## 9. Error Responses
+
+| Status | Reason                                                              | Response (`message`)                          | When                                                                                                                                  |
+| ------ | ------------------------------------------------------------------------ | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `401`  | No/invalid/expired access token                                          | Same as every other protected endpoint             | `authMiddleware` failure                                                                                                                 |
+| `403`  | Roles grant neither `leaveBalance:read:any` nor `leaveBalance:read:own`  | `"You do not have permission to perform this action"` | Caller has no leave-balance-read permission at all                                                                                        |
+| `403`  | Caller only has `leaveBalance:read:own`, and the record isn't theirs    | `"You do not have permission to view this record"`   | Same generic ownership message as `GET /leave-requests/:id` (shared `assertOwnershipOrAny` helper)                                       |
+| `404`  | No such balance (or none has ever been computed)                         | `"Leave balance not found"`                          | Invalid/nonexistent `id`                                                                                                                 |
+
+## 10. Postman Test Cases
+
+| #   | Case                                        | Expected                            |
+| --- | ------------------------------------------------ | ------------------------------------ |
+| 1   | `ADMIN`/`MANAGER`, any valid `id`                | `200`    |
+| 2   | Owning `EMPLOYEE`, own balance's `id`             | `200`    |
+| 3   | Different `EMPLOYEE`, someone else's balance's `id` | `403`    |
+| 4   | Valid UUID, nonexistent balance                   | `404`    |
+| 5   | No token                                        | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                              | Expected                                                                                                         |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Malformed (non-UUID) `id`                              | `404`                                                                                                              |
+| Tampered/expired JWT                                  | `401`                                                                                                              |
+
+## 12. Edge Cases
+
+| Scenario                                                                                      | Expected Behavior                                                                                                                        |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| A caller with **no** Employee record, holding only `leaveBalance:read:own`, requests any `id`  | `403` — `assertOwnershipOrAny` resolves `ownEmployee` as `null`, which never equals `balance.employeeId`                                  |
+
+## 13. Security Testing
+
+- **BOLA**: confirm a `leaveBalance:read:own`-only caller cannot read any
+  `id` except one whose `employeeId` matches their own Employee record.
+
+## 14. Database Impact
+
+- **Tables affected**: `LeaveBalance` (read only, single row); an
+  additional `Employee` lookup by `userId` when the ownership check runs.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/leave-balances/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('leaveBalance:read:any', 'leaveBalance:read:own')
+    ↓ (403 if neither granted)
+leave.controller.getBalanceById
+    → leave.service.getLeaveBalanceById(id, { id: req.user.id, grantedPermissions })
+        ├─ leaveBalanceRepository.findById(id) → not found → 404
+        └─ assertOwnershipOrAny(balance.employeeId, requester, 'leaveBalance:read:any')
+    ↓
+200 { balance }
+```
+
+## 16. Performance Notes
+
+Single indexed `LeaveBalance.findUnique` by primary key, plus one
+additional indexed `Employee` lookup by `userId` only when the ownership
+check path runs.
+
+## 17. Interview Notes
+
+Structurally identical to `GET /leave-requests/:id` (endpoint 63), down
+to sharing the same `assertOwnershipOrAny` helper and its generic `403`
+message.
+
+## 18. cURL Examples
+
+```bash
+curl -i http://localhost:3000/api/v1/leave-balances/$LEAVE_BALANCE_ID \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Save a `{{leaveBalanceId}}` from a `GET /leave-balances` list response
+(there is no `POST /leave-balances` to source one from directly — rows
+only ever come into existence via approval or manual adjustment).
+
+## 20. Testing Checklist
+
+- ✅ `200` as `ADMIN`/`MANAGER` for any balance
+- ✅ `200` as the owning `EMPLOYEE`
+- ✅ `403` (generic ownership message) as a different `EMPLOYEE`
+- ✅ `404` for nonexistent `id`
+- ✅ `401` with no token
+
+---
+
+---
+
+# 69. `PATCH /leave-balances/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Leave Domain (2026-09-15, feature/22-leave-domain)
+Endpoint:           Manually Adjust a Leave Balance
+Description:        ADMIN escape hatch - directly overrides entitlement and/or consumed, always audit-logged
+Method:             PATCH
+URL:                /api/v1/leave-balances/:id
+API Version:        v1
+Module:             modules/leave
+Authentication:     Yes (Bearer access token)
+Authorization:      `leaveBalance:adjust:any` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: `docs/domain-leave.md` §10/ADR-LV05 names this
+  endpoint explicitly as the accepted, audit-logged escape hatch for the
+  domain's strict no-negative-balance default — a legitimate business
+  need (e.g. compassionate leave beyond entitlement, or a one-off
+  correction) that the normal approval flow deliberately refuses to
+  grant automatically.
+- **Business problem solved**: lets `ADMIN` directly set a balance's
+  `entitlement` and/or `consumed` to correct a mistake or grant an
+  exception, without inventing a new request/approval path just for
+  balance corrections.
+- **Deliberately unrestricted beyond the permission itself**: unlike
+  every ownership-checked endpoint in this domain, there is **no**
+  reference or ownership restriction here — `leaveBalance:adjust:any` is
+  the entire gate.
+- **Expected callers**: `ADMIN` only.
+
+## 3. Request Headers
+
+| Header                                 | Required | Notes                                                     |
+| ---------------------------------------- | -------- | --------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `leaveBalance:adjust:any` permission |
+| `Content-Type: application/json`      | **Yes**  |                                                                   |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                    |
+| ---- | ------------- | -------- | ---------------------------------- |
+| `id` | string (UUID) | **Yes**  | The LeaveBalance's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{ "entitlement": 20 }
+```
+
+| Field         | Type   | Required               | Description                                    |
+| ------------- | ------ | ------------------------ | -------------------------------------------------- |
+| `entitlement` | number | No*                     | `>= 0`                                              |
+| `consumed`    | number | No*                     | `>= 0`                                              |
+
+*At least one of `entitlement`/`consumed` must be provided.
+
+## 7. Validation Rules
+
+- `entitlement`: optional, `number().min(0)`.
+- `consumed`: optional, `number().min(0)`.
+- **At least one required**: a Zod `.refine` rejects a body with neither
+  field. This refine carries no explicit `path`, so
+  `validateMiddleware`'s `` `${issue.path.join('.')}: ${issue.message}` ``
+  formatting (used for every validation error in this API) produces an
+  empty path segment before the colon — the literal response message is
+  `": At least one of entitlement or consumed must be provided"` (note
+  the leading `: `), not a bare unprefixed sentence.
+- No check that `consumed <= entitlement` after the adjustment — an
+  `ADMIN` can set `consumed` above `entitlement` directly, deliberately:
+  this endpoint is the trusted override path, not a re-application of
+  the normal approval-time no-negative-balance check.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "balance": {
+    "id": "d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6f7a8b",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "leaveTypeId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f",
+    "year": 2026,
+    "entitlement": "20",
+    "consumed": "4",
+    "createdAt": "2026-09-15T10:20:00.000Z",
+    "updatedAt": "2026-09-15T10:35:00.000Z"
+  }
+}
+```
+
+Verified live (`leave.service.test.js`'s "applies a manual ADMIN override
+and is audit-logged" case).
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                    | When                                                                 |
+| ------ | ------------------------------------ | -------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `400`  | Neither `entitlement` nor `consumed` provided | `": At least one of entitlement or consumed must be provided"` (leading `: ` — unpathed refine, see §7) | Empty body `{}`                                                          |
+| `400`  | Negative value                      | e.g. `"entitlement: Too small: expected number to be >=0"`    | `entitlement`/`consumed` `< 0`                                            |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                      | `authMiddleware` failure                                                   |
+| `403`  | Caller lacks `leaveBalance:adjust:any` | `"You do not have permission to perform this action"`      | `MANAGER`/`EMPLOYEE` token                                                  |
+| `404`  | No such balance                     | `"Leave balance not found"`                                    | Invalid/nonexistent `id`                                                   |
+
+## 10. Postman Test Cases
+
+| #   | Case                                    | Expected |
+| --- | -------------------------------------------- | -------- |
+| 1   | Adjust `entitlement` only                     | `200` — verified live |
+| 2   | Adjust `consumed` only                        | `200`    |
+| 3   | Adjust both together                          | `200`    |
+| 4   | Empty body `{}`                               | `400`    |
+| 5   | Negative `entitlement`/`consumed`             | `400`    |
+| 6   | Nonexistent `id`                              | `404`    |
+| 7   | As `MANAGER`/`EMPLOYEE` token                  | `403`    |
+| 8   | No token                                      | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Malformed JSON body                | `400` from Express's own JSON body-parser                                  |
+| `entitlement`/`consumed` as a string | `400` — Zod's `.number()` rejects non-number types                        |
+| Tampered/expired JWT               | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Setting `consumed` above `entitlement`                            | `200` — allowed; this is the trusted override path, no re-validation against the no-negative-balance rule (§7)                                        |
+| Adjusting a balance that was just lazily created by an approval    | `200` — works identically; the balance's origin (lazy-creation vs. manual) doesn't affect adjustability                                                |
+| Adjusting `employeeId`/`leaveTypeId`/`year`                        | Not possible — these are not accepted fields; correcting which employee/type/year a balance belongs to isn't supported by this endpoint               |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot adjust a balance, despite
+  holding `leaveBalance:read:any` — read and adjust are deliberately
+  separate permissions, and only `ADMIN` holds the latter.
+- **Mass assignment**: only `entitlement`/`consumed` are read from the
+  body.
+
+## 14. Database Impact
+
+- **Tables affected**: `LeaveBalance` (update), `AuditLog` (insert),
+  inside one `prisma.$transaction`. Always audit-logged, per
+  `docs/domain-leave.md` §4's mandatory invariant on balance changes.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/leave-balances/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('leaveBalance:adjust:any')
+    ↓ (403 if not granted)
+validateMiddleware(adjustLeaveBalanceSchema)
+    ↓ (400 if invalid, including neither field present)
+leave.controller.adjustBalance → leave.service.adjustLeaveBalance(id, data, actor)
+    ├─ leaveBalanceRepository.findById(id) → not found → 404
+    └─ prisma.$transaction:
+         ├─ leaveBalanceRepository.update(id, data, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', beforeData, afterData, ... }, tx)
+    ↓
+200 { balance }
+```
+
+## 16. Performance Notes
+
+One indexed lookup, one update, one audit-log insert.
+
+## 17. Interview Notes
+
+- **Q: Why is there no re-validation of the no-negative-balance rule
+  here, when `PATCH .../approve` enforces it strictly?** This endpoint
+  *is* the deliberate escape hatch (`docs/domain-leave.md` §10, ADR-LV05)
+  — its entire purpose is to let a trusted `ADMIN` override the normal
+  rule for a genuine exception (e.g. compassionate leave beyond
+  entitlement). Re-imposing the same check here would defeat the
+  endpoint's reason for existing.
+- **Q: Why no ownership restriction, unlike every other Leave Balance
+  endpoint?** `leaveBalance:adjust:any` only exists as an "any" scope —
+  there is no `leaveBalance:adjust:own` permission anywhere in the
+  seeded set, since a self-service balance adjustment would defeat the
+  entire "trusted admin override" premise the endpoint exists for.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/leave-balances/$LEAVE_BALANCE_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"entitlement":20}'
+```
+
+## 19. Postman Collection Notes
+
+Run after confirming a balance's current state via `GET
+/leave-balances/:id`, then re-`GET` to verify the adjustment took effect.
+
+## 20. Testing Checklist
+
+- ✅ Adjust `entitlement` only, `consumed` only, both together → `200`
+  (verified live)
+- ✅ Empty body → `400`
+- ✅ Negative values → `400`
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created (verified live)
