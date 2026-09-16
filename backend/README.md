@@ -229,6 +229,20 @@ All routes are mounted under `/api/v1`.
 | `PATCH`  | `/applications/:id/offers/:offerId/accept` | Access token, `application:update` (ADMIN only) | Accept a Pending offer                                                                                                                                                                                        |
 | `PATCH`  | `/applications/:id/offers/:offerId/decline` | Access token, `application:update` (ADMIN only) | Decline a Pending offer                                                                                                                                                                                      |
 | `PATCH`  | `/applications/:id/offers/:offerId/expire` | Access token, `application:update` (ADMIN only) | Mark a Pending offer Expired — manual, no scheduled/automatic expiry exists project-wide                                                                                                                     |
+| `POST`   | `/training-programs`                   | Access token, `trainingProgram:create` (ADMIN only) | Create a Training Program — `mandatory` flag governs whether self-enrollment is allowed                                                                                                                          |
+| `GET`    | `/training-programs`                   | Access token, `trainingProgram:read` (every role) | List Training Programs — paginated, searchable, filterable (mandatory/status), sortable                                                                                                                          |
+| `GET`    | `/training-programs/:id`               | Access token, `trainingProgram:read` (every role) | Get one Training Program                                                                                                                                                                                          |
+| `PATCH`  | `/training-programs/:id`               | Access token, `trainingProgram:update` (ADMIN only) | Update a Training Program, including deactivating it                                                                                                                                                             |
+| `DELETE` | `/training-programs/:id`               | Access token, `trainingProgram:delete` (ADMIN only) | Hard-delete a Training Program — only when zero Enrollment records reference it                                                                                                                                  |
+| `POST`   | `/enrollments`                         | Access token, `enrollment:create:own` or `:create:any` | Self-enroll (non-mandatory programs only) or enroll any employee (ADMIN/HR, employeeId required, any program including mandatory)                                                                        |
+| `GET`    | `/enrollments`                         | Access token, `enrollment:read:own` or `:read:any` | List Enrollments — auto-scoped to own without `:any`, the same pattern `GET /leave-requests` established                                                                                                         |
+| `GET`    | `/enrollments/:id`                     | Access token, `enrollment:read:own` or `:read:any` | Get one Enrollment                                                                                                                                                                                                |
+| `PATCH`  | `/enrollments/:id/status`              | Access token, `enrollment:manage:any` or `:withdraw:own` | Transition status — `ENROLLED→IN_PROGRESS→COMPLETED\|FAILED` sequential, `WITHDRAWN` from either non-terminal stage; only `manage:any` can mark Completed/Failed                                          |
+| `DELETE` | `/enrollments/:id`                     | Access token, `enrollment:manage:any` | Delete an Enrollment — unrestricted by status, mirrors Attendance's own delete convention                                                                                                                        |
+| `POST`   | `/enrollments/:id/documents`           | Access token, any enrollment read/manage permission | Upload an Enrollment document (e.g. certificate) — mirrors Employee/Candidate document uploads exactly                                                                                                    |
+| `GET`    | `/enrollments/:id/documents`           | Access token, any enrollment read/manage permission | List an Enrollment's documents                                                                                                                                                                                    |
+| `DELETE` | `/enrollments/:id/documents/:documentId` | Access token, any enrollment read/manage permission | Delete an Enrollment document                                                                                                                                                                              |
+| `GET`    | `/training-compliance`                 | Access token, `enrollment:read:own` or `:read:any` | Computed (not stored) compliance status — single program (`trainingProgramId` query param) or a bulk report across every mandatory program                                                                      |
 
 `POST`/`PATCH /employees` also accept an optional `branchId`, validated
 against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
@@ -356,6 +370,29 @@ invite-email mechanism exists anywhere in this project). Permission
 scoping (`ADR-RC05`) is `ADMIN`-only across every aggregate — unlike Leave/
 Payroll/Performance, nothing here has a natural "own" scope, since a
 Candidate isn't a system identity at all.
+
+**New domain (2026-09-16):** Training (`docs/domain-training.md`) — two
+aggregates, `TrainingProgram` (master data) and `Enrollment` (a per-attempt
+historical record, deliberately repeatable — unlike Branch/Department/
+Designation/Shift's single-current-value axes, retaking or renewing
+training is normal, so no uniqueness constraint exists on `(employeeId,
+trainingProgramId)`). `Enrollment.status` is a guarded state machine
+(`ENROLLED → IN_PROGRESS → COMPLETED | FAILED` strictly sequential,
+`WITHDRAWN` from either non-terminal stage). Self-enrollment
+(`enrollment:create:own`) is restricted to non-mandatory programs — a hard
+service-layer rule, not just a suggestion — mandatory-program enrollment
+must go through `enrollment:create:any` (`ADMIN`/HR). Only `enrollment:
+manage:any` can mark an enrollment `COMPLETED`/`FAILED`/`IN_PROGRESS`; an
+employee can withdraw their own enrollment (`enrollment:withdraw:own`) but
+cannot self-attest completion, which would undermine compliance tracking's
+whole point. Compliance status is **computed on read, never stored**
+(reusing Attendance's ADR-AT03 principle) — `GET /training-compliance`
+finds the most recent `COMPLETED` enrollment for a program and checks it
+against that program's `renewalPeriodDays` (absent means compliant
+indefinitely once completed once), in both a single-program and a bulk
+across-every-mandatory-program shape. Deliberately **no `MANAGER`
+reports-visibility** — unlike Leave/Performance, the domain doc's own "who
+performs" text never mentions managers, only `ADMIN`/HR and self-enrollment.
 
 **Breaking change (2026-09-13):** Employee's free-text `department`
 (`String`) field was removed and replaced by a **mandatory**

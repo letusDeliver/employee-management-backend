@@ -26085,3 +26085,3089 @@ three terminal transitions independently within one collection.
 - ✅ Nonexistent `offerId` → `404`
 - ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
 - ✅ `AuditLog` row created
+
+---
+
+---
+
+# 119. `POST /training-programs`
+
+## 1. Endpoint Information
+
+```
+Feature:            Training Domain (2026-09-16, feature/26-training-domain)
+Endpoint:           Create Training Program
+Description:        Creates a new named training-program catalog entry, optionally marked mandatory/compliance
+Method:             POST
+URL:                /api/v1/training-programs
+API Version:        v1
+Module:             modules/training
+Authentication:     Yes (Bearer access token)
+Authorization:      `trainingProgram:create` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: `docs/domain-training.md` §2 establishes `TrainingProgram`
+  as the catalog of learning programs an employee can be enrolled in — this
+  is the entry point that creates one.
+- **Business problem solved**: lets `ADMIN`/HR define recurring or one-off
+  training offerings (e.g. "Annual Security Awareness") as real,
+  referenceable data, distinct from an ad hoc note on an Employee record.
+- **`mandatory`/`renewalPeriodDays` are the two domain-specific fields**:
+  `mandatory` (default `false`) marks a program as a compliance
+  requirement, consumed by `GET /training-compliance`'s bulk report
+  (endpoint 132) to decide which programs to report on for an employee.
+  `renewalPeriodDays` is only meaningful for a `mandatory` program with a
+  recurring requirement (e.g. annual renewal) — it is **not** enforced as
+  required even when `mandatory: true`, since a mandatory program can
+  legitimately be a one-time, never-expiring requirement
+  (`docs/domain-training.md` §3).
+- **Expected callers**: `ADMIN`/HR only — the same tighter-than-`employee:*`
+  scoping already applied to Branch/Department/Designation/Holiday
+  Calendar/Shift (ADR-TR04).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                 |
+| -------------------------------------- | -------- | ------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `trainingProgram:create` permission |
+| `Content-Type: application/json`      | **Yes**  |                                                           |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "name": "Annual Security Awareness",
+  "description": "Mandatory yearly refresher on information-security practices",
+  "mandatory": true,
+  "renewalPeriodDays": 365
+}
+```
+
+| Field               | Type    | Required | Description                                                                 |
+| -------------------- | ------- | -------- | ----------------------------------------------------------------------------- |
+| `name`              | string  | **Yes**  | Trimmed, non-empty, **unique case-insensitively** across all training programs |
+| `description`       | string  | No       | Trimmed, non-empty when provided                                              |
+| `mandatory`         | boolean | No       | Defaults to `false` when omitted                                              |
+| `renewalPeriodDays` | integer | No       | Positive integer; only meaningful for compliance courses (§7)                 |
+
+## 7. Validation Rules
+
+- `name`: required, `.trim().min(1)` — a whitespace-only value fails with
+  `"name: Training program name is required"`.
+- `description`: optional, `.trim().min(1)` when provided.
+- `mandatory`: optional boolean, `.default(false)` — omitting it always
+  creates a non-mandatory program.
+- `renewalPeriodDays`: optional, must be a positive integer when provided
+  — a `0` or negative value fails with `"renewalPeriodDays: renewalPeriodDays
+  must be a positive integer"`. **Not cross-validated against `mandatory`**
+  — it can be set on a non-mandatory program (inert but accepted) or
+  omitted entirely on a mandatory one (means "never expires once
+  completed," §3/ADR-TR02).
+- `status` is **not** accepted at creation — every new program starts
+  `ACTIVE`; status can only be changed afterward via `PATCH
+  /training-programs/:id`.
+- **Case-insensitive uniqueness on `name`** — the same convention already
+  used by Branch/Department/Designation/Holiday Calendar/Shift. Creating
+  `"annual security awareness"` after `"Annual Security Awareness"`
+  already exists returns `409`, not `201`.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "trainingProgram": {
+    "id": "b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e",
+    "name": "Annual Security Awareness",
+    "description": "Mandatory yearly refresher on information-security practices",
+    "mandatory": true,
+    "renewalPeriodDays": 365,
+    "status": "ACTIVE",
+    "createdAt": "2026-09-16T09:12:04.221Z",
+    "updatedAt": "2026-09-16T09:12:04.221Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                               | Response (`message`)                                                                          | When                                                             |
+| ------ | -------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| `400`  | Validation failed                     | e.g. `"name: Training program name is required"`, `"renewalPeriodDays: renewalPeriodDays must be a positive integer"` | Empty/whitespace-only `name`, non-positive `renewalPeriodDays`     |
+| `401`  | Missing/invalid/expired access token   | Same as every other protected endpoint                                                         | `authMiddleware` failure                                            |
+| `403`  | Caller lacks `trainingProgram:create`  | `"You do not have permission to perform this action"`                                          | `MANAGER`/`EMPLOYEE` token                                          |
+| `409`  | Duplicate `name` (case-insensitive)   | `"A training program with this name already exists"`                                            | A program with that name (any case) already exists                 |
+
+## 10. Postman Test Cases
+
+| #   | Case                                             | Expected |
+| --- | ---------------------------------------------------- | -------- |
+| 1   | Valid create, mandatory with `renewalPeriodDays`      | `201`    |
+| 2   | Valid create, non-mandatory, no `renewalPeriodDays`   | `201`    |
+| 3   | Valid create, mandatory with **no** `renewalPeriodDays` (never expires) | `201` |
+| 4   | Duplicate `name`, different case                      | `409`    |
+| 5   | Empty/whitespace `name`                               | `400`    |
+| 6   | `renewalPeriodDays: 0` or negative                    | `400`    |
+| 7   | As `MANAGER`/`EMPLOYEE` token                          | `403`    |
+| 8   | No token                                              | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                               | Expected                                                                 |
+| ----------------------------------------- | --------------------------------------------------------------------------- |
+| Malformed JSON body                       | `400` from Express's own JSON body-parser                                  |
+| Tampered/expired JWT                      | `401`                                                                       |
+| `name`/`description` as a number/array    | `400` — Zod's `.string()` rejects non-string types                          |
+| `mandatory` as a non-boolean               | `400`                                                                       |
+| `renewalPeriodDays` as a non-integer/float | `400`                                                                       |
+| Attempted `status` in the body            | Silently ignored — not read by `createTrainingProgramSchema`                |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                     |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Concurrent creates with the same name (any case)                | One succeeds, the other gets `409` via the DB's own unique constraint on the exact-case `name` column (Prisma `P2002` caught and re-thrown as `409`) |
+| `mandatory: true` with no `renewalPeriodDays`                    | `201` — accepted as a one-time, never-expiring mandatory requirement (§3, ADR-TR02); `GET /training-compliance` reports `expiresAt: null`, `compliant: true` once any `COMPLETED` enrollment exists |
+| `mandatory: false` with `renewalPeriodDays` set                  | `201` — accepted, but inert; the compliance bulk report (endpoint 132) only ever considers `mandatory: true` programs |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER`/`EMPLOYEE` cannot create a training
+  program — same `ADMIN`-only scoping as Branch/Department/Designation/
+  Holiday Calendar/Shift.
+- **Mass assignment**: only `name`/`description`/`mandatory`/
+  `renewalPeriodDays` are read from the body — an attempted `status` or
+  `id` is silently ignored, not applied.
+
+## 14. Database Impact
+
+- **Tables affected**: `TrainingProgram` (insert), `AuditLog` (insert).
+- **Transactions**: both inside one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/training-programs
+    ↓
+authMiddleware
+    ↓
+requirePermission('trainingProgram:create')
+    ↓ (403 if not granted)
+validateMiddleware(createTrainingProgramSchema)
+    ↓ (400 if invalid)
+trainingProgram.controller.create → trainingProgram.service.createTrainingProgram(data, actor)
+    ├─ trainingProgramRepository.findByName(name) [case-insensitive] → existing → 409
+    └─ prisma.$transaction:
+         ├─ trainingProgramRepository.create(data, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', entityType: 'TrainingProgram', afterData, ... }, tx)
+    ↓ (catch) Prisma P2002 → 409 (race-condition fallback)
+201 { trainingProgram }
+```
+
+## 16. Performance Notes
+
+One case-insensitive `name` lookup plus one insert plus one audit-log
+insert — no notable performance concerns; program counts are expected to
+be modest.
+
+## 17. Interview Notes
+
+- **Q: Why isn't `renewalPeriodDays` required when `mandatory: true`?**
+  A mandatory program can legitimately be a one-time requirement with no
+  recurring renewal (e.g. a one-off onboarding compliance course) —
+  forcing a renewal period onto every mandatory program would misrepresent
+  that case. The absence of `renewalPeriodDays` is a meaningful business
+  state ("never expires once completed"), not a missing value
+  (`docs/domain-training.md` §3, ADR-TR02).
+- **Q: Why is `mandatory` a plain boolean rather than an enum with more
+  granularity (e.g. "recommended")?** No verified requirement named a
+  third state — `docs/domain-training.md` §4's Recommended Practices
+  explicitly says to keep `TrainingProgram` minimal and resist adding
+  fields not demonstrated as needed.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/training-programs \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Annual Security Awareness","description":"Mandatory yearly refresher on information-security practices","mandatory":true,"renewalPeriodDays":365}'
+```
+
+```bash
+# A non-mandatory, optional program - self-enrollable (see endpoint 124)
+curl -i -X POST http://localhost:3000/api/v1/training-programs \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Advanced Excel Workshop","mandatory":false}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `trainingProgram.id` as `{{trainingProgramId}}` —
+used by every other Training endpoint. Create at least one mandatory and
+one non-mandatory program to exercise the self-enrollment asymmetry in
+`POST /enrollments` (endpoint 124).
+
+## 20. Testing Checklist
+
+- ✅ Valid create (mandatory with/without renewal, non-mandatory) → `201`
+- ✅ Duplicate `name`, case-insensitive → `409`
+- ✅ Empty/whitespace `name`, non-positive `renewalPeriodDays` → `400`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 120. `GET /training-programs`
+
+## 1. Endpoint Information
+
+```
+Feature:            Training Domain (2026-09-16, feature/26-training-domain)
+Endpoint:           List Training Program records
+Method:             GET
+URL:                /api/v1/training-programs
+API Version:        v1
+Module:             modules/training
+Authentication:     Yes (Bearer access token)
+Authorization:      `trainingProgram:read` permission (granted to ADMIN, MANAGER, EMPLOYEE)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Browse/search training programs — for admin catalog-management screens
+and for populating a program picker when an employee self-enrolls via
+`POST /enrollments` (endpoint 124).
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                    |
+| -------------------------------------- | -------- | ------------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `trainingProgram:read` permission |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name        | Type    | Required | Default     | Description                              |
+| ------------ | ------- | -------- | ------------- | ------------------------------------------- |
+| `page`      | integer | No       | `1`         | 1-indexed page number                     |
+| `limit`     | integer | No       | `10` (max 100) | Page size                                |
+| `search`    | string  | No       | —           | Matches `name` (case-insensitive)          |
+| `mandatory` | boolean | No       | —           | Filter to mandatory-only or optional-only   |
+| `status`    | enum    | No       | —           | `ACTIVE` or `INACTIVE`                    |
+| `sortBy`    | enum    | No       | `createdAt` | `name`, `mandatory`, `status`, `createdAt` |
+| `order`     | enum    | No       | `desc`      | `asc` or `desc`                           |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same shape as `GET /shifts`'s `listShiftsQuerySchema` — `sortBy` allows
+`mandatory` in place of `startTime`/`endTime`, since Training Program has
+no time-range fields. `mandatory` is coerced from the query string
+(`z.coerce.boolean()`).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "trainingPrograms": [
+    {
+      "id": "b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e",
+      "name": "Annual Security Awareness",
+      "description": "Mandatory yearly refresher on information-security practices",
+      "mandatory": true,
+      "renewalPeriodDays": 365,
+      "status": "ACTIVE",
+      "createdAt": "2026-09-16T09:12:04.221Z",
+      "updatedAt": "2026-09-16T09:12:04.221Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                                        |
+| ------ | ------------------------------------ | ----------------------------------------------------- | ---------------------------------------------- |
+| `400`  | A query parameter failed validation | e.g. `"limit: Too big: expected number to be <=100"` | Out-of-bounds `limit`, invalid `sortBy`/`status` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint               | `authMiddleware` failure                       |
+| `403`  | Caller lacks `trainingProgram:read`  | `"You do not have permission to perform this action"` | Not expected in practice — every seeded role has this grant |
+
+## 10. Postman Test Cases
+
+| #   | Case                                    | Expected |
+| --- | ------------------------------------------- | -------- |
+| 1   | Default pagination                          | `200`, up to 10 results |
+| 2   | `search` matches an existing program        | `200`, filtered results |
+| 3   | `mandatory=true` filter                     | `200`, only mandatory programs |
+| 4   | `status=INACTIVE` filter                    | `200`, only inactive programs |
+| 5   | `sortBy=mandatory&order=desc`               | `200`, mandatory programs first |
+| 6   | `limit=101`                                 | `400`    |
+| 7   | As any authenticated role (ADMIN/MANAGER/EMPLOYEE) | `200` — every seeded role has `trainingProgram:read` |
+| 8   | No token                                    | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                                   | Expected |
+| ---------------------------------------------------------------- | -------- |
+| `sortBy` value outside the allowlist                              | `400`    |
+| `status` value outside the enum                                  | `400`    |
+| `mandatory` as a non-boolean-coercible string (e.g. `?mandatory=maybe`) | `400` |
+| Tampered/expired JWT                                              | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                             | Expected Behavior                                                                       |
+| --------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `page` beyond the last page             | `200` with an empty `trainingPrograms` array, not an error                              |
+| Two programs with identical `createdAt` | Deterministic ordering via the unconditional secondary `id ASC` tiebreaker              |
+
+## 13. Security Testing
+
+`trainingProgram:read` is broad, like `shift:read`/`holidayCalendar:read`
+— no `:own` scope exists or is needed, since Training Program has no
+ownership dimension. Every seeded role (`ADMIN`/`MANAGER`/`EMPLOYEE`)
+holds this grant, unlike the mutation endpoints.
+
+## 14. Database Impact
+
+Read-only — `TrainingProgram.findMany` + `TrainingProgram.count`, run in
+parallel via `Promise.all`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/training-programs
+    ↓
+authMiddleware
+    ↓
+requirePermission('trainingProgram:read')
+    ↓ (403 if not granted)
+validateMiddleware(listTrainingProgramsQuerySchema, 'query')
+    ↓ (400 if invalid)
+trainingProgram.controller.list → trainingProgram.service.listTrainingPrograms(query)
+    └─ Promise.all([trainingProgramRepository.findAll(...), trainingProgramRepository.count(...)])
+    ↓
+200 { trainingPrograms, pagination }
+```
+
+## 16. Performance Notes
+
+Training program counts are expected to be modest (tens, not thousands)
+— pagination exists for API consistency, not a demonstrated scale
+problem.
+
+## 17. Interview Notes
+
+- **Q: Why is `trainingProgram:read` granted to every role while
+  mutations are `ADMIN`-only?** Same master-data shape as Branch/
+  Department/Designation/Holiday Calendar/Shift — every employee needs to
+  browse the catalog (e.g. to self-enroll, endpoint 124), but only
+  `ADMIN`/HR curates it.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/training-programs?mandatory=true&status=ACTIVE" \
+  -H "Authorization: Bearer $ANY_ROLE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run after `POST /training-programs` to confirm the created program is
+discoverable via `search`.
+
+## 20. Testing Checklist
+
+- ✅ Default pagination, explicit `page`/`limit`
+- ✅ `search` across `name`
+- ✅ `mandatory`/`status` filters
+- ✅ Sort both directions with deterministic tiebreaker
+- ✅ `200` for every seeded role
+- ✅ `400` on out-of-bounds `limit`
+
+---
+
+---
+
+# 121. `GET /training-programs/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Training Domain (2026-09-16, feature/26-training-domain)
+Endpoint:           Get one Training Program record
+Method:             GET
+URL:                /api/v1/training-programs/:id
+API Version:        v1
+Module:             modules/training
+Authentication:     Yes (Bearer access token)
+Authorization:      `trainingProgram:read` permission (granted to every role)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Fetch a single training program's current details — e.g. to populate an
+edit form, or resolve a program's name/mandatory flag before an employee
+confirms self-enrollment.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                    |
+| -------------------------------------- | -------- | ------------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `trainingProgram:read` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                     |
+| ---- | ------------- | -------- | ---------------------------------- |
+| `id` | string (UUID) | **Yes**  | The TrainingProgram record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check and the record's existence.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "trainingProgram": {
+    "id": "b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e",
+    "name": "Annual Security Awareness",
+    "description": "Mandatory yearly refresher on information-security practices",
+    "mandatory": true,
+    "renewalPeriodDays": 365,
+    "status": "ACTIVE",
+    "createdAt": "2026-09-16T09:12:04.221Z",
+    "updatedAt": "2026-09-16T09:12:04.221Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                | When                              |
+| ------ | ------------------------------------ | ------------------------------------------------------ | ------------------------------------ |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                 | `authMiddleware` failure           |
+| `403`  | Caller lacks `trainingProgram:read`  | `"You do not have permission to perform this action"` | Not expected in practice           |
+| `404`  | No such training program            | `"Training program not found"`                          | Invalid/nonexistent `id`           |
+
+## 10. Postman Test Cases
+
+| #   | Case             | Expected |
+| --- | ------------------ | -------- |
+| 1   | Existing `id`      | `200`    |
+| 2   | Nonexistent `id`   | `404`    |
+| 3   | No token           | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                   | Expected |
+| ----------------------------- | -------- |
+| Malformed (non-UUID) `id`     | `404`    |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+None beyond the standard existence check — Training Program has no
+soft-delete concept.
+
+## 13. Security Testing
+
+No BOLA concern — no ownership dimension.
+
+## 14. Database Impact
+
+Read-only — single indexed `TrainingProgram.findUnique`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/training-programs/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('trainingProgram:read')
+    ↓ (403 if not granted)
+trainingProgram.controller.getById → trainingProgram.service.getTrainingProgramById(id)
+    └─ trainingProgramRepository.findById(id) → not found → 404
+    ↓
+200 { trainingProgram }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup by primary key.
+
+## 17. Interview Notes
+
+Structurally identical to `GET /shifts/:id` and `GET /designations/:id`
+— same reasoning applies; the same `assertTrainingProgramAssignable`
+existence+status check is reused internally by `POST /enrollments`
+(endpoint 124), not this endpoint directly.
+
+## 18. cURL Examples
+
+```bash
+curl -s http://localhost:3000/api/v1/training-programs/$TRAINING_PROGRAM_ID \
+  -H "Authorization: Bearer $ANY_ROLE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Uses `{{trainingProgramId}}` saved from `POST /training-programs`.
+
+## 20. Testing Checklist
+
+- ✅ Valid `id` → `200`
+- ✅ Nonexistent `id` → `404`
+- ✅ `401` with no token
+
+---
+
+---
+
+# 122. `PATCH /training-programs/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Training Domain (2026-09-16, feature/26-training-domain)
+Endpoint:           Update a Training Program, including activating/deactivating it
+Method:             PATCH
+URL:                /api/v1/training-programs/:id
+API Version:        v1
+Module:             modules/training
+Authentication:     Yes (Bearer access token)
+Authorization:      `trainingProgram:update` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Correct a program's name/description/mandatory flag/renewal period, or
+retire it from future assignment without losing enrollment history —
+same shape as Branch's/Department's/Designation's/Shift's equivalent.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                 |
+| -------------------------------------- | -------- | ---------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `trainingProgram:update` permission |
+| `Content-Type: application/json`      | **Yes**  |                                                              |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                     |
+| ---- | ------------- | -------- | ---------------------------------- |
+| `id` | string (UUID) | **Yes**  | The TrainingProgram record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{ "status": "INACTIVE" }
+```
+
+| Field               | Type    | Required | Description                                                    |
+| -------------------- | ------- | -------- | ------------------------------------------------------------------ |
+| `name`              | string  | No       | Trimmed, non-empty when provided                                     |
+| `description`       | string  | No       | Trimmed, non-empty when provided; **nullable** — send `null` to clear it |
+| `mandatory`         | boolean | No       |                                                                        |
+| `renewalPeriodDays` | integer | No       | Positive integer; **nullable** — send `null` to clear it (revert to "never expires") |
+| `status`            | enum    | No       | `ACTIVE` or `INACTIVE`                                                |
+
+## 7. Validation Rules
+
+Same trimming/format rules as creation, applied only to whichever fields
+are present; `name` uniqueness re-checked case-insensitively on rename.
+**Unlike `PATCH /shifts/:id`**, `description` and `renewalPeriodDays` are
+both `.nullable().optional()` — a `null` value explicitly clears the
+field (reverts a program to "never expires" for `renewalPeriodDays`),
+distinct from omitting the key entirely (leaves the existing value
+untouched). `mandatory`/`name`/`status` remain plain `.optional()` with
+no clear-able/nullable path.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "trainingProgram": {
+    "id": "b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e",
+    "name": "Annual Security Awareness",
+    "description": "Mandatory yearly refresher on information-security practices",
+    "mandatory": true,
+    "renewalPeriodDays": 365,
+    "status": "INACTIVE",
+    "createdAt": "2026-09-16T09:12:04.221Z",
+    "updatedAt": "2026-09-16T09:20:47.930Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                               | Response (`message`)                                                     | When                                       |
+| ------ | -------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------- |
+| `400`  | Validation failed                     | e.g. `"name: Training program name is required"`, invalid `status`          | Empty/whitespace-only `name`, invalid `status`/`renewalPeriodDays` |
+| `401`  | Missing/invalid/expired access token   | Same as every other protected endpoint                                     | `authMiddleware` failure                    |
+| `403`  | Caller lacks `trainingProgram:update`  | `"You do not have permission to perform this action"`                       | `MANAGER`/`EMPLOYEE` token                  |
+| `404`  | No such training program              | `"Training program not found"`                                               | Invalid/nonexistent `id`                    |
+| `409`  | Duplicate `name`                      | `"A training program with this name already exists"`                        | Renaming to a name already used, case-insensitive |
+
+## 10. Postman Test Cases
+
+| #   | Case                                        | Expected |
+| --- | ------------------------------------------------ | -------- |
+| 1   | Update `name`/`description` only                  | `200`    |
+| 2   | Update `mandatory`/`renewalPeriodDays`             | `200`    |
+| 3   | Clear `renewalPeriodDays` via `null`               | `200`, `renewalPeriodDays: null` |
+| 4   | Clear `description` via `null`                    | `200`, `description: null` |
+| 5   | Deactivate (`status: "INACTIVE"`)                  | `200`    |
+| 6   | Reactivate (`status: "ACTIVE"`)                    | `200`    |
+| 7   | Rename to another program's existing `name`, any case | `409` |
+| 8   | Nonexistent `id`                                   | `404`    |
+| 9   | As `EMPLOYEE`/`MANAGER` token                       | `403`    |
+| 10  | No token                                           | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                     | Expected |
+| -------------------------------- | -------- |
+| `status` outside the enum        | `400`    |
+| `renewalPeriodDays` non-positive (and not `null`) | `400` |
+| Empty body `{}`                  | `200`, no-op update |
+| Tampered/expired JWT             | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                   |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Deactivating a program with active Enrollment records           | Succeeds; existing `Enrollment.trainingProgramId` references are **untouched**. Only *future* `POST /enrollments` attempts against this program are blocked, via `assertTrainingProgramAssignable`'s positive-allowlist check (endpoint 124) |
+| Reactivating a program                                          | Immediately assignable again                                                                                              |
+| Setting `mandatory: true` on a program with existing non-mandatory enrollment history | Succeeds; does not retroactively affect already-`COMPLETED` enrollments — the compliance report (endpoint 132) simply starts including this program going forward |
+| Clearing `renewalPeriodDays` on a program with employees currently compliant under the old period | Succeeds; those employees' compliance status (endpoint 132) becomes "compliant indefinitely" (no `expiresAt`) on the next read, since compliance is always computed fresh, never stored (ADR-TR02) |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot update a training program.
+- **Mass assignment**: only `name`/`description`/`mandatory`/
+  `renewalPeriodDays`/`status` are read from the body.
+
+## 14. Database Impact
+
+- **Tables affected**: `TrainingProgram` (update), `AuditLog` (insert),
+  inside one `prisma.$transaction`.
+- **Cascade behavior**: none — deactivating never touches `Enrollment`
+  rows.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/training-programs/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('trainingProgram:update')
+    ↓ (403 if not granted)
+validateMiddleware(updateTrainingProgramSchema)
+    ↓ (400 if invalid)
+trainingProgram.controller.update → trainingProgram.service.updateTrainingProgram(id, data, actor)
+    ├─ trainingProgramRepository.findById(id) → not found → 404
+    ├─ (if name changing) trainingProgramRepository.findByName(name) → conflict (different id) → 409
+    └─ prisma.$transaction:
+         ├─ trainingProgramRepository.update(id, data, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'TrainingProgram', beforeData, afterData, ... }, tx)
+    ↓ (catch) Prisma P2002 → 409 (race-condition fallback)
+200 { trainingProgram }
+```
+
+## 16. Performance Notes
+
+Single indexed lookup, optional uniqueness pre-check, one update, one
+audit-log insert.
+
+## 17. Interview Notes
+
+- **Q: Why are `description`/`renewalPeriodDays` nullable while
+  `name`/`mandatory`/`status` are not?** A program always needs a `name`
+  and a definite `mandatory`/`status` state to remain meaningful — there
+  is no "unset" version of those. `description` is genuinely optional
+  free text, and `renewalPeriodDays` has a meaningful absent state
+  ("never expires once completed," §3) that must be explicitly
+  re-settable via `null` once a program has had one, unlike Shift's
+  time/working-day fields, which have no such "clear it" concept.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/training-programs/$TRAINING_PROGRAM_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"INACTIVE"}'
+```
+
+```bash
+# Clear renewalPeriodDays - revert to "never expires once completed"
+curl -i -X PATCH http://localhost:3000/api/v1/training-programs/$TRAINING_PROGRAM_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"renewalPeriodDays":null}'
+```
+
+## 19. Postman Collection Notes
+
+Run a deactivate/reactivate pair back-to-back, then re-run `POST
+/enrollments` with `{{trainingProgramId}}` while inactive to confirm the
+`400` from the assignability check (endpoint 124).
+
+## 20. Testing Checklist
+
+- ✅ Field-only update, status-only update, both together
+- ✅ `null` clears `description`/`renewalPeriodDays`
+- ✅ Deactivate → existing Enrollment links untouched
+- ✅ Deactivate → future enrollment rejected with `400` (endpoint 124)
+- ✅ `409` on rename collision, case-insensitive
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 123. `DELETE /training-programs/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Training Domain (2026-09-16, feature/26-training-domain)
+Endpoint:           Hard-delete a Training Program
+Description:        Permanently removes a TrainingProgram row - only when zero Enrollment records reference it
+Method:             DELETE
+URL:                /api/v1/training-programs/:id
+API Version:        v1
+Module:             modules/training
+Authentication:     Yes (Bearer access token)
+Authorization:      `trainingProgram:delete` permission required (ADMIN only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+Covers the genuine data-entry-mistake case (a program created in error,
+never enrolled in by anyone) — the only hard-delete path; a referenced
+program must be deactivated instead (`docs/domain-training.md` §4's
+mandatory invariant: "a `TrainingProgram` can never be hard-deleted while
+any Enrollment references it").
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                  |
+| -------------------------------------- | -------- | ---------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to the `trainingProgram:delete` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                     |
+| ---- | ------------- | -------- | ---------------------------------- |
+| `id` | string (UUID) | **Yes**  | The TrainingProgram record's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check, the record's existence, and the
+zero-reference check.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Training program deleted successfully"
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                          | Response (`message`)                                                                                | When                                                                     |
+| ------ | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token               | Same as every other protected endpoint                                                                  | `authMiddleware` failure                                                     |
+| `403`  | Caller lacks `trainingProgram:delete`               | `"You do not have permission to perform this action"`                                                    | `MANAGER`/`EMPLOYEE` token                                                    |
+| `404`  | No such training program                          | `"Training program not found"`                                                                            | Invalid/nonexistent `id`                                                      |
+| `409`  | Program is referenced by one or more Enrollments   | `"This training program has Enrollment records referencing it and cannot be deleted - deactivate it instead"` | Any `Enrollment` row (of **any** status, including terminal ones) references it |
+
+## 10. Postman Test Cases
+
+| #   | Case                                          | Expected |
+| --- | ------------------------------------------------ | -------- |
+| 1   | Delete a program with zero Enrollment references  | `200`    |
+| 2   | Delete a program with an Enrollment reference      | `409`    |
+| 3   | Nonexistent `id`                                  | `404`    |
+| 4   | As `EMPLOYEE`/`MANAGER` token                      | `403`    |
+| 5   | No token                                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario              | Expected |
+| ------------------------ | -------- |
+| Malformed (non-UUID) `id` | `404`    |
+| Tampered/expired JWT      | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                                 | Expected Behavior                                                                                                                                                                                      |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Program referenced **only** by a `WITHDRAWN`/`FAILED`/`COMPLETED` (terminal-status) Enrollment | Still `409` — `countEnrollmentsForProgram` counts every `Enrollment` row regardless of status, since Training treats enrollment history as retention-worthy compliance data, not a disposable operational fact (mirrors Payslip/PerformanceReview's own `Restrict` reasoning, not Attendance's) |
+| Concurrent delete requests for the same `id`                                 | One succeeds, the other sees `404` — not independently verified under true concurrency (same caveat as Shift's/Designation's equivalent case)                                                          |
+
+## 13. Security Testing
+
+- **Authorization**: confirm `MANAGER` cannot delete a training program.
+- **Idempotency under retry**: a retried `DELETE` gets a safe `404` on
+  the second attempt.
+
+## 14. Database Impact
+
+- **Tables affected**: `TrainingProgram` (delete), `AuditLog` (insert),
+  inside one `prisma.$transaction`.
+- **DB-level backstop**: `Enrollment.trainingProgramId`'s `onDelete:
+  Restrict` refuses the delete at the database level even if this
+  service-layer check were somehow bypassed.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/training-programs/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('trainingProgram:delete')
+    ↓ (403 if not granted)
+trainingProgram.controller.remove → trainingProgram.service.deleteTrainingProgram(id, actor)
+    ├─ trainingProgramRepository.findById(id) → not found → 404
+    ├─ trainingProgramRepository.countEnrollmentsForProgram(id) → count > 0 → 409
+    └─ prisma.$transaction:
+         ├─ trainingProgramRepository.remove(id, tx)
+         └─ auditLogRepository.create({ action: 'DELETE', entityType: 'TrainingProgram', beforeData, afterData: null, ... }, tx)
+    ↓
+200 { message: "Training program deleted successfully" }
+```
+
+## 16. Performance Notes
+
+One indexed existence lookup, one `Enrollment` count query, one delete,
+one audit-log insert.
+
+## 17. Interview Notes
+
+- **Q: Why does the reference count include terminal-status (`COMPLETED`/
+  `FAILED`/`WITHDRAWN`) enrollments, unlike, say, Attendance's
+  unrestricted delete?** Because Training's `Enrollment.trainingProgramId`
+  FK uses `onDelete: Restrict`, not `Cascade` — a completed enrollment is
+  historical compliance evidence someone finished (or failed) a program,
+  and deleting the program out from under that record would corrupt the
+  history, not just an operational convenience record. `deactivate
+  instead` (the `409` message's own guidance) is always the correct path
+  once any enrollment — of any outcome — exists.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/training-programs/$TRAINING_PROGRAM_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this **last** for any `{{trainingProgramId}}` with zero Enrollment
+references; for a referenced program, expect and assert on the `409`.
+
+## 20. Testing Checklist
+
+- ✅ Delete with zero references → `200`
+- ✅ Delete with any-status reference (including terminal) → `409`
+- ✅ `403` as `EMPLOYEE`, `401` with no token
+- ✅ `404` for nonexistent `id`
+
+---
+
+---
+
+# 124. `POST /enrollments`
+
+## 1. Endpoint Information
+
+```
+Feature:            Training Domain (2026-09-16, feature/26-training-domain)
+Endpoint:           Create Enrollment
+Description:        Creates an ENROLLED Enrollment - self-enrollment on optional programs, or admin-driven enrollment of any employee in any program
+Method:             POST
+URL:                /api/v1/enrollments
+API Version:        v1
+Module:             modules/training
+Authentication:     Yes (Bearer access token)
+Authorization:      `enrollment:create:own` OR `enrollment:create:any`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the entry point into the `Enrolled → In Progress →
+  Completed | Failed | Withdrawn` workflow `docs/domain-training.md` §2
+  describes.
+- **Business problem solved**: lets an employee sign themselves up for an
+  optional (non-mandatory) program, or lets `ADMIN`/HR enroll any
+  employee in any program, including mandatory/compliance ones.
+- **A deliberate, hard asymmetry between the two grants** — this is the
+  single most important behavior on this endpoint:
+  - **`enrollment:create:any`** (`ADMIN`): must supply `employeeId`
+    explicitly in the body (`400` if omitted); may enroll any employee in
+    any `ACTIVE` program, mandatory or not.
+  - **`enrollment:create:own`** (`MANAGER`/`EMPLOYEE`): always enrolls the
+    caller's **own** linked Employee record, resolved server-side via
+    `employeeRepository.findByUserId` — **any `employeeId` the caller
+    sends in the body is silently ignored**, never read by
+    `resolveEmployeeId` in this branch. The caller is then **rejected
+    with `400`** if the target program has `mandatory: true` —
+    self-enrollment is optional-programs-only, a hard business rule
+    read from `docs/domain-training.md` §2's own wording ("an employee
+    self-enrolls in optional, non-mandatory programs"), enforced in the
+    service layer, not merely a permission gate.
+- **Expected callers**: any authenticated user with a linked Employee
+  record (self-enrollment), or `ADMIN`/HR enrolling on someone's behalf.
+
+## 3. Request Headers
+
+| Header                                 | Required | Notes                                                        |
+| ---------------------------------------- | -------- | ------------------------------------------------------------------ |
+| `Authorization: Bearer <accessToken>`  | **Yes**  | Must resolve to `enrollment:create:own` or `enrollment:create:any` |
+| `Content-Type: application/json`      | **Yes**  |                                                                      |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "trainingProgramId": "b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e"
+}
+```
+
+```json
+{
+  "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  "trainingProgramId": "b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e"
+}
+```
+
+| Field               | Type          | Required                          | Description                                                                                     |
+| -------------------- | ------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `employeeId`        | string (UUID) | **Only for `create:any` callers** | **Required, and enforced, for an `enrollment:create:any` caller** (`400` if omitted); **ignored entirely** for a `create:own`-only caller — their own Employee id is always used instead |
+| `trainingProgramId` | string (UUID) | **Yes**                           | Must reference an existing, `ACTIVE` `TrainingProgram`                                              |
+
+## 7. Validation Rules
+
+- `trainingProgramId`: required, valid UUID at the schema layer; then
+  re-checked in the service layer via
+  `trainingProgramService.assertTrainingProgramAssignable` — `400` with
+  `"trainingProgramId: references a record that does not exist"` if no
+  such program exists, or `"trainingProgramId: this training program is
+  not active and cannot be assigned"` if it exists but is `INACTIVE`
+  (the same positive-allowlist pattern every prior domain's FK-
+  assignability check uses).
+- `employeeId`: optional at the schema layer (`z.string().uuid().optional()`)
+  — the service layer (`resolveEmployeeId`) is the real authority:
+  - **`create:any` caller**: `400` with `"employeeId: required when
+    enrolling on behalf of another employee"` if omitted.
+  - **`create:own`-only caller**: any `employeeId` supplied is never
+    read; the caller's own Employee is resolved instead. If the caller
+    has **no** linked Employee record, `400` with `"No employee record
+    linked to this account"` — the exact same message Leave's
+    `createLeaveRequest` and Attendance's `checkIn` already use for this
+    identical condition (see §17).
+- **Mandatory-program self-enrollment rejection**: for a `create:own`-
+  only caller (`isSelfEnroll = !grantedPermissions.includes('enrollment:create:any')`),
+  if the resolved program has `mandatory: true`, `400` with
+  `"trainingProgramId: self-enrollment is not allowed for a mandatory
+  program - contact an administrator"`.
+- **Order of operations matters**: `resolveEmployeeId` runs **before**
+  `assertTrainingProgramAssignable` — a `create:any` caller who omits
+  `employeeId` gets the `400` for that, even against a nonexistent
+  `trainingProgramId`.
+- **No uniqueness constraint on `(employeeId, trainingProgramId)`** —
+  unlike Branch/Department/Designation/Shift's single-current-value
+  axes, an employee can hold multiple `Enrollment` rows against the same
+  program (retaking after a `FAILED` attempt, renewing an expired
+  compliance course) — each attempt is its own historical record
+  (ADR-TR01).
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "enrollment": {
+    "id": "d9e0f1a2-b3c4-4d5e-6f7a-8b9c0d1e2f3a",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "trainingProgramId": "b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e",
+    "status": "ENROLLED",
+    "score": null,
+    "completedAt": null,
+    "createdAt": "2026-09-16T10:10:00.000Z",
+    "updatedAt": "2026-09-16T10:10:00.000Z"
+  }
+}
+```
+
+**Note**: unlike `GET /enrollments`/`GET /enrollments/:id`, the create
+response does **not** include a nested `trainingProgram` object —
+`enrollmentRepository.create` runs a plain `client.enrollment.create({
+data })` with no `include`, while the read paths (`findById`/`findAll`)
+both `include: { trainingProgram: true }`.
+
+## 9. Error Responses
+
+| Status | Reason                                                       | Response (`message`)                                                                    | When                                                                 |
+| ------ | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `400`  | `trainingProgramId` missing/malformed                            | e.g. `"trainingProgramId: Invalid UUID"`                                                       | Malformed body                                                              |
+| `400`  | `employeeId` omitted by a `create:any` caller                    | `"employeeId: required when enrolling on behalf of another employee"`                          | `ADMIN`/HR enrolling on someone's behalf, no `employeeId` supplied          |
+| `400`  | `trainingProgramId` doesn't exist or isn't `ACTIVE`               | `"trainingProgramId: references a record that does not exist"` / `"trainingProgramId: this training program is not active and cannot be assigned"` | Nonexistent or deactivated program                                         |
+| `400`  | `create:own` caller self-enrolling in a `mandatory` program      | `"trainingProgramId: self-enrollment is not allowed for a mandatory program - contact an administrator"` | A hard business rule, not merely a permission gap                          |
+| `401`  | Missing/invalid/expired access token                              | Same as every other protected endpoint                                                         | `authMiddleware` failure                                                    |
+| `400`  | `create:own`-only caller has no linked Employee record            | `"No employee record linked to this account"`                                                  | `resolveEmployeeId`'s own explicit check — same message and status Leave/Attendance use for this identical condition |
+| `403`  | Caller lacks both `create:own` and `create:any`                   | `"You do not have permission to perform this action"`                                          | No enrollment-create permission at all — rejected at the middleware layer  |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                              | Expected |
+| --- | ---------------------------------------------------------------------- | -------- |
+| 1   | `EMPLOYEE` self-enrolls in a non-mandatory `ACTIVE` program             | `201`, `employeeId` resolved to caller's own |
+| 2   | `EMPLOYEE` self-enrolls in a **mandatory** program                      | `400`    |
+| 3   | `EMPLOYEE` supplies a different `employeeId` while self-enrolling       | `201`, but the supplied `employeeId` is **ignored** — enrollment is still against the caller's own Employee |
+| 4   | `ADMIN` enrolls a specific employee in a mandatory program (`employeeId` supplied) | `201` |
+| 5   | `ADMIN` omits `employeeId`                                              | `400`    |
+| 6   | Inactive/nonexistent `trainingProgramId`                                | `400`    |
+| 7   | Caller with neither create permission                                   | `403`    |
+| 8   | `create:own`-only caller with no linked Employee record                 | `400`    |
+| 9   | Enrolling the same employee in the same program a second time            | `201` — no uniqueness constraint, a genuine second historical row |
+| 10  | No token                                                                 | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                | Expected                                                                 |
+| ------------------------------------------- | --------------------------------------------------------------------------- |
+| Malformed JSON body                        | `400` from Express's own JSON body-parser                                  |
+| Tampered/expired JWT                       | `401`                                                                       |
+| `trainingProgramId` as a non-UUID string   | `400`                                                                       |
+| `employeeId` as a non-UUID string (for a `create:any` caller) | `400`                                                    |
+
+## 12. Edge Cases
+
+| Scenario                                                                    | Expected Behavior                                                                                                                                    |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MANAGER` self-enrolling (holds only `create:own`, same as `EMPLOYEE`)            | Identical to `EMPLOYEE`'s own self-enrollment path — `MANAGER` has no elevated enrollment-creation authority over anyone but themselves               |
+| `ADMIN` self-enrolling by supplying their own `employeeId` explicitly              | `201` — `create:any` permits mandatory-program enrollment even when the target happens to be the caller themselves; the `create:any` branch never applies the self-enroll mandatory-program restriction |
+| Re-enrolling in the same program immediately after a `WITHDRAWN`/`FAILED` outcome | `201` — no cooldown or uniqueness restriction; retaking is the documented normal case (§2, ADR-TR01) |
+| Enrolling in a program that was `ACTIVE` at request time but deactivated mid-request (race) | Not independently verified under true concurrency; the assignability check reads the program's current status at call time |
+
+## 13. Security Testing
+
+- **No BOLA for `create:own`**: the target Employee is always resolved
+  from the caller's own account server-side; a client-supplied
+  `employeeId` cannot redirect a self-enrollment onto another employee —
+  verified by construction (`resolveEmployeeId` never reads `data.employeeId`
+  in the `create:own` branch).
+- **Mass assignment**: only `employeeId` (when applicable)/
+  `trainingProgramId` are read from the body; `status`/`score`/
+  `completedAt` can never be set at creation.
+
+## 14. Database Impact
+
+- **Tables affected**: `Enrollment` (insert), `AuditLog` (insert).
+- **Transactions**: both inside one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/enrollments
+    ↓
+authMiddleware
+    ↓
+requirePermission('enrollment:create:own', 'enrollment:create:any')
+    ↓ (403 if neither granted)
+validateMiddleware(createEnrollmentSchema)
+    ↓ (400 if invalid)
+enrollment.controller.create → enrollment.service.createEnrollment(data, actor)
+    ├─ resolveEmployeeId(data, actor)
+    │    ├─ has create:any? → require data.employeeId → 400 if missing
+    │    └─ has create:own? → employeeRepository.findByUserId(actor.id) → 400 if none
+    ├─ trainingProgramService.assertTrainingProgramAssignable(data.trainingProgramId) → 400
+    ├─ isSelfEnroll && program.mandatory? → 400
+    └─ prisma.$transaction:
+         ├─ enrollmentRepository.create({ employeeId, trainingProgramId }, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', entityType: 'Enrollment', afterData, ... }, tx)
+    ↓
+201 { enrollment }
+```
+
+## 16. Performance Notes
+
+One Employee lookup (for `create:own`), one TrainingProgram
+assignability lookup, one insert, one audit-log insert — no notable
+performance concerns.
+
+## 17. Interview Notes
+
+- **Q: What happens when a `create:own`-only caller has no linked
+  Employee record?** `400` with `"No employee record linked to this
+  account"` — the exact same message and status Leave's
+  `createLeaveRequest` and Attendance's `checkIn` already use for this
+  identical condition, matched deliberately for cross-domain consistency
+  rather than treated as a fresh permissions question.
+- **Q: Why is the mandatory-program restriction enforced in the service
+  layer instead of as a second permission (e.g. `enrollment:create:own:mandatory`)?**
+  `docs/domain-training.md` §2's own wording frames it as a business
+  rule about *which programs* self-enrollment applies to, not a
+  separate capability — ADR-TR04 explicitly avoids proliferating
+  permission keys without a verified need.
+
+## 18. cURL Examples
+
+```bash
+# EMPLOYEE self-enrolling in an optional program
+curl -i -X POST http://localhost:3000/api/v1/enrollments \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"trainingProgramId":"'$OPTIONAL_PROGRAM_ID'"}'
+```
+
+```bash
+# ADMIN enrolling a specific employee in a mandatory program
+curl -i -X POST http://localhost:3000/api/v1/enrollments \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"employeeId":"'$EMPLOYEE_ID'","trainingProgramId":"'$MANDATORY_PROGRAM_ID'"}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `enrollment.id` as `{{enrollmentId}}` — used by `GET`/
+`PATCH .../status`/`DELETE /enrollments/:id` and the document endpoints.
+Run both the `EMPLOYEE`-self-enroll-on-optional-program case and the
+`EMPLOYEE`-self-enroll-on-mandatory-program `400` case in the same
+collection to exercise the asymmetry.
+
+## 20. Testing Checklist
+
+- ✅ `create:own` self-enrolls the caller, ignoring any supplied `employeeId`
+- ✅ `create:own` self-enrollment on a mandatory program → `400`
+- ✅ `create:any` requires explicit `employeeId` → `400` if omitted
+- ✅ `create:any` may enroll in a mandatory program
+- ✅ Repeatable — enrolling twice in the same program → `201` both times
+- ✅ Inactive/nonexistent `trainingProgramId` → `400`
+- ✅ `400` for a `create:own`-only caller with no linked Employee record
+- ✅ `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 125. `GET /enrollments`
+
+## 1. Endpoint Information
+
+```
+Feature:            Training Domain (2026-09-16, feature/26-training-domain)
+Endpoint:           List Enrollments
+Method:             GET
+URL:                /api/v1/enrollments
+API Version:        v1
+Module:             modules/training
+Authentication:     Yes (Bearer access token)
+Authorization:      `enrollment:read:any` OR `enrollment:read:own`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: browse/search enrollments — for admin/HR compliance
+  tracking across employees, and for an employee's own training history.
+- **Business problem solved**: "show me every incomplete mandatory
+  enrollment across the company," "show me this employee's training
+  record," and "show me my own enrollment history."
+- **Auto-scoped for `:own`-only callers**, the same pattern
+  `GET /leave-requests` (endpoint 62) established: a caller **without**
+  `enrollment:read:any` is not refused — they are auto-scoped to their
+  own Employee's enrollments instead (`enrollment.service.js`'s
+  `listEnrollments`). Any `employeeId` filter they supply is silently
+  overridden.
+- **Expected callers**: any authenticated user — `EMPLOYEE`/`MANAGER` see
+  only their own via `:own`; `ADMIN` sees everyone's via `:any`.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                        |
+| -------------------------------------- | -------- | -------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `enrollment:read:any` or `enrollment:read:own` |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name               | Type          | Required | Default     | Description                                                                 |
+| -------------------- | ------------- | -------- | ------------- | --------------------------------------------------------------------------- |
+| `page`             | integer       | No       | `1`         | 1-indexed page number                                                        |
+| `limit`            | integer       | No       | `10` (max 100) | Page size                                                                    |
+| `employeeId`       | string (UUID) | No       | —           | **Only honored when the caller holds `:any`** — silently overridden to the caller's own Employee id otherwise |
+| `trainingProgramId`| string (UUID) | No       | —           | Filter to one training program                                              |
+| `status`           | enum          | No       | —           | `ENROLLED`, `IN_PROGRESS`, `COMPLETED`, `FAILED`, or `WITHDRAWN`             |
+| `sortBy`           | enum          | No       | `createdAt` | `status`, `completedAt`, `createdAt`                                         |
+| `order`            | enum          | No       | `desc`      | `asc` or `desc`                                                              |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same page/limit/sort shape as every other list endpoint
+(`listEnrollmentsQuerySchema`). `employeeId`/`trainingProgramId` must be
+valid UUIDs when present but are **not** checked for existence —
+filtering by a nonexistent id simply returns an empty `enrollments`
+array.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "enrollments": [
+    {
+      "id": "d9e0f1a2-b3c4-4d5e-6f7a-8b9c0d1e2f3a",
+      "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "trainingProgramId": "b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e",
+      "status": "ENROLLED",
+      "score": null,
+      "completedAt": null,
+      "trainingProgram": {
+        "id": "b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e",
+        "name": "Annual Security Awareness",
+        "description": "Mandatory yearly refresher on information-security practices",
+        "mandatory": true,
+        "renewalPeriodDays": 365,
+        "status": "ACTIVE",
+        "createdAt": "2026-09-16T09:12:04.221Z",
+        "updatedAt": "2026-09-16T09:12:04.221Z"
+      },
+      "createdAt": "2026-09-16T10:10:00.000Z",
+      "updatedAt": "2026-09-16T10:10:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+Unlike `POST /enrollments`'s create response, list rows **do** include
+the nested `trainingProgram` object — `enrollmentRepository.findAll`
+runs with `include: { trainingProgram: true }`.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                  | When                                       |
+| ------ | ------------------------------------ | ---------------------------------------------------------- | --------------------------------------------- |
+| `400`  | A query parameter failed validation | e.g. `"limit: Too big: expected number to be <=100"`      | Out-of-bounds `limit`, invalid `sortBy`/`status` |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint                  | `authMiddleware` failure                   |
+| `403`  | Caller lacks both `read:any` and `read:own` | `"You do not have permission to perform this action"` | Not expected in practice — every seeded role has at least one grant |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                | Expected |
+| --- | -------------------------------------------------------- | -------- |
+| 1   | `ADMIN`, default pagination (`:any`)                        | `200`, all employees' enrollments |
+| 2   | `EMPLOYEE`/`MANAGER`, default pagination (`:own`, auto-scoped) | `200`, only their own enrollments |
+| 3   | `EMPLOYEE` supplies a different `employeeId`                | `200`, silently ignored — still only their own |
+| 4   | `status=COMPLETED` filter                                   | `200`, only completed enrollments |
+| 5   | `trainingProgramId` filter                                  | `200`, only that program's enrollments |
+| 6   | `sortBy=completedAt&order=desc`                              | `200`    |
+| 7   | `limit=101`                                                 | `400`    |
+| 8   | No token                                                    | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                | Expected                                                          |
+| -------------------------------------------- | -------------------------------------------------------------------------- |
+| `sortBy` value outside the allowlist          | `400`                                                                       |
+| `status` value outside the enum              | `400`                                                                       |
+| A caller with `:own` only and no linked Employee record | `200` with an empty `enrollments` array, not an error — `listEnrollments` returns `{ enrollments: [], pagination: { total: 0, ... } }` rather than throwing |
+| Tampered/expired JWT                         | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                             | Expected Behavior                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `page` beyond the last page             | `200` with an empty `enrollments` array, not an error                                                     |
+| Two enrollments with identical `createdAt` | Deterministic ordering via the unconditional secondary `id ASC` tiebreaker                              |
+| `:own`-only caller combines `trainingProgramId`/`status` filters with the (ignored) `employeeId` | All other filters still apply normally, only `employeeId` is overridden |
+
+## 13. Security Testing
+
+- **No BOLA on the `employeeId` filter for `:own`-only callers**: the
+  filter is silently overridden server-side rather than merely
+  unchecked.
+- **Authorization layering**: `requirePermission` accepts either key at
+  the middleware level; the service layer decides the actual scope.
+
+## 14. Database Impact
+
+Read-only — one optional `Employee` lookup by `userId` (only for
+non-`:any` callers) plus `Enrollment.findMany` (with `trainingProgram`
+included) + `Enrollment.count`, the latter two run in parallel via
+`Promise.all`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/enrollments
+    ↓
+authMiddleware
+    ↓
+requirePermission('enrollment:read:any', 'enrollment:read:own')
+    ↓ (403 if neither granted)
+validateMiddleware(listEnrollmentsQuerySchema, 'query')
+    ↓ (400 if invalid)
+enrollment.controller.list → enrollment.service.listEnrollments(query, requester)
+    ├─ !grantedPermissions.includes('enrollment:read:any')?
+    │    → employeeRepository.findByUserId(requester.id)
+    │    → no Employee? return { enrollments: [], pagination: { total: 0, ... } }
+    │    → filters.employeeId = ownEmployee.id (overrides any supplied value)
+    └─ Promise.all([enrollmentRepository.findAll(...), enrollmentRepository.count(...)])
+    ↓
+200 { enrollments, pagination }
+```
+
+## 16. Performance Notes
+
+Indexed on `employeeId`/`trainingProgramId` individually — filtering by
+either stays index-backed. Pagination bounds the result set regardless
+of total row count.
+
+## 17. Interview Notes
+
+- **Q: Why does this endpoint auto-scope to `:own` instead of refusing
+  access outright?** `docs/domain-training.md` §2 treats viewing your own
+  training/compliance history as core self-service functionality — the
+  same reasoning `GET /leave-requests` (endpoint 62) already established,
+  extended here for the first time to a repeatable-history domain rather
+  than a single-current-value one.
+
+## 18. cURL Examples
+
+```bash
+# ADMIN browsing everyone's enrollments
+curl -s "http://localhost:3000/api/v1/enrollments?status=IN_PROGRESS" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+```bash
+# EMPLOYEE viewing their own history (auto-scoped)
+curl -s "http://localhost:3000/api/v1/enrollments" \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run once as `ADMIN` (expect enrollments across employees) and once as
+`EMPLOYEE` (expect only their own) in the same collection to exercise
+both scoping paths.
+
+## 20. Testing Checklist
+
+- ✅ `:any` caller sees all employees' enrollments
+- ✅ `:own`-only caller auto-scoped to their own `employeeId`
+- ✅ Supplied `employeeId` silently ignored for `:own`-only callers
+- ✅ `status`/`trainingProgramId` filters
+- ✅ Sort both directions with deterministic tiebreaker
+- ✅ `401` with no token
+- ✅ `400` on out-of-bounds `limit`
+
+---
+
+---
+
+# 126. `GET /enrollments/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Training Domain (2026-09-16, feature/26-training-domain)
+Endpoint:           Get one Enrollment
+Description:        Returns a single Enrollment (with its TrainingProgram), subject to an ownership check
+Method:             GET
+URL:                /api/v1/enrollments/:id
+API Version:        v1
+Module:             modules/training
+Authentication:     Yes (Bearer access token)
+Authorization:      `enrollment:read:any` OR `enrollment:read:own` (the latter requires the record's employeeId to match the caller's own Employee record)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the one place a plain `EMPLOYEE` can see a specific
+  `Enrollment` in full detail — their own — mirroring `GET
+  /leave-requests/:id`'s (endpoint 63) own/any shape.
+- **Business problem solved**: "what's the status of my training
+  enrollment," and "look up this specific enrollment" for HR/management.
+- **Expected callers**: any authenticated user, with two different access
+  paths depending on their permissions.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                        |
+| -------------------------------------- | -------- | -------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `enrollment:read:any` or `enrollment:read:own` |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Enrollment's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No format validation on `id` beyond UUID shape. Two-layer authorization,
+identical shape to `GET /leave-requests/:id`:
+
+1. **Middleware** (`requirePermission('enrollment:read:own',
+   'enrollment:read:any')`): does the caller have _either_ key? If
+   neither, `403` before the record is even fetched.
+2. **Service** (`getEnrollmentById` → `assertOwnershipOrAny`): fetches
+   the record first (`404` if missing), _then_ — only if the caller
+   doesn't have the `:any` grant — resolves the caller's own Employee
+   record and compares its id to `enrollment.employeeId`, throwing `403`
+   on mismatch (or if the caller has no linked Employee record at all).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "enrollment": {
+    "id": "d9e0f1a2-b3c4-4d5e-6f7a-8b9c0d1e2f3a",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "trainingProgramId": "b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e",
+    "status": "ENROLLED",
+    "score": null,
+    "completedAt": null,
+    "trainingProgram": {
+      "id": "b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e",
+      "name": "Annual Security Awareness",
+      "description": "Mandatory yearly refresher on information-security practices",
+      "mandatory": true,
+      "renewalPeriodDays": 365,
+      "status": "ACTIVE",
+      "createdAt": "2026-09-16T09:12:04.221Z",
+      "updatedAt": "2026-09-16T09:12:04.221Z"
+    },
+    "createdAt": "2026-09-16T10:10:00.000Z",
+    "updatedAt": "2026-09-16T10:10:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                                     | Response (`message`)                                | When                                                                  |
+| ------ | -------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------- |
+| `401`  | No/invalid/expired access token                                | Same as every other protected endpoint               | `authMiddleware` failure                                                    |
+| `403`  | Roles grant neither `enrollment:read:any` nor `enrollment:read:own` | `"You do not have permission to perform this action"` | Caller has no enrollment-read permission at all                             |
+| `403`  | Caller only has `enrollment:read:own`, and the record isn't theirs | `"You do not have permission to view this enrollment"` | Verified via `enrollment.service.test.js`'s `assertOwnershipOrAny` case     |
+| `404`  | No such enrollment                                              | `"Enrollment not found"`                               | Invalid/nonexistent `id`                                                     |
+
+## 10. Postman Test Cases
+
+| #   | Case                                        | Expected |
+| --- | ------------------------------------------------ | -------- |
+| 1   | `ADMIN`, any valid `id`                          | `200`    |
+| 2   | Owning `EMPLOYEE`, own enrollment's `id`          | `200`    |
+| 3   | Different `EMPLOYEE`, someone else's enrollment's `id` | `403` |
+| 4   | Valid UUID, nonexistent enrollment                | `404`    |
+| 5   | Malformed (non-UUID) `id`                        | `404`    |
+| 6   | No token                                        | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                              | Expected                                                                                                          |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| SQL injection attempt as the `id` (`'; DROP TABLE--`) | `404` — Prisma's parameterized query treats it as a literal string that matches nothing, no query-structure risk |
+| Tampered/expired JWT                                  | `401`                                                                                                               |
+
+## 12. Edge Cases
+
+| Scenario                                                                                      | Expected Behavior                                                                                                                        |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| An `ADMIN` fetching their own Employee's enrollment (if they have one)                         | `200` — `:any` short-circuits the ownership check entirely                                                                                |
+| A caller with **no** Employee record, holding only `enrollment:read:own`, requests any `id`     | `403` — `assertOwnershipOrAny` resolves `ownEmployee` as `null`, which never equals `enrollment.employeeId`                               |
+
+## 13. Security Testing
+
+- **BOLA (Broken Object Level Authorization)**: the primary BOLA test
+  case for this endpoint — confirm a `enrollment:read:own`-only caller
+  **cannot** read any `id` except one whose `employeeId` matches their
+  own Employee record.
+
+## 14. Database Impact
+
+- **Tables affected**: `Enrollment` (read only, single row, with
+  `trainingProgram` included); an additional `Employee` lookup by
+  `userId` when the ownership check runs.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/enrollments/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('enrollment:read:own', 'enrollment:read:any')
+    ↓ (403 if neither granted; req.grantedPermissions set otherwise)
+enrollment.controller.getById
+    → enrollment.service.getEnrollmentById(id, requester)
+        ├─ enrollmentRepository.findById(id) [includes trainingProgram] → not found → 404
+        └─ assertOwnershipOrAny(enrollment.employeeId, requester, 'enrollment:read:any')
+             ├─ grantedPermissions includes 'enrollment:read:any'? → skip
+             └─ else: employeeRepository.findByUserId(requester.id); id !== employeeId → 403
+    ↓
+200 { enrollment }
+```
+
+## 16. Performance Notes
+
+Single indexed `Enrollment.findUnique` by primary key (with a joined
+`TrainingProgram` read), plus one additional indexed `Employee` lookup
+by `userId` only when the ownership check path runs.
+
+## 17. Interview Notes
+
+- **Q: Why is the same `"You do not have permission to view this
+  enrollment"` message reused by the document endpoints (129-131) and
+  `GET /training-compliance` (132)?** `assertOwnershipOrAny` in
+  `enrollment.service.js` and the separate, differently-shaped
+  `assertOwnershipOrAny` in `enrollmentDocument.service.js` both hard-code
+  this one string rather than taking a record-type label — a smaller
+  divergence from Leave's parameterized `assertOwnershipOrAny` (which
+  takes a permission key but still emits a generic "this record" message),
+  but the practical effect is the same: one shared message reused across
+  several distinct actions (viewing an enrollment, uploading/listing/
+  deleting its documents, checking compliance), not customized per
+  action.
+
+## 18. cURL Examples
+
+```bash
+# As the owning EMPLOYEE
+curl -i http://localhost:3000/api/v1/enrollments/$ENROLLMENT_ID \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+
+# As ADMIN, any id
+curl -i http://localhost:3000/api/v1/enrollments/$ENROLLMENT_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Uses `{{enrollmentId}}` saved from `POST /enrollments`. Needs both an
+`{{adminAccessToken}}` and an `{{employeeAccessToken}}` (belonging to the
+user whose Employee record owns the target enrollment) to exercise both
+authorization paths.
+
+## 20. Testing Checklist
+
+- ✅ `200` as `ADMIN` for any enrollment
+- ✅ `200` as the owning `EMPLOYEE`
+- ✅ `403` as a different `EMPLOYEE`
+- ✅ `404` for nonexistent `id`
+- ✅ `401` with no token
+
+---
+
+---
+
+# 127. `PATCH /enrollments/:id/status`
+
+## 1. Endpoint Information
+
+```
+Feature:            Training Domain (2026-09-16, feature/26-training-domain)
+Endpoint:           Transition Enrollment Status
+Description:        Guarded state-machine transition (Enrolled->In Progress->Completed|Failed, Withdrawn from either non-terminal stage), optionally setting score
+Method:             PATCH
+URL:                /api/v1/enrollments/:id/status
+API Version:        v1
+Module:             modules/training
+Authentication:     Yes (Bearer access token)
+Authorization:      `enrollment:manage:any` (any target status) OR `enrollment:withdraw:own` (WITHDRAWN target, own enrollment only)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the decision/progression point of the enrollment
+  workflow `docs/domain-training.md` §2 describes:
+  `Enrolled → In Progress → Completed | Failed`, with `Withdrawn`
+  reachable from either non-terminal stage.
+- **Business problem solved**: lets an instructor/admin mark progress and
+  outcomes, and lets an employee call off their own enrollment.
+- **A hard split by target status, not a single uniform permission**:
+  - **`IN_PROGRESS`, `COMPLETED`, `FAILED`** — require
+    `enrollment:manage:any` **unconditionally**, even for the
+    enrollment's own employee. **Self-attested completion is never
+    allowed** — this is deliberate, protecting compliance tracking's
+    whole point (`enrollment.service.js`'s own comment: "an employee can
+    call off their own enrollment, but cannot self-attest completion or
+    failure, which would undermine compliance tracking's whole point").
+  - **`WITHDRAWN`** — accepts **either** `enrollment:manage:any`
+    **or** (`enrollment:withdraw:own` **and** the caller's own linked
+    Employee matches `enrollment.employeeId`) — `403` if the caller
+    holds `withdraw:own` but it is someone else's enrollment.
+- **`score` can be set alongside any transition**, not just `COMPLETED`
+  — the schema and service both accept it independent of `status`.
+- **`completedAt` is set automatically, only on the `COMPLETED`
+  transition** — never client-settable.
+- **Expected callers**: `ADMIN`/instructor-role staff for progression/
+  completion/failure; any employee for their own withdrawal.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                          |
+| -------------------------------------- | -------- | -------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `enrollment:manage:any` or `enrollment:withdraw:own` |
+| `Content-Type: application/json`      | **Yes**  |                                                                        |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Enrollment's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{ "status": "IN_PROGRESS" }
+```
+
+```json
+{ "status": "COMPLETED", "score": 92 }
+```
+
+| Field    | Type    | Required | Description                                                                 |
+| --------- | ------- | -------- | ----------------------------------------------------------------------------- |
+| `status` | enum    | **Yes**  | `IN_PROGRESS`, `COMPLETED`, `FAILED`, or `WITHDRAWN` — `ENROLLED` is excluded, it's the default starting value, not a settable target |
+| `score`  | integer | No       | `0`-`100`; may accompany **any** status transition, not just `COMPLETED`      |
+
+## 7. Validation Rules
+
+- `status`: required, one of `IN_PROGRESS`/`COMPLETED`/`FAILED`/
+  `WITHDRAWN` at the schema layer.
+- `score`: optional integer, `0`-`100` inclusive.
+- **Permission split** (service layer, `updateEnrollmentStatus`):
+  - `status === 'WITHDRAWN'`: passes if `enrollment:manage:any`;
+    otherwise requires `enrollment:withdraw:own` **and** an own-Employee
+    match — `403` with `"You do not have permission to withdraw this
+    enrollment"` otherwise.
+  - Any other target: requires `enrollment:manage:any` — `403` with
+    `"You do not have permission to perform this action"` otherwise
+    (including for the enrollment's own employee).
+- **State-machine transition rules** (`isValidTransition`, checked
+  **after** the permission split): if the current status is terminal
+  (`COMPLETED`/`FAILED`/`WITHDRAWN`), every transition is rejected. From
+  a non-terminal status: `WITHDRAWN` is always reachable; `IN_PROGRESS`
+  only from `ENROLLED`; `COMPLETED`/`FAILED` only from `IN_PROGRESS`
+  (strictly sequential, no skipping `ENROLLED → COMPLETED` directly). An
+  invalid transition is `409` with `"Cannot transition an enrollment
+  from <current> to <target>"`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "enrollment": {
+    "id": "d9e0f1a2-b3c4-4d5e-6f7a-8b9c0d1e2f3a",
+    "employeeId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "trainingProgramId": "b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e",
+    "status": "COMPLETED",
+    "score": 92,
+    "completedAt": "2026-09-16T11:00:00.000Z",
+    "createdAt": "2026-09-16T10:10:00.000Z",
+    "updatedAt": "2026-09-16T11:00:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                                        | Response (`message`)                                              | When                                                                 |
+| ------ | ------------------------------------------------------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `400`  | Validation failed                                                 | e.g. `"status: Invalid option"`, `"score: Too big: expected number to be <=100"` | Invalid `status` enum value, out-of-range `score`                          |
+| `401`  | Missing/invalid/expired access token                                | Same as every other protected endpoint                               | `authMiddleware` failure                                                    |
+| `403`  | Non-`WITHDRAWN` target without `enrollment:manage:any`               | `"You do not have permission to perform this action"`                | Own employee attempting to self-complete/self-fail/self-progress            |
+| `403`  | `WITHDRAWN` target, caller lacks both `manage:any` and a matching `withdraw:own` | `"You do not have permission to withdraw this enrollment"` | A different employee's `withdraw:own` caller, or no permission at all       |
+| `404`  | No such enrollment                                                  | `"Enrollment not found"`                                             | Invalid/nonexistent `id`                                                    |
+| `409`  | Invalid state transition                                            | `"Cannot transition an enrollment from <current> to <target>"`       | Skipping a stage, or transitioning out of a terminal status                 |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                              | Expected |
+| --- | ---------------------------------------------------------------------- | -------- |
+| 1   | `ADMIN` transitions `ENROLLED → IN_PROGRESS`                            | `200`    |
+| 2   | `ADMIN` transitions `IN_PROGRESS → COMPLETED` with `score`               | `200`, `completedAt` set |
+| 3   | `ADMIN` transitions `IN_PROGRESS → FAILED`                               | `200`    |
+| 4   | `ADMIN` skips `ENROLLED → COMPLETED` directly                            | `409`    |
+| 5   | Owning `EMPLOYEE` withdraws their own `ENROLLED` enrollment              | `200`, `status: "WITHDRAWN"` |
+| 6   | Owning `EMPLOYEE` withdraws their own `IN_PROGRESS` enrollment           | `200`    |
+| 7   | Owning `EMPLOYEE` attempts `IN_PROGRESS → COMPLETED` on their own record | `403`    |
+| 8   | Different `EMPLOYEE` attempts to withdraw someone else's enrollment      | `403`    |
+| 9   | Transitioning an already-terminal (`COMPLETED`/`FAILED`/`WITHDRAWN`) enrollment | `409` |
+| 10  | Nonexistent `id`                                                        | `404`    |
+| 11  | No token                                                                 | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Malformed JSON body                | `400` from Express's own JSON body-parser                                  |
+| Tampered/expired JWT               | `401`                                                                       |
+| `score` outside `0`-`100`          | `400`                                                                       |
+| `status: "ENROLLED"` (not a settable target) | `400` — rejected by the enum itself                                |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                       |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `score` supplied alongside a non-`COMPLETED` transition (e.g. `IN_PROGRESS`) | Accepted and stored — `score` is independent of `status` in this schema, unlike `completedAt`                                 |
+| `WITHDRAWN` requested by a caller holding **both** `manage:any` and `withdraw:own` (e.g. `ADMIN` withdrawing their own enrollment, if they have one) | `200` — the `hasManageAny` short-circuit is checked first, ownership is never evaluated |
+| `ADMIN` (holding `manage:any`) withdraws a different employee's enrollment | `200` — `manage:any` covers `WITHDRAWN` unconditionally too, not just `IN_PROGRESS`/`COMPLETED`/`FAILED` |
+| `WITHDRAWN → ` anything                                           | `409` — `WITHDRAWN` is terminal, no outgoing transition exists                                                                            |
+
+## 13. Security Testing
+
+- **Authorization**: confirm an `EMPLOYEE` (holding only `withdraw:own`)
+  cannot self-complete/self-fail/self-progress their own enrollment —
+  the primary self-attestation-prevention test for this domain.
+- **BOLA**: confirm a `withdraw:own`-only caller cannot withdraw another
+  employee's enrollment.
+- **Mass assignment**: only `status`/`score` are read from the body;
+  `completedAt` can never be client-supplied.
+
+## 14. Database Impact
+
+- **Tables affected**: `Enrollment` (update), `AuditLog` (insert), inside
+  one `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/enrollments/:id/status
+    ↓
+authMiddleware
+    ↓
+requirePermission('enrollment:manage:any', 'enrollment:withdraw:own')
+    ↓ (403 if neither granted)
+validateMiddleware(updateEnrollmentStatusSchema)
+    ↓ (400 if invalid)
+enrollment.controller.updateStatus → enrollment.service.updateEnrollmentStatus(id, status, score, actor)
+    ├─ enrollmentRepository.findById(id) → not found → 404
+    ├─ status === 'WITHDRAWN'?
+    │    ├─ hasManageAny? → proceed
+    │    └─ else: withdraw:own && ownEmployee.id === enrollment.employeeId? → proceed : 403
+    │  else: hasManageAny? → proceed : 403
+    ├─ isValidTransition(enrollment.status, status) → false → 409
+    └─ prisma.$transaction:
+         ├─ enrollmentRepository.update(id, { status, score?, completedAt? }, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'Enrollment', beforeData, afterData, ... }, tx)
+    ↓
+200 { enrollment }
+```
+
+## 16. Performance Notes
+
+One indexed lookup, an optional `Employee` lookup (only for the
+`withdraw:own` path), one update, one audit-log insert.
+
+## 17. Interview Notes
+
+- **Q: Why can `WITHDRAWN` be reached from `ENROLLED` as well as
+  `IN_PROGRESS`, when the domain doc's own lifecycle line only reads
+  `Enrolled → In Progress → Completed | Failed | Withdrawn`?** A flagged
+  judgment call, documented in both the service code comment and ADR-TR01:
+  the doc's own diagram doesn't fully specify whether `WITHDRAWN`
+  branches only off `IN_PROGRESS` or off `ENROLLED` too — implemented as
+  reachable from either, read as the more realistic interpretation ("you
+  can withdraw before ever starting").
+- **Q: Why does `enrollment:manage:any` cover `WITHDRAWN` too, instead of
+  `WITHDRAWN` being exclusively a `withdraw:own` action?** `manage:any`
+  is framed as the unconditional administrative override across every
+  transition (`prisma/seed.js`'s own permission description: "Transition
+  any enrollment... and delete it") — an `ADMIN` correcting or
+  withdrawing on an employee's behalf needs this, e.g. when an employee
+  who filed the enrollment is unavailable.
+
+## 18. cURL Examples
+
+```bash
+# ADMIN progresses an enrollment
+curl -i -X PATCH http://localhost:3000/api/v1/enrollments/$ENROLLMENT_ID/status \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"IN_PROGRESS"}'
+```
+
+```bash
+# ADMIN completes an enrollment with a score
+curl -i -X PATCH http://localhost:3000/api/v1/enrollments/$ENROLLMENT_ID/status \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"COMPLETED","score":92}'
+```
+
+```bash
+# Owning EMPLOYEE withdraws their own enrollment
+curl -i -X PATCH http://localhost:3000/api/v1/enrollments/$ENROLLMENT_ID/status \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"WITHDRAWN"}'
+```
+
+## 19. Postman Collection Notes
+
+Run the full sequence `ENROLLED → IN_PROGRESS → COMPLETED` on one fixture
+enrollment (asserting `completedAt` appears only at the last step), and a
+separate `ENROLLED → WITHDRAWN` on another, using
+`{{employeeAccessToken}}` for the withdrawal and `{{adminAccessToken}}`
+for the progression/completion steps.
+
+## 20. Testing Checklist
+
+- ✅ Full sequential progression `ENROLLED → IN_PROGRESS → COMPLETED`/`FAILED`
+- ✅ Skipping a stage → `409`
+- ✅ `WITHDRAWN` reachable from both `ENROLLED` and `IN_PROGRESS`
+- ✅ No outgoing transition from any terminal status → `409`
+- ✅ Self-attested `IN_PROGRESS`/`COMPLETED`/`FAILED` blocked → `403`
+- ✅ Self-withdrawal allowed; cross-employee withdrawal blocked → `403`
+- ✅ `score` settable alongside any transition
+- ✅ `completedAt` set only on `COMPLETED`
+- ✅ `404` for nonexistent `id`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 128. `DELETE /enrollments/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Training Domain (2026-09-16, feature/26-training-domain)
+Endpoint:           Hard-delete an Enrollment
+Description:        Permanently removes an Enrollment row, regardless of its current status
+Method:             DELETE
+URL:                /api/v1/enrollments/:id
+API Version:        v1
+Module:             modules/training
+Authentication:     Yes (Bearer access token)
+Authorization:      `enrollment:manage:any` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: corrects a genuine data-entry mistake — an
+  enrollment created against the wrong employee/program, a duplicate,
+  or a test/fixture record.
+- **Unrestricted by status** — deliberately mirrors `DELETE
+  /attendance/:id`'s own unrestricted-delete precedent, not the
+  reference-counted pattern `DELETE /training-programs/:id` uses.
+  Training enrollment records are treated as compliance data that
+  sometimes needs outright correction, not just a workflow-transition-
+  only model (`enrollment.service.js`'s own comment on `deleteEnrollment`).
+- **`enrollment:manage:any` only** — there is no `:own` deletion path;
+  an employee who wants to undo their own enrollment uses
+  `PATCH /enrollments/:id/status` with `WITHDRAWN` (endpoint 127)
+  instead, which preserves the historical record rather than erasing it.
+- **Expected callers**: `ADMIN`/HR only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                    |
+| -------------------------------------- | -------- | -------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `enrollment:manage:any` permission |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Enrollment's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+No body — only the permission check and the record's existence. No
+status restriction of any kind.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Enrollment deleted successfully"
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                | Response (`message`)                                   | When                              |
+| ------ | ---------------------------------------- | ---------------------------------------------------------- | ------------------------------------ |
+| `401`  | Missing/invalid/expired access token      | Same as every other protected endpoint                    | `authMiddleware` failure           |
+| `403`  | Caller lacks `enrollment:manage:any`      | `"You do not have permission to perform this action"`     | `MANAGER`/`EMPLOYEE` token, including the enrollment's own employee |
+| `404`  | No such enrollment                       | `"Enrollment not found"`                                    | Invalid/nonexistent `id`           |
+
+## 10. Postman Test Cases
+
+| #   | Case                                             | Expected |
+| --- | ----------------------------------------------------- | -------- |
+| 1   | Delete an `ENROLLED` enrollment                        | `200`    |
+| 2   | Delete a `COMPLETED` enrollment                        | `200` — no status restriction, unlike `DELETE /training-programs/:id`'s reference-count guard |
+| 3   | Delete a `WITHDRAWN` enrollment                        | `200`    |
+| 4   | Nonexistent `id`                                       | `404`    |
+| 5   | As `EMPLOYEE`/`MANAGER` token, including the enrollment's own employee | `403` |
+| 6   | No token                                               | `401`    |
+
+## 11. Negative Testing
+
+| Scenario              | Expected |
+| ------------------------ | -------- |
+| Malformed (non-UUID) `id` | `404`    |
+| Tampered/expired JWT      | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                                            |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deleting an Enrollment that has `EnrollmentDocument` rows attached | The database-level `EnrollmentDocument.enrollmentId` FK is `onDelete: Cascade` — every attached `EnrollmentDocument` row is deleted along with it. `deleteEnrollment` fetches all attached documents *before* the transaction and calls `cloudinaryStorage.deleteAsset` for each one (best-effort, after commit) — the same ordering `DELETE /candidates/:id`'s own bulk cleanup (endpoint 102) and `DELETE /enrollments/:id/documents/:documentId` (endpoint 131) already use, so no Cloudinary asset is orphaned by this cascade |
+| Concurrent delete requests for the same `id`                       | One succeeds, the other sees `404` — not independently verified under true concurrency                                                            |
+
+## 13. Security Testing
+
+- **Authorization**: confirm neither `MANAGER` nor the enrollment's own
+  `EMPLOYEE` can delete it — deletion is strictly `manage:any`, unlike
+  status transitions, where `withdraw:own` grants a narrower self-service
+  path.
+- **Idempotency under retry**: a retried `DELETE` gets a safe `404` on
+  the second attempt.
+
+## 14. Database Impact
+
+- **Tables affected**: `Enrollment` (delete, cascading to
+  `EnrollmentDocument`), `AuditLog` (insert), inside one
+  `prisma.$transaction`.
+- **Pre-checks (outside the transaction)**: `Enrollment.findById`,
+  `EnrollmentDocument.findAllByEnrollmentId` (to know which Cloudinary
+  assets to clean up once the transaction commits).
+- **DB-level cascade**: `EnrollmentDocument.enrollmentId`'s `onDelete:
+  Cascade` removes attached document rows automatically; their
+  Cloudinary assets are cleaned up (best-effort, after commit) by this
+  endpoint (see §12).
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/enrollments/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('enrollment:manage:any')
+    ↓ (403 if not granted)
+enrollment.controller.remove → enrollment.service.deleteEnrollment(id, actor)
+    ├─ enrollmentRepository.findById(id) → not found → 404
+    ├─ enrollmentDocumentRepository.findAllByEnrollmentId(id)   [snapshot before delete]
+    ├─ prisma.$transaction:
+    │    ├─ enrollmentRepository.remove(id, tx)   [DB cascade deletes EnrollmentDocument rows]
+    │    └─ auditLogRepository.create({ action: 'DELETE', entityType: 'Enrollment', beforeData, afterData: null, ... }, tx)
+    └─ Promise.all(documents.map(d => cloudinaryStorage.deleteAsset(d.publicId, d.resourceType, ...)))   [best-effort, after commit]
+    ↓
+200 { message: "Enrollment deleted successfully" }
+```
+
+## 16. Performance Notes
+
+One indexed existence lookup, one document-list query, one delete (with a
+DB-level cascade to any `EnrollmentDocument` rows), one audit-log insert,
+plus one Cloudinary delete call per attached document (parallelized via
+`Promise.all`, after the transaction commits).
+
+## 17. Interview Notes
+
+- **Q: Why does this endpoint have no reference-count/status
+  restriction, unlike `DELETE /training-programs/:id`?** A deliberate,
+  named divergence — `Enrollment` deletion mirrors `DELETE
+  /attendance/:id`'s "compliance data that sometimes needs outright
+  correction" reasoning, not `DELETE /training-programs/:id`'s
+  reference-counted master-data pattern. `TrainingProgram` protects
+  against destroying the catalog entry a live history depends on;
+  `Enrollment` **is** that history, and its own deletion is the explicit
+  correction mechanism, gated by `manage:any` rather than being
+  unrestricted for everyone.
+- **Q: Why isn't there a `withdraw:own`-scoped delete for an employee's
+  own mistaken enrollment?** `PATCH .../status` → `WITHDRAWN` already
+  covers "I want out of this," preserving the record; a true delete is
+  reserved for `ADMIN`-level data correction, not a self-service action.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/enrollments/$ENROLLMENT_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this against a disposable fixture enrollment created solely for this
+test, since deletion is irreversible and unrestricted by status.
+
+## 20. Testing Checklist
+
+- ✅ Delete succeeds regardless of current status (`ENROLLED` through every terminal status)
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, including the enrollment's own employee
+- ✅ `404` for nonexistent `id`, `401` with no token
+- ✅ `AuditLog` row created, `afterData: null`
+- ✅ Attached `EnrollmentDocument` rows cascade-deleted at the DB level
+- ✅ Their Cloudinary assets are deleted (best-effort, after commit; verified by code inspection)
+
+---
+
+---
+
+# 129. `POST /enrollments/:id/documents`
+
+## 1. Endpoint Information
+
+```
+Feature:            Training Domain (2026-09-16, feature/26-training-domain)
+Endpoint:           Upload Enrollment Document
+Description:        Uploads a document (e.g. a completion certificate) attached to an Enrollment record
+Method:             POST
+URL:                /api/v1/enrollments/:id/documents
+API Version:        v1
+Module:             modules/training
+Authentication:     Yes (Bearer access token)
+Authorization:      `enrollment:read:own` OR `enrollment:read:any` OR `enrollment:manage:any` (plus an ownership check for the `:own` case)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: attaches certificates/proof-of-completion documents
+  to an Enrollment — reuses the same generic document-storage pattern
+  already established by `EmployeeDocument`/Recruitment's
+  `CandidateDocument` (`docs/domain-training.md` §4's Recommended
+  Practices: "reusing the same generic document-storage pattern...
+  rather than inventing a new certificate-file mechanism").
+- **Gated by read access, not a dedicated `enrollmentDocument:*`
+  permission** — this is the one document-upload endpoint in this API
+  where mere **read** access to the parent record is sufficient to write
+  a child document. `assertOwnershipOrAny` in
+  `enrollmentDocument.service.js` bypasses the ownership check for either
+  `enrollment:read:any` **or** `enrollment:manage:any`, matching exactly
+  what the route itself declares as sufficient (§1's Authorization line) -
+  a caller holding only `manage:any` (no `read:any`) is correctly let
+  through rather than incorrectly 403'd, even though every role that
+  currently holds `manage:any` also happens to hold `read:any` in this
+  codebase's seeded grants. It also means an employee can upload/view/
+  delete documents on their **own** enrollment purely because they can
+  already read it, with no write-specific permission at all.
+- **Identical mechanics to `POST /candidates/:id/documents` (endpoint
+  103) and `POST /employees/:id/documents` (endpoint 16)**:
+  `multipart/form-data`, a single `file` field, Cloudinary storage via
+  `cloudinaryStorage.uploadBuffer` with `resourceType: 'auto'`, a fresh
+  server-generated UUID `publicId`, and the same MIME/size limits.
+- **Expected callers**: the enrollment's own employee (uploading their
+  own certificate) or `ADMIN`/HR.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                                 |
+| -------------------------------------- | -------- | -------------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `enrollment:read:own`, `enrollment:read:any`, or `enrollment:manage:any` |
+| `Content-Type: multipart/form-data`   | **Yes**  | Set automatically by any HTTP client sending a file                        |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Enrollment's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+`multipart/form-data` with a single field:
+
+| Field  | Type | Required | Notes                               |
+| ------ | ---- | -------- | ------------------------------------ |
+| `file` | file | **Yes**  | The document — see Validation Rules |
+
+## 7. Validation Rules
+
+- **File presence**: `!file` → `400 "A file is required"`.
+- **MIME type whitelist**: `application/pdf`, `image/jpeg`, `image/png`,
+  `image/webp` — identical list to Employee/Candidate documents.
+- **Size limit**: 10 MB.
+- **Enrollment existence**: checked first — `404` if missing.
+- **Ownership**: `assertOwnershipOrAny(enrollment.employeeId, actor)` —
+  passes unconditionally if the caller holds `enrollment:read:any` **or**
+  `enrollment:manage:any`; otherwise requires the caller's own linked
+  Employee to equal `enrollment.employeeId`, `403` with `"You do not have
+  permission to view this enrollment"` otherwise (the same message `GET
+  /enrollments/:id` uses, reused verbatim here for an upload action).
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "document": {
+    "id": "c8d9e0f1-a2b3-4c4d-5e6f-7a8b9c0d1e2f",
+    "enrollmentId": "d9e0f1a2-b3c4-4d5e-6f7a-8b9c0d1e2f3a",
+    "url": "https://res.cloudinary.com/dhfxv7gdp/raw/upload/v1783254636/emp-mgmt/development/enrollments/d9e0f1a2-b3c4-4d5e-6f7a-8b9c0d1e2f3a/documents/e0f1a2b3-c4d5-4e6f-7a8b-9c0d1e2f3a4b",
+    "publicId": "emp-mgmt/development/enrollments/d9e0f1a2-b3c4-4d5e-6f7a-8b9c0d1e2f3a/documents/e0f1a2b3-c4d5-4e6f-7a8b-9c0d1e2f3a4b",
+    "resourceType": "raw",
+    "fileName": "certificate.pdf",
+    "mimeType": "application/pdf",
+    "size": 128456,
+    "uploadedBy": "e1b07e0b-3c8d-4f7d-aa1f-fffec7648b21",
+    "createdAt": "2026-09-16T11:05:00.000Z"
+  }
+}
+```
+
+**Note**: `EnrollmentDocument` has **no `updatedAt` field** in the
+Prisma schema (unlike `Enrollment`/`TrainingProgram`) — documents are
+immutable once uploaded, only created or deleted, so there is nothing to
+track an update timestamp for.
+
+## 9. Error Responses
+
+| Status | Reason                                  | Response (`message`)                                                                          | When                                                                          |
+| ------ | ----------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `400`  | No file provided                          | `"A file is required"`                                                                          | `file` field missing                                                            |
+| `400`  | Invalid MIME type                         | `"file: must be one of application/pdf, image/jpeg, image/png, image/webp (received <type>)"`  | Wrong file type                                                                  |
+| `400`  | File too large                            | `"File exceeds the maximum allowed size"`                                                      | File over 10 MB                                                                  |
+| `401`  | Missing/invalid/expired access token      | Same as every other protected endpoint                                                          | `authMiddleware` failure                                                        |
+| `403`  | Caller lacks all three route-level permissions | `"You do not have permission to perform this action"`                                     | No enrollment-read/manage permission at all                                     |
+| `403`  | `:own`-scoped caller, not their enrollment | `"You do not have permission to view this enrollment"`                                          | A different employee's enrollment, and the caller lacks `read:any`              |
+| `404`  | Nonexistent Enrollment                     | `"Enrollment not found"`                                                                          | Invalid `id`, checked before any Cloudinary call                                 |
+| `500`  | Cloudinary upload failure                 | Generic `"Internal Server Error"`, logged server-side with context                              | No `EnrollmentDocument`/`AuditLog` row is created for a failed upload             |
+
+## 10. Postman Test Cases
+
+| #   | Case                                            | Expected |
+| --- | ---------------------------------------------------- | -------- |
+| 1   | Owning `EMPLOYEE` uploads a certificate to their own enrollment | `201` — no `manage:any`/dedicated document permission needed |
+| 2   | `ADMIN` uploads a document to any enrollment            | `201`    |
+| 3   | Different `EMPLOYEE` uploads to someone else's enrollment | `403` |
+| 4   | Valid PDF/image upload                                  | `201`    |
+| 5   | Invalid file type (e.g. `.exe`)                          | `400`    |
+| 6   | Oversized file (> 10 MB)                                 | `400`    |
+| 7   | Nonexistent enrollment `id`                              | `404`    |
+| 8   | No token                                                 | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                                       | Expected |
+| ------------------------------------------------------------------ | -------- |
+| A crafted filename containing `../` or path-traversal segments       | No effect — `fileName` is display-only; `publicId` is always a fresh, server-generated UUID |
+| Malformed multipart body                                              | `400`    |
+| Tampered/expired JWT                                                   | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                      | Expected Behavior                                                                                                          |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Cloudinary upload succeeds but the database transaction fails         | An orphaned Cloudinary asset (unreferenced by any `EnrollmentDocument` row) — harmless, not automatically reconciled, same accepted risk category as Employee's/Candidate's own upload paths |
+| Concurrent uploads for the same enrollment                            | Both succeed independently — documents aren't a single slot |
+| Uploading a document to a `WITHDRAWN`/`COMPLETED`/`FAILED` (terminal) enrollment | `201` — no status restriction on document upload; a certificate can be attached after the fact |
+
+## 13. Security Testing
+
+- **Authorization**: confirm a `read:own`-only caller cannot upload to
+  another employee's enrollment.
+- **Path traversal**: closed by construction — `publicId` is always
+  `emp-mgmt/{env}/enrollments/{enrollmentId}/documents/{uuid}`.
+- **Mass assignment**: no field beyond `file` (e.g. `id`, `uploadedBy`,
+  `resourceType`) can be client-supplied and honored.
+- **Permission-shape note**: this endpoint (and 130/131) is reachable by
+  a hypothetical `manage:any`-only, `read:any`-less role — the
+  service-layer check tests `read:any`/`manage:any`/ownership, matching
+  exactly what the route declares, so such a role is correctly admitted
+  rather than incorrectly blocked.
+
+## 14. Database Impact
+
+- **Tables affected**: `EnrollmentDocument` (insert), `AuditLog`
+  (insert), inside one `prisma.$transaction`. The Cloudinary upload
+  happens **before** this transaction.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/enrollments/:id/documents
+    ↓
+authMiddleware
+    ↓
+requirePermission('enrollment:read:own', 'enrollment:read:any', 'enrollment:manage:any')
+    ↓ (403 if none granted)
+uploadDocument.single('file')   [Multer, memory storage]
+    ↓ (400 on MIME rejection, or MulterError → 400)
+enrollment.controller.uploadDocument → enrollmentDocument.service.uploadDocument(enrollmentId, file, actor)
+    ├─ !file → 400 "A file is required"
+    ├─ enrollmentRepository.findById(enrollmentId) → not found → 404
+    ├─ assertOwnershipOrAny(enrollment.employeeId, actor)   [passes on read:any OR manage:any OR ownership] → 403
+    ├─ cloudinaryStorage.uploadBuffer(file.buffer, { publicId: freshUuid, resourceType: 'auto' })
+    └─ prisma.$transaction:
+         ├─ enrollmentDocumentRepository.create({ ...file metadata, resourceType, uploadedBy: actor.id }, tx)
+         └─ auditLogRepository.create({ entityType: 'EnrollmentDocument', action: 'CREATE', ... }, tx)
+    ↓
+201 { document }
+```
+
+## 16. Performance Notes
+
+Identical shape to Employee's/Candidate's own document upload —
+enrollment-existence and ownership checks before the Cloudinary call
+bound wasted upload quota; `resourceType: 'auto'` costs one content-
+inspection step on Cloudinary's side.
+
+## 17. Interview Notes
+
+- **Q: Why is this gated by read access instead of a write-specific
+  permission, unlike Employee/Candidate documents (`employee:update:any`/
+  `candidate:update`)?** A genuine, verified divergence — Employee's and
+  Candidate's document endpoints are both gated by their parent record's
+  **update** permission. Training's document endpoints are gated by
+  **read** access instead (`enrollment:read:own`/`:any`/`enrollment:manage:any`
+  at the route, ownership-or-`read:any`-or-`manage:any` in the service,
+  consistently honoring all three) — the practical effect is that an
+  employee can manage their own enrollment's documents (e.g. upload a
+  completion certificate) purely through the self-service read grant
+  every role already holds (`enrollment:read:own`), with no separate
+  write capability required.
+
+## 18. cURL Examples
+
+```bash
+# Owning EMPLOYEE uploads a certificate to their own enrollment
+curl -i -X POST http://localhost:3000/api/v1/enrollments/$ENROLLMENT_ID/documents \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN" \
+  -F "file=@/path/to/certificate.pdf"
+```
+
+## 19. Postman Collection Notes
+
+Requires `{{accessToken}}` to resolve to at least one of the three
+accepted permissions. Use `form-data` with a `file`-type field named
+`file`. Save the returned `document.id` as `{{enrollmentDocumentId}}` for
+endpoint 131.
+
+## 20. Testing Checklist
+
+- ✅ Owning `EMPLOYEE` uploads to their own enrollment → `201`
+- ✅ `ADMIN` uploads to any enrollment → `201`
+- ✅ Different `EMPLOYEE` blocked → `403`
+- ✅ `400` on invalid type, oversized file, missing file
+- ✅ `404` for nonexistent enrollment, `401` with no token
+- ✅ `resourceType` correctly recorded from Cloudinary's own response
+- ✅ `AuditLog` entry created, `entityType: 'EnrollmentDocument'`
+
+---
+
+---
+
+# 130. `GET /enrollments/:id/documents`
+
+## 1. Endpoint Information
+
+```
+Feature:            Training Domain (2026-09-16, feature/26-training-domain)
+Endpoint:           List Enrollment Documents
+Description:        Returns every document attached to an Enrollment record
+Method:             GET
+URL:                /api/v1/enrollments/:id/documents
+API Version:        v1
+Module:             modules/training
+Authentication:     Yes (Bearer access token)
+Authorization:      `enrollment:read:own` OR `enrollment:read:any` OR `enrollment:manage:any` (plus an ownership check for the `:own` case)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: lets an employee review their own uploaded
+  certificates, and lets HR/`ADMIN` review any employee's.
+- **Ordered newest-first** — `findAllByEnrollmentId` sorts by
+  `createdAt: 'desc'`.
+- **Expected callers**: the enrollment's own employee, or `ADMIN`/HR.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                                 |
+| -------------------------------------- | -------- | -------------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `enrollment:read:own`, `enrollment:read:any`, or `enrollment:manage:any` |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description          |
+| ---- | ------------- | -------- | ----------------------- |
+| `id` | string (UUID) | **Yes**  | The Enrollment's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+None beyond the path parameter and the same
+ownership-or-`read:any`/`manage:any` check `POST .../documents` uses. A
+nonexistent Enrollment `id` produces `404`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "documents": [
+    {
+      "id": "c8d9e0f1-a2b3-4c4d-5e6f-7a8b9c0d1e2f",
+      "enrollmentId": "d9e0f1a2-b3c4-4d5e-6f7a-8b9c0d1e2f3a",
+      "url": "https://res.cloudinary.com/dhfxv7gdp/raw/upload/v1783254636/emp-mgmt/development/enrollments/d9e0f1a2-b3c4-4d5e-6f7a-8b9c0d1e2f3a/documents/e0f1a2b3-c4d5-4e6f-7a8b-9c0d1e2f3a4b",
+      "publicId": "emp-mgmt/development/enrollments/d9e0f1a2-b3c4-4d5e-6f7a-8b9c0d1e2f3a/documents/e0f1a2b3-c4d5-4e6f-7a8b-9c0d1e2f3a4b",
+      "resourceType": "raw",
+      "fileName": "certificate.pdf",
+      "mimeType": "application/pdf",
+      "size": 128456,
+      "uploadedBy": "e1b07e0b-3c8d-4f7d-aa1f-fffec7648b21",
+      "createdAt": "2026-09-16T11:05:00.000Z"
+    }
+  ]
+}
+```
+
+No pagination — returns the full array for the enrollment in one
+response, mirroring `GET /employees/:id/documents` (endpoint 17) and
+`GET /candidates/:id/documents` (endpoint 104).
+
+## 9. Error Responses
+
+| Status | Reason                                       | Response (`message`)                                     | When                          |
+| ------ | ---------------------------------------------- | -------------------------------------------------------------- | -------------------------------- |
+| `401`  | Missing/invalid/expired access token             | Same as every other protected endpoint                        | `authMiddleware` failure         |
+| `403`  | Caller lacks all three route-level permissions   | `"You do not have permission to perform this action"`          | No enrollment-read/manage permission at all |
+| `403`  | `:own`-scoped caller, not their enrollment       | `"You do not have permission to view this enrollment"`         | A different employee's enrollment |
+| `404`  | Nonexistent Enrollment                          | `"Enrollment not found"`                                        | Invalid `id`                     |
+
+## 10. Postman Test Cases
+
+| #   | Case                                       | Expected |
+| --- | --------------------------------------------- | -------- |
+| 1   | Owning `EMPLOYEE` lists their own enrollment's documents | `200` |
+| 2   | `ADMIN` lists any enrollment's documents        | `200`    |
+| 3   | Different `EMPLOYEE` requests someone else's documents | `403` |
+| 4   | Enrollment with zero documents                  | `200`, `documents: []` |
+| 5   | Nonexistent enrollment `id`                     | `404`    |
+| 6   | No token                                       | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                  | Expected |
+| ---------------------------- | -------- |
+| Malformed (non-UUID) enrollment `id` | `404` |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+None beyond the empty-array and ownership cases above.
+
+## 13. Security Testing
+
+- **BOLA**: confirm a `read:own`-only caller cannot list another
+  employee's enrollment documents.
+
+## 14. Database Impact
+
+Read-only — `enrollment.findById` (existence + ownership check) followed
+by `enrollmentDocument.findMany({ where: { enrollmentId }, orderBy: {
+createdAt: 'desc' } })`, both indexed via `EnrollmentDocument_enrollmentId_idx`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/enrollments/:id/documents
+    ↓
+authMiddleware
+    ↓
+requirePermission('enrollment:read:own', 'enrollment:read:any', 'enrollment:manage:any')
+    ↓ (403 if none granted)
+enrollment.controller.listDocuments → enrollmentDocument.service.listDocuments(enrollmentId, requester)
+    ├─ enrollmentRepository.findById(enrollmentId) → not found → 404
+    ├─ assertOwnershipOrAny(enrollment.employeeId, requester) → 403
+    └─ enrollmentDocumentRepository.findAllByEnrollmentId(enrollmentId)
+    ↓
+200 { documents }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup plus one indexed `findMany` — no notable
+performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why is this gated the same way as the upload endpoint (129)
+  rather than a plainer `enrollment:read:*`-only check?** Listing and
+  uploading share the identical `assertOwnershipOrAny` helper and the
+  identical route-level permission set — Training treats "can see this
+  enrollment's documents" and "can add one" as the same capability,
+  unlike Employee/Candidate documents, which split listing
+  (`*:read`) from uploading (`*:update`).
+
+## 18. cURL Examples
+
+```bash
+curl -s http://localhost:3000/api/v1/enrollments/$ENROLLMENT_ID/documents \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this after `POST /enrollments/:id/documents` (endpoint 129) to
+confirm the uploaded document appears.
+
+## 20. Testing Checklist
+
+- ✅ Returns every document for the enrollment, newest first
+- ✅ Empty array for an enrollment with none
+- ✅ Owning `EMPLOYEE` can list their own; a different `EMPLOYEE` is blocked
+- ✅ Nonexistent enrollment `id` → `404`
+- ✅ `401` with no token
+
+---
+
+---
+
+# 131. `DELETE /enrollments/:id/documents/:documentId`
+
+## 1. Endpoint Information
+
+```
+Feature:            Training Domain (2026-09-16, feature/26-training-domain)
+Endpoint:           Delete Enrollment Document
+Description:        Deletes an EnrollmentDocument row and its underlying Cloudinary asset
+Method:             DELETE
+URL:                /api/v1/enrollments/:id/documents/:documentId
+API Version:        v1
+Module:             modules/training
+Authentication:     Yes (Bearer access token)
+Authorization:      `enrollment:read:own` OR `enrollment:read:any` OR `enrollment:manage:any` (plus an ownership check for the `:own` case)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: removes a document uploaded in error (wrong file,
+  wrong enrollment) or one that's no longer needed.
+- **Deletes both the database row and the Cloudinary asset** — explicitly
+  calls `cloudinaryStorage.deleteAsset(document.publicId,
+  document.resourceType, ...)` after the database transaction commits,
+  the same ordering as `DELETE /candidates/:id/documents/:documentId`
+  (endpoint 105). Contrast with `DELETE /enrollments/:id` (endpoint 128),
+  whose DB-level cascade deletes `EnrollmentDocument` rows **without**
+  cleaning up their Cloudinary assets.
+- **`documentId` is scoped to `enrollmentId`** — `enrollmentDocumentRepository.findById(documentId,
+  enrollmentId)` uses `findFirst({ where: { id, enrollmentId } })`, so a
+  `documentId` that exists but belongs to a *different* enrollment
+  produces the same `404` as a nonexistent one — never a cross-
+  enrollment leak.
+- **Expected callers**: the enrollment's own employee, or `ADMIN`/HR.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                                 |
+| -------------------------------------- | -------- | -------------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `enrollment:read:own`, `enrollment:read:any`, or `enrollment:manage:any` |
+
+## 4. Path Parameters
+
+| Name         | Type          | Required | Description                                       |
+| -------------- | ------------- | -------- | ------------------------------------------------------ |
+| `id`         | string (UUID) | **Yes**  | The Enrollment's id                                  |
+| `documentId` | string (UUID) | **Yes**  | The EnrollmentDocument's id, must belong to `id` |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- Service-layer order of checks:
+  1. `enrollmentRepository.findById(enrollmentId)` → `404 "Enrollment not
+     found"` if missing.
+  2. `assertOwnershipOrAny(enrollment.employeeId, actor)` → `403 "You do
+     not have permission to view this enrollment"` if the caller lacks
+     `read:any`/`manage:any`-equivalent access and it isn't their own
+     enrollment.
+  3. `enrollmentDocumentRepository.findById(documentId, enrollmentId)` →
+     `404 "Document not found"` if missing **or** if it belongs to a
+     different enrollment.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Document deleted successfully"
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                | Response (`message`)                     | When                                                        |
+| ------ | ------------------------------------------ | ------------------------------------------------ | --------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token          | Same as every other protected endpoint           | `authMiddleware` failure                                        |
+| `403`  | Caller lacks all three route-level permissions | `"You do not have permission to perform this action"` | No enrollment-read/manage permission at all                |
+| `403`  | `:own`-scoped caller, not their enrollment     | `"You do not have permission to view this enrollment"` | A different employee's enrollment                          |
+| `404`  | Nonexistent Enrollment                         | `"Enrollment not found"`                          | Invalid `id`                                                     |
+| `404`  | Nonexistent Document, or belongs to a different Enrollment | `"Document not found"`               | Invalid/mismatched `documentId`                                  |
+| `500`  | Cloudinary delete failure                      | Generic `"Internal Server Error"`, logged server-side with context | The database row is already committed deleted by this point |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                       | Expected |
+| --- | ------------------------------------------------------------------ | -------- |
+| 1   | Owning `EMPLOYEE` deletes a document on their own enrollment          | `200`    |
+| 2   | `ADMIN` deletes a document on any enrollment                          | `200`    |
+| 3   | Different `EMPLOYEE` attempts to delete on someone else's enrollment  | `403`    |
+| 4   | `documentId` belonging to a different enrollment                        | `404`    |
+| 5   | Nonexistent `documentId`                                                | `404`    |
+| 6   | Nonexistent enrollment `id`                                              | `404`    |
+| 7   | No token                                                                 | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                  | Expected |
+| ---------------------------- | -------- |
+| Deleting the same document twice | `200` then `404` |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                     |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| The Cloudinary delete call fails after the database row is already committed deleted | The `EnrollmentDocument` row is gone, but the Cloudinary asset remains live — the same best-effort, logged, not-automatically-reconciled failure mode as Candidate's own document delete (endpoint 105) |
+
+## 13. Security Testing
+
+- **Authorization**: confirm a `read:own`-only caller cannot delete a
+  document on another employee's enrollment.
+- **BOLA**: the primary test — confirm a `documentId` valid for one
+  enrollment cannot be deleted through a different enrollment's `:id` in
+  the path; verified by the scoped `findFirst({ id, enrollmentId })`
+  lookup rather than a bare `findUnique({ id })`.
+
+## 14. Database Impact
+
+- **Tables affected**: `EnrollmentDocument` (delete), `AuditLog`
+  (insert), inside one `prisma.$transaction`; the Cloudinary
+  `deleteAsset` call runs **after** this transaction commits.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/enrollments/:id/documents/:documentId
+    ↓
+authMiddleware
+    ↓
+requirePermission('enrollment:read:own', 'enrollment:read:any', 'enrollment:manage:any')
+    ↓ (403 if none granted)
+enrollment.controller.removeDocument → enrollmentDocument.service.deleteDocument(enrollmentId, documentId, actor)
+    ├─ enrollmentRepository.findById(enrollmentId) → not found → 404
+    ├─ assertOwnershipOrAny(enrollment.employeeId, actor) → 403
+    ├─ enrollmentDocumentRepository.findById(documentId, enrollmentId) → not found → 404
+    ├─ prisma.$transaction:
+    │    ├─ enrollmentDocumentRepository.deleteById(documentId, tx)
+    │    └─ auditLogRepository.create({ action: 'DELETE', entityType: 'EnrollmentDocument', beforeData, afterData: null, ... }, tx)
+    └─ cloudinaryStorage.deleteAsset(document.publicId, document.resourceType, { entityType: 'EnrollmentDocument', entityId: documentId })
+    ↓
+200 { message: 'Document deleted successfully' }
+```
+
+## 16. Performance Notes
+
+Two primary-key/scoped lookups, one delete, one audit-log insert, plus
+one external Cloudinary API call after commit — identical shape to
+Candidate's own document delete path.
+
+## 17. Interview Notes
+
+- **Q: Why does the Cloudinary delete happen *after* the database
+  transaction, rather than inside or before it?** Same ordering as
+  Employee's/Candidate's document deletes — the database is the source
+  of truth for what the application considers deleted; deleting the row
+  first and the external asset second means a Cloudinary failure leaves
+  an orphaned (but harmless) asset rather than a row pointing at
+  nothing.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/enrollments/$ENROLLMENT_ID/documents/$ENROLLMENT_DOCUMENT_ID \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this after `POST /enrollments/:id/documents` (endpoint 129), using
+the saved `{{enrollmentDocumentId}}`; confirm a subsequent `GET
+/enrollments/:id/documents` (endpoint 130) no longer lists it.
+
+## 20. Testing Checklist
+
+- ✅ Owning `EMPLOYEE` can delete on their own enrollment; a different `EMPLOYEE` is blocked → `403`
+- ✅ Valid delete → `200`, row removed, Cloudinary asset removed
+- ✅ Cross-enrollment `documentId` → `404`, not a leak
+- ✅ Nonexistent `documentId`/enrollment `id` → `404`
+- ✅ `401` with no token
+- ✅ `AuditLog` row created, `entityType: 'EnrollmentDocument'`, `afterData: null`
+
+---
+
+---
+
+# 132. `GET /training-compliance`
+
+## 1. Endpoint Information
+
+```
+Feature:            Training Domain (2026-09-16, feature/26-training-domain)
+Endpoint:           Compute Training Compliance Status
+Description:        The coordinating-service read - computes whether an employee is currently compliant with one, or every, mandatory training program
+Method:             GET
+URL:                /api/v1/training-compliance
+API Version:        v1
+Module:             modules/training
+Authentication:     Yes (Bearer access token)
+Authorization:      `enrollment:read:any` OR `enrollment:read:own`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: `docs/domain-training.md` §3/ADR-TR02's
+  compliance-computation query, exposed as its own endpoint — "is this
+  employee currently compliant with mandatory training X" (or, in bulk,
+  "with every mandatory training"), reusing the same "expose one shared
+  computed-status query rather than let every consumer reimplement it"
+  principle as Holiday Calendar's resolution query (ADR-HC04) and
+  Attendance's `GET /attendance/effective-status` (endpoint 52).
+- **Mounted as a separate top-level router**, not nested under
+  `/enrollments/:id` — `routes/index.js` mounts
+  `trainingComplianceRouter` at `/training-compliance` directly, because
+  this endpoint reads across an employee's **entire** enrollment history
+  for one-or-every mandatory program, not a single `Enrollment` record
+  (`enrollment.routes.js`'s own comment on why it's exported separately).
+- **Computed on every call, never stored anywhere** (ADR-TR02, the same
+  principle as Attendance's ADR-AT03) — there is no compliance table or
+  cached field; every request recomputes fresh from `Enrollment` +
+  `TrainingProgram`.
+- **Two response shapes depending on `trainingProgramId`**:
+  1. **Single-program** (`trainingProgramId` provided): one compliance
+     object `{ compliant, lastCompletedAt, expiresAt }`, computed by
+     finding the employee's most recent `COMPLETED` `Enrollment` for that
+     `(employeeId, trainingProgramId)` pair and checking whether
+     `completedAt + trainingProgram.renewalPeriodDays` is still in the
+     future. If `renewalPeriodDays` is `null`, `compliant` is `true`
+     indefinitely once any `COMPLETED` enrollment exists, and `expiresAt`
+     is `null`.
+  2. **Bulk report** (`trainingProgramId` omitted): an **array** of
+     compliance objects, one per every `TrainingProgram` with
+     `mandatory: true` **and** `status: 'ACTIVE'` — each object also
+     carries `trainingProgramId`/`trainingProgramName`. Computed fresh on
+     every call by composing the single-program primitive across every
+     qualifying program (`getComplianceReport`); never stored.
+- **Visibility gated the same own/any way as every other Training
+  endpoint**: `enrollment:read:own` only works when the `employeeId`
+  query param matches the caller's own linked Employee (`403`
+  otherwise); `enrollment:read:any` works for any `employeeId`.
+- **Expected callers**: any authenticated user checking their own
+  compliance; `ADMIN`/HR checking anyone's for reporting purposes.
+
+## 3. Request Headers
+
+| Header                               | Required | Notes                                                        |
+| -------------------------------------- | -------- | -------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `enrollment:read:any` or `enrollment:read:own` |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name                | Type          | Required | Description                                                                 |
+| --------------------- | ------------- | -------- | --------------------------------------------------------------------------- |
+| `employeeId`        | string (UUID) | **Yes**  | The employee to compute compliance for. Must equal the caller's own Employee id unless the caller holds `enrollment:read:any` |
+| `trainingProgramId` | string (UUID) | No       | Omit for the bulk report across every mandatory `ACTIVE` program; provide for a single-program compliance object |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- `employeeId`: required, valid UUID — `400` if missing/malformed. No
+  existence check against `Employee` is performed by this endpoint
+  itself.
+- `trainingProgramId`: optional, valid UUID when present. **Existence is
+  checked first** for the single-program branch — `getComplianceStatus`
+  looks the program up via `trainingProgramRepository.findById` *before*
+  querying for a `COMPLETED` enrollment, `404 "Training program not
+  found"` if it doesn't exist — so a genuinely nonexistent
+  `trainingProgramId` is never silently indistinguishable from "never
+  completed" (only a real, existing program with no `COMPLETED`
+  enrollment returns the `{ compliant: false, ... }` shape).
+- **Ownership** (`assertOwnershipOrAny(employeeId, requester,
+  'enrollment:read:any')`): passes unconditionally with `enrollment:read:any`;
+  otherwise requires the caller's own linked Employee to equal the
+  `employeeId` query param — `403` with `"You do not have permission to
+  view this enrollment"` otherwise (the same generic message, reused
+  again here).
+
+## 8. Successful Response
+
+Single-program shape (`trainingProgramId` provided):
+
+```
+200 OK
+
+{
+  "compliance": {
+    "compliant": true,
+    "lastCompletedAt": "2026-01-15T00:00:00.000Z",
+    "expiresAt": "2027-01-15T00:00:00.000Z"
+  }
+}
+```
+
+Bulk-report shape (`trainingProgramId` omitted):
+
+```
+200 OK
+
+{
+  "compliance": [
+    {
+      "trainingProgramId": "b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e",
+      "trainingProgramName": "Annual Security Awareness",
+      "compliant": true,
+      "lastCompletedAt": "2026-01-15T00:00:00.000Z",
+      "expiresAt": "2027-01-15T00:00:00.000Z"
+    },
+    {
+      "trainingProgramId": "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f",
+      "trainingProgramName": "Workplace Safety Fundamentals",
+      "compliant": false,
+      "lastCompletedAt": null,
+      "expiresAt": null
+    }
+  ]
+}
+```
+
+Never-completed shape (no `COMPLETED` enrollment exists for the pair):
+
+```json
+{ "compliance": { "compliant": false, "lastCompletedAt": null, "expiresAt": null } }
+```
+
+No-expiry shape (`renewalPeriodDays` is `null` on the program):
+
+```json
+{ "compliance": { "compliant": true, "lastCompletedAt": "2026-01-15T00:00:00.000Z", "expiresAt": null } }
+```
+
+## 9. Error Responses
+
+| Status | Reason                                             | Response (`message`)                                            | When                                                                 |
+| ------ | ------------------------------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `400`  | `employeeId` missing/malformed                        | e.g. `"employeeId: Invalid input"`                                | Missing/non-UUID `employeeId` query param                                 |
+| `400`  | `trainingProgramId` malformed (when present)          | e.g. `"trainingProgramId: Invalid UUID"`                          | Malformed query param                                                     |
+| `401`  | Missing/invalid/expired access token                   | Same as every other protected endpoint                           | `authMiddleware` failure                                                    |
+| `403`  | Caller queried a different `employeeId` without `:any` | `"You do not have permission to view this enrollment"`           | `enrollment:read:own`-only caller supplies someone else's `employeeId`     |
+| `404`  | `trainingProgramId` doesn't exist                       | `"Training program not found"`                                    | Single-program branch, nonexistent `trainingProgramId`                    |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                              | Expected |
+| --- | ---------------------------------------------------------------------- | -------- |
+| 1   | Own compliance for one program, `EMPLOYEE`, never completed             | `200`, `compliant: false` |
+| 2   | Own compliance for one program, `EMPLOYEE`, completed and still current | `200`, `compliant: true`, `expiresAt` in the future |
+| 3   | Own compliance for one program, completed but past `renewalPeriodDays`  | `200`, `compliant: false`, `expiresAt` in the past |
+| 4   | Own compliance for a program with no `renewalPeriodDays`, completed once | `200`, `compliant: true`, `expiresAt: null` |
+| 5   | Bulk report, `trainingProgramId` omitted                                | `200`, array covering every mandatory `ACTIVE` program |
+| 6   | `ADMIN` checking another employee's compliance (`:any`)                  | `200`    |
+| 7   | `EMPLOYEE` querying a different employee's `employeeId`                  | `403`    |
+| 8   | Missing `employeeId`                                                     | `400`    |
+| 9   | Nonexistent `trainingProgramId`                                          | `404`    |
+| 10  | No token                                                                 | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                                | Expected                                                                 |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `employeeId` as a non-UUID string                        | `400`                                                                          |
+| `trainingProgramId` as a non-UUID string                 | `400`                                                                          |
+| Nonexistent `trainingProgramId`                          | `404 "Training program not found"` — checked before any enrollment lookup, see §7 |
+| Tampered/expired JWT                                      | `401`                                                                          |
+
+## 12. Edge Cases
+
+| Scenario                                                                            | Expected Behavior                                                                                                                          |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Employee has multiple `COMPLETED` enrollments for the same program (retaken/renewed)     | Only the **most recent** one counts — `findMostRecentCompleted` orders by `completedAt: 'desc'` and takes the first                             |
+| Employee has a `COMPLETED` enrollment for a program that is later deactivated (`status: 'INACTIVE'`) | Compliance is still computed normally — the single-program branch never checks the program's own `status`, only its `renewalPeriodDays`; only the **bulk report** filters by `status: 'ACTIVE'` |
+| No `TrainingProgram` is currently both `mandatory` and `ACTIVE`                          | Bulk report returns `{ "compliance": [] }`, not an error                                                                                          |
+| `expiresAt` computed exactly equal to "now"                                              | `compliant` is `expiresAt > new Date()` — a boundary equal to now (a near-impossible exact tie in practice) evaluates `false`                     |
+
+## 13. Security Testing
+
+- **BOLA**: the primary BOLA test case for this endpoint — confirm an
+  `enrollment:read:own`-only caller cannot resolve another employee's
+  compliance status by supplying a different `employeeId`.
+- **No MANAGER-specific reports visibility**: confirm — directly against
+  `prisma/seed.js` — that `MANAGER` holds only `enrollment:read:own`
+  (not `enrollment:read:any` and not any reports-scoped variant), so a
+  manager cannot use this endpoint to check a direct report's compliance
+  the way `leaveRequest:decide:reports`/`performanceReview:manage:reports`
+  let a manager act on a report's data elsewhere in this API. This is a
+  deliberate, verified divergence (ADR-TR04) — `docs/domain-training.md`
+  §2's "who performs" never names managers, only `ADMIN`/HR and
+  self-enrollment.
+
+## 14. Database Impact
+
+Read-only. Single-program branch: one `TrainingProgram.findUnique` (the
+existence check) plus, only once that succeeds, one `Enrollment.
+findFirst` (most recent `COMPLETED`, ordered by `completedAt`). Bulk
+branch: one `TrainingProgram.findMany` (mandatory + active) plus one pair
+of those same two lookups per qualifying program, run via `Promise.all`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/training-compliance
+    ↓
+authMiddleware
+    ↓
+requirePermission('enrollment:read:own', 'enrollment:read:any')
+    ↓ (403 if neither granted)
+validateMiddleware(trainingComplianceQuerySchema, 'query')
+    ↓ (400 if invalid)
+enrollment.controller.getCompliance
+    → enrollment.service.getTrainingCompliance(employeeId, trainingProgramId, requester)
+        ├─ assertOwnershipOrAny(employeeId, requester, 'enrollment:read:any') → 403
+        ├─ trainingProgramId provided?
+        │    └─ getComplianceStatus(employeeId, trainingProgramId)
+        │         ├─ trainingProgramRepository.findById(trainingProgramId) → not found → 404
+        │         ├─ enrollmentRepository.findMostRecentCompleted(employeeId, trainingProgramId)
+        │         ├─ none found → { compliant: false, lastCompletedAt: null, expiresAt: null }
+        │         ├─ !renewalPeriodDays → { compliant: true, lastCompletedAt, expiresAt: null }
+        │         └─ else → expiresAt = completedAt + renewalPeriodDays days; compliant = expiresAt > now
+        │    (trainingProgramId omitted)
+        └─ getComplianceReport(employeeId)
+             ├─ trainingProgramRepository.findAllMandatoryActive()
+             └─ Promise.all(programs.map(getComplianceStatus per program))
+    ↓
+200 { compliance: <object | array> }
+```
+
+## 16. Performance Notes
+
+The bulk-report branch fans out to two additional queries **per**
+mandatory `ACTIVE` program (a `findMostRecentCompleted` plus, if found,
+a `TrainingProgram.findById`) — bounded by the number of mandatory
+programs, expected to be small (a handful of compliance courses, not
+hundreds). Named the same class of future read-model/cache candidate as
+`GET /attendance/effective-status` (endpoint 52) if that assumption is
+ever demonstrated wrong at scale — not built now (YAGNI).
+
+## 17. Interview Notes
+
+- **Q: Why does this endpoint live at `/training-compliance` instead of
+  nested under `/enrollments/:id/compliance` or similar?** It doesn't
+  operate on a single `Enrollment` record at all — it reads across an
+  employee's entire enrollment history for one-or-every mandatory
+  program (`enrollment.routes.js`'s own comment). Nesting it under a
+  single `:id` would misrepresent its actual scope.
+- **Q: Why is compliance never stored, recomputed on every call, exactly
+  like `GET /attendance/effective-status`?** Same ADR-AT03 reasoning,
+  restated as ADR-TR02: a derived value stored redundantly can drift
+  from the facts it's derived from (e.g. if a completion record is later
+  corrected, or a program's `renewalPeriodDays` changes) — computing on
+  read is always consistent by construction.
+- **Q: Why is there no `MANAGER` reports-visibility permission for
+  Training, when Leave (`leaveRequest:decide:reports`) and Performance
+  (`performanceReview:manage:reports`) both have one?** A deliberate,
+  documented divergence (ADR-TR04) — `docs/domain-training.md` §2 frames
+  "who performs" enrollment/compliance actions as `ADMIN`/HR plus
+  self-enrollment only, never mentioning managers acting on their
+  reports' training. Verified directly against `prisma/seed.js`:
+  `MANAGER`'s Training grants are exactly `trainingProgram:read`,
+  `enrollment:create:own`, `enrollment:read:own`, `enrollment:withdraw:own`
+  — identical in shape to `EMPLOYEE`'s own grants, with no manager-
+  specific `:reports` scope anywhere in the Training permission set.
+
+## 18. cURL Examples
+
+```bash
+# Own compliance for a single program
+curl -s "http://localhost:3000/api/v1/training-compliance?employeeId=$EMPLOYEE_ID&trainingProgramId=$TRAINING_PROGRAM_ID" \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+```bash
+# Own bulk compliance report - trainingProgramId omitted
+curl -s "http://localhost:3000/api/v1/training-compliance?employeeId=$EMPLOYEE_ID" \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+```bash
+# ADMIN checking a specific employee's bulk compliance
+curl -s "http://localhost:3000/api/v1/training-compliance?employeeId=$EMPLOYEE_ID" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Exercise all four compliance shapes in one collection run: never-
+completed, completed-and-current, completed-but-expired (requires a
+fixture program with a short `renewalPeriodDays` and a backdated
+`completedAt`, set up the same way `enrollment.service.test.js`'s own
+compliance test fixtures do), and no-expiry (`renewalPeriodDays: null`).
+Also run the bulk-report shape against at least two mandatory `ACTIVE`
+programs to confirm the array covers both.
+
+## 20. Testing Checklist
+
+- ✅ Single-program shape: never-completed, current, expired, no-expiry — all four cases
+- ✅ Bulk-report shape covers every `mandatory: true` + `status: 'ACTIVE'` program, and only those
+- ✅ Most recent `COMPLETED` enrollment wins when several exist for the same pair
+- ✅ `403` when a `:own`-only caller queries another `employeeId`
+- ✅ No `MANAGER` reports-visibility permission exists (confirmed via `prisma/seed.js`)
+- ✅ `400` for missing/malformed `employeeId`
+- ✅ `404` for a nonexistent `trainingProgramId` in the single-program branch
+- ✅ `401` with no token

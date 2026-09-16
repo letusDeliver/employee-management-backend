@@ -22,6 +22,8 @@ import performanceReviewRouter from '../modules/performance/performanceReview.ro
 import jobRequisitionRouter from '../modules/recruitment/jobRequisition.routes.js';
 import candidateRouter from '../modules/recruitment/candidate.routes.js';
 import applicationRouter from '../modules/recruitment/application.routes.js';
+import trainingProgramRouter from '../modules/training/trainingProgram.routes.js';
+import enrollmentRouter, { trainingComplianceRouter } from '../modules/training/enrollment.routes.js';
 
 const router = Router();
 
@@ -44,6 +46,9 @@ router.use('/performance-reviews', performanceReviewRouter);
 router.use('/job-requisitions', jobRequisitionRouter);
 router.use('/candidates', candidateRouter);
 router.use('/applications', applicationRouter);
+router.use('/training-programs', trainingProgramRouter);
+router.use('/enrollments', enrollmentRouter);
+router.use('/training-compliance', trainingComplianceRouter);
 
 router.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });

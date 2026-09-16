@@ -29,4 +29,7 @@ export const AUDIT_ENTITY_TYPES = Object.freeze({
   APPLICATION: 'Application',
   INTERVIEW: 'Interview',
   OFFER: 'Offer',
+  TRAINING_PROGRAM: 'TrainingProgram',
+  ENROLLMENT: 'Enrollment',
+  ENROLLMENT_DOCUMENT: 'EnrollmentDocument',
 });

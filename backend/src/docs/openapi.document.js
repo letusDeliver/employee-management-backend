@@ -23,6 +23,8 @@ import '../modules/performance/performance.docs.js';
 import '../modules/recruitment/jobRequisition.docs.js';
 import '../modules/recruitment/candidate.docs.js';
 import '../modules/recruitment/application.docs.js';
+import '../modules/training/trainingProgram.docs.js';
+import '../modules/training/enrollment.docs.js';
 
 // Import order matters: every *.docs.js file must finish calling
 // registry.registerPath() (a side effect of import) before

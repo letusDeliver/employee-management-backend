@@ -1973,3 +1973,93 @@ gained new endpoint docs for `/job-requisitions`, `/candidates`, and
 `backend/README.md` updated to match.
 
 Deliberately **backend-only**, same as every prior domain.)_
+
+_(Training Domain — 2026-09-16, on branch `feature/26-training-domain`
+(based on `feature/25-recruitment-domain`). Twelfth domain from the
+HRMS/ERP Business Architecture Review (`docs/domain-training.md`) - a
+smaller, two-aggregate domain after Recruitment's five, with no genuinely
+blocking open question ("Ready. No structural blockers," confidence 87%).
+
+`TrainingProgram` (master data, same `ACTIVE`/`INACTIVE` lifecycle shape as
+Branch/Department/LeaveType) and `Enrollment` (a per-attempt historical
+record, deliberately **repeatable** - unlike Branch/Department/
+Designation/Shift's single-current-value axes, retaking or renewing
+training is normal and expected, so no uniqueness constraint exists on
+`(employeeId, trainingProgramId)`, a deliberate divergence the domain doc
+itself calls out and argues for explicitly). `Enrollment.status` is a
+guarded state machine (`ENROLLED → IN_PROGRESS → COMPLETED | FAILED`
+strictly sequential, no skipping, the same convention as every other
+workflow aggregate in this review) with `WITHDRAWN` reachable from either
+non-terminal stage.
+
+**Judgment call, flagged:** the domain doc's own lifecycle diagram doesn't
+fully specify whether `WITHDRAWN` branches only off `IN_PROGRESS` or off
+`ENROLLED` too - implemented as reachable from either, the more realistic
+reading ("you can withdraw before ever starting").
+
+**A real business rule, not a judgment call - directly from the domain
+doc's own wording (§2):** self-enrollment (`enrollment:create:own`) is
+rejected (400) against a `mandatory: true` program. Mandatory-program
+enrollment must go through `enrollment:create:any` (`ADMIN`/HR).
+
+**Compliance status is computed on read, never stored (ADR-TR02)** -
+reuses Attendance's ADR-AT03 principle exactly. `enrollmentService.
+getComplianceStatus(employeeId, trainingProgramId)` finds the most recent
+`COMPLETED` enrollment and checks `completedAt + renewalPeriodDays`
+against now; absent `renewalPeriodDays` means compliant indefinitely once
+completed once. A bulk variant composes this across every mandatory,
+`ACTIVE` program for one employee - the minimal shape the domain doc's own
+"who consumes: compliance reporting" line implies, exposed via a single
+`GET /training-compliance` endpoint (single-program via a query param, or
+a bulk report when omitted) rather than two separate endpoints.
+
+**Permission model (new ADR-TR04):** `TrainingProgram` follows the
+`ADMIN`-only-mutation master-data pattern; `Enrollment` splits authoring
+(`create:own`/`create:any`), visibility (`read:own`/`read:any`, the same
+auto-scoped-list pattern `GET /leave-requests` established), lifecycle
+management (`manage:any` - the *only* path to `IN_PROGRESS`/`COMPLETED`/
+`FAILED`, since self-attested completion would undermine compliance
+tracking's whole point), and self-service withdrawal (`withdraw:own`).
+Deliberately **no `MANAGER` reports-visibility** - a real divergence from
+Leave/Performance, since the domain doc's own "who performs" text never
+mentions managers at all, only `ADMIN`/HR and self-enrollment; not
+invented with no textual basis. `Enrollment.delete` (`manage:any`,
+unrestricted by status) mirrors Attendance's own unrestricted-delete
+precedent - compliance data that sometimes needs outright correction, not
+just a workflow-transition-only model. 10 new permissions (78 → 88 total).
+
+New module `src/modules/training/` (`trainingProgram.*` mirroring Shift/
+LeaveType exactly, `enrollment.*` hosting the workflow/compliance logic,
+`enrollmentDocument.*` mirroring Employee/Candidate document uploads
+exactly, including the own/any ownership check `EmployeeDocument`'s own
+upload/list/delete already established). 14 endpoints across 8 paths.
+
+New `trainingProgram.service.test.js` (5 tests) and `enrollment.service.
+test.js` (4 tests, covering the mandatory-program self-enroll rejection,
+the full sequential-transition guard including the manage:any-vs-
+withdraw:own split, own/any list and get scoping, and all four compliance
+calculation cases - never-completed, completed-and-current, completed-
+but-expired, and no-expiry). 113 tests total across all twelve domains
+pass together, confirmed stable across three consecutive runs.
+
+Verified live end-to-end against the running server: an employee
+self-enrolling in an optional program (succeeds) and being blocked from
+self-enrolling in a mandatory one (400), an ADMIN enrolling that employee
+in the mandatory program, the employee correctly blocked (403) from
+self-marking it `COMPLETED`, ADMIN progressing it through
+`IN_PROGRESS → COMPLETED` with a score, the employee's own compliance
+query correctly showing compliant with a computed `expiresAt` (both the
+single-program and bulk-report shapes), a stranger employee correctly
+blocked (403) from viewing someone else's compliance, and self-withdrawal
+of the optional enrollment succeeding. Audit log entries confirmed for
+every mutation across both entity types. All scratch data cleaned up
+afterward.
+
+`docs/domain-training.md` (ADR-TR01-04, confidence 87%→92%),
+`docs/adr-index.md`, `docs/deferred-decisions-register.md` updated.
+`handbook/API_ENDPOINTS.md` gained new endpoint docs for
+`/training-programs`, `/enrollments`, and `/training-compliance`
+(delegated to a background agent, then verified). `backend/README.md`
+updated to match.
+
+Deliberately **backend-only**, same as every prior domain.)_

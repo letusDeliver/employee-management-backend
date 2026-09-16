@@ -437,6 +437,68 @@ export const ApplicationSchema = z
   })
   .meta({ id: 'Application' });
 
+export const TrainingProgramSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e' }),
+    name: z.string().meta({ example: 'Annual Security Awareness' }),
+    description: z.string().nullable().meta({ example: null }),
+    mandatory: z.boolean().meta({ example: true }),
+    renewalPeriodDays: z.int().nullable().meta({ example: 365 }),
+    status: z.enum(['ACTIVE', 'INACTIVE']).meta({ example: 'ACTIVE' }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+  })
+  .meta({ id: 'TrainingProgram' });
+
+export const EnrollmentDocumentSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'c8d9e0f1-a2b3-4c4d-5e6f-7a8b9c0d1e2f' }),
+    enrollmentId: z.uuid().meta({ example: 'd9e0f1a2-b3c4-4d5e-6f7a-8b9c0d1e2f3a' }),
+    url: z.url().meta({
+      example: 'https://res.cloudinary.com/dhfxv7gdp/raw/upload/v1/emp-mgmt/enrollments/c8d9.pdf',
+    }),
+    publicId: z.string().meta({ example: 'emp-mgmt/production/enrollments/c8d9/documents/e0f1' }),
+    resourceType: z.string().meta({ example: 'raw' }),
+    fileName: z.string().meta({ example: 'certificate.pdf' }),
+    mimeType: z.string().meta({ example: 'application/pdf' }),
+    size: z.int().meta({ example: 128456 }),
+    uploadedBy: z.uuid().nullable().meta({ example: null }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+  })
+  .meta({ id: 'EnrollmentDocument' });
+
+export const EnrollmentSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'd9e0f1a2-b3c4-4d5e-6f7a-8b9c0d1e2f3a' }),
+    employeeId: z.uuid().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    trainingProgramId: z.uuid().meta({ example: 'b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e' }),
+    status: z.enum(['ENROLLED', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'WITHDRAWN']).meta({
+      example: 'ENROLLED',
+    }),
+    score: z.int().nullable().meta({ example: null }),
+    completedAt: z.iso.datetime().nullable().meta({ example: null }),
+    trainingProgram: TrainingProgramSchema.optional(),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+  })
+  .meta({ id: 'Enrollment' });
+
+export const TrainingComplianceStatusSchema = z
+  .object({
+    trainingProgramId: z.uuid().optional().meta({
+      example: 'b7c8d9e0-f1a2-4b3c-4d5e-6f7a8b9c0d1e',
+      description: 'Present only in the bulk (no trainingProgramId query param) report shape',
+    }),
+    trainingProgramName: z.string().optional().meta({ example: 'Annual Security Awareness' }),
+    compliant: z.boolean().meta({ example: true }),
+    lastCompletedAt: z.iso.datetime().nullable().meta({ example: '2026-01-15T00:00:00.000Z' }),
+    expiresAt: z.iso.datetime().nullable().meta({
+      example: '2027-01-15T00:00:00.000Z',
+      description: 'Null when the program has no renewalPeriodDays (never expires once completed)',
+    }),
+  })
+  .meta({ id: 'TrainingComplianceStatus' });
+
 export const PaginationMetaSchema = z
   .object({
     page: z.int().meta({ example: 1 }),

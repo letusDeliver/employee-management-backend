@@ -556,6 +556,76 @@ const PERMISSIONS = [
     scope: null,
     description: 'Hire an application - the Hire Orchestration Service boundary into Employee onboarding',
   },
+  {
+    key: 'trainingProgram:create',
+    resource: 'trainingProgram',
+    action: 'create',
+    scope: null,
+    description: 'Create a training program',
+  },
+  {
+    key: 'trainingProgram:read',
+    resource: 'trainingProgram',
+    action: 'read',
+    scope: null,
+    description: 'Read training programs',
+  },
+  {
+    key: 'trainingProgram:update',
+    resource: 'trainingProgram',
+    action: 'update',
+    scope: null,
+    description: 'Update a training program',
+  },
+  {
+    key: 'trainingProgram:delete',
+    resource: 'trainingProgram',
+    action: 'delete',
+    scope: null,
+    description: 'Delete a training program with zero Enrollment references',
+  },
+  {
+    key: 'enrollment:create:own',
+    resource: 'enrollment',
+    action: 'create',
+    scope: 'own',
+    description: "Self-enroll in an optional (non-mandatory) training program",
+  },
+  {
+    key: 'enrollment:create:any',
+    resource: 'enrollment',
+    action: 'create',
+    scope: 'any',
+    description: 'Enroll any employee in any training program, including mandatory ones',
+  },
+  {
+    key: 'enrollment:read:own',
+    resource: 'enrollment',
+    action: 'read',
+    scope: 'own',
+    description: "Read the caller's own enrollments and compliance status only",
+  },
+  {
+    key: 'enrollment:read:any',
+    resource: 'enrollment',
+    action: 'read',
+    scope: 'any',
+    description: 'Read any enrollment and compliance status, including listing across employees',
+  },
+  {
+    key: 'enrollment:manage:any',
+    resource: 'enrollment',
+    action: 'manage',
+    scope: 'any',
+    description: 'Transition any enrollment (In Progress/Completed/Failed/Withdrawn) and delete it',
+  },
+  {
+    key: 'enrollment:withdraw:own',
+    resource: 'enrollment',
+    action: 'withdraw',
+    scope: 'own',
+    description: "Withdraw the caller's own enrollment",
+  },
 ];
 
 const ROLE_PERMISSIONS = {
@@ -634,6 +704,16 @@ const ROLE_PERMISSIONS = {
     'application:read',
     'application:update',
     'application:hire',
+    'trainingProgram:create',
+    'trainingProgram:read',
+    'trainingProgram:update',
+    'trainingProgram:delete',
+    'enrollment:create:own',
+    'enrollment:create:any',
+    'enrollment:read:own',
+    'enrollment:read:any',
+    'enrollment:manage:any',
+    'enrollment:withdraw:own',
   ],
   MANAGER: [
     'employee:create',
@@ -666,6 +746,10 @@ const ROLE_PERMISSIONS = {
     'performanceReview:read:own',
     'performanceReview:acknowledge:own',
     'performanceReview:selfAssess:own',
+    'trainingProgram:read',
+    'enrollment:create:own',
+    'enrollment:read:own',
+    'enrollment:withdraw:own',
   ],
   EMPLOYEE: [
     'employee:read:own',
@@ -686,6 +770,10 @@ const ROLE_PERMISSIONS = {
     'performanceReview:read:own',
     'performanceReview:acknowledge:own',
     'performanceReview:selfAssess:own',
+    'trainingProgram:read',
+    'enrollment:create:own',
+    'enrollment:read:own',
+    'enrollment:withdraw:own',
   ],
 };
 
@@ -724,7 +812,7 @@ const seedRolesAndGrants = async () => {
 const main = async () => {
   await seedPermissions();
   await seedRolesAndGrants();
-  console.log('Seed complete: 3 system roles, 78 permissions, role-permission grants.');
+  console.log('Seed complete: 3 system roles, 88 permissions, role-permission grants.');
 };
 
 main()

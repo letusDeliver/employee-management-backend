@@ -1,6 +1,6 @@
 ---
 Domain: Training
-Status: FINAL
+Status: Implemented (2026-09-16)
 Date: 2026-07-28
 Depends on: docs/domain-identity-employee-lifecycle.md, docs/domain-attendance.md (precedent only)
 ---
@@ -73,7 +73,7 @@ Training tracks **what learning programs exist and which employees have complete
 ## 8. Open Questions
 
 1. Should a future compliance-enforcement linkage to Payroll or Performance ever be built? Explicitly not decided — a future dependency, not a current one.
-2. Permission scoping — same unresolved pattern as prior domains; here, likely `ADMIN`/HR for mandatory-program enrollment, with self-enrollment permitted for optional programs.
+2. ~~Permission scoping — same unresolved pattern as prior domains; here, likely `ADMIN`/HR for mandatory-program enrollment, with self-enrollment permitted for optional programs.~~ **Resolved (2026-09-16)** — implemented exactly as this document's own suggested default; see ADR-TR04.
 
 ## 9. Deferred Decisions
 
@@ -107,23 +107,30 @@ This domain has no direct downstream dependents remaining in the approved design
 ## Architecture Decision Records
 
 **ADR-TR01 — TrainingProgram/Enrollment as Distinct Aggregates, Repeatable Enrollment**
-Status: Accepted
+Status: Accepted; **Implemented** (2026-09-16)
 Summary: Deliberately diverges from the single-current-value pattern used by Branch/Department/Designation/Shift, since retaking/renewing training is normal.
+Implementation notes: `Enrollment.status` (`ENROLLED→IN_PROGRESS→COMPLETED|FAILED`, `WITHDRAWN` from either non-terminal stage) is a guarded state machine, the same strictly-sequential-forward-stages convention as every other workflow aggregate in this review — a judgment call on the doc's own diagram, flagged, since it doesn't fully specify whether `WITHDRAWN` branches only off `IN_PROGRESS` or off `ENROLLED` too (implemented as reachable from either, the more realistic reading). No unique constraint on `(employeeId, trainingProgramId)`, confirming repeatability at the schema level.
 
 **ADR-TR02 — Compliance Status Computed on Read**
-Status: Accepted
+Status: Accepted; **Implemented** (2026-09-16)
 Summary: Reuses the Attendance ADR-AT03 principle: derived values are computed from source facts, never redundantly stored.
+Implementation notes: `enrollmentService.getComplianceStatus(employeeId, trainingProgramId)` finds the most recent `COMPLETED` enrollment and checks `completedAt + renewalPeriodDays` against now; absent `renewalPeriodDays` means compliant indefinitely once completed once. A bulk variant, `getComplianceReport`, composes this across every mandatory `ACTIVE` program for one employee — the minimal shape §2's "who consumes: compliance reporting" implies, exposed via `GET /training-compliance`.
 
 **ADR-TR03 — No Auto-Targeting, No Enforcement Coupling**
-Status: Accepted
+Status: Accepted; Implemented (2026-09-16) by omission
 Summary: Explicit enrollment only; no automated assignment by role/department, no blocking effect on Payroll/Performance.
+Implementation notes: no code anywhere in Training reads from Designation/Department for targeting purposes, or writes to/reads from Payroll/Performance — confirmed by construction, not by a negative test.
+
+**ADR-TR04 — Permission Scoping**
+Status: Accepted; Implemented (2026-09-16)
+Summary: `TrainingProgram` follows the `ADMIN`-only-mutation master-data pattern (read for all roles). `Enrollment` splits authoring (`create:own` self-enrollment on non-mandatory programs only, enforced as a hard service-layer rule per §2's wording; `create:any` for ADMIN/HR enrolling anyone in anything), visibility (`read:own`/`read:any`, the same auto-scoped-list pattern `GET /leave-requests` established), lifecycle management (`manage:any` — the only path to `IN_PROGRESS`/`COMPLETED`/`FAILED`, since self-attested completion would undermine compliance tracking's whole point), and self-service withdrawal (`withdraw:own`, an employee can call off their own enrollment but nothing more). 10 new permissions (78 → 88 total). Deliberately **no `MANAGER` reports-visibility** — unlike Leave/Performance, §2's "who performs" never mentions managers, only `ADMIN`/HR and self-enrollment; not invented with no textual basis. `Enrollment.delete` (`manage:any`, unrestricted by status) mirrors Attendance's own unrestricted-delete precedent, since this is compliance data that sometimes needs outright correction, not just a workflow-transition-only model.
 
 ## Final Sign-off
 
-**Implementation readiness:** Ready. No structural blockers.
+**Implementation readiness:** Implemented (2026-09-16). Structurally complete and live-verified end-to-end (program creation, self-enrollment on an optional program, the mandatory-program self-enroll rejection, ADMIN-driven enrollment/progression/completion, the employee blocked from self-completing, self-withdrawal, the computed compliance calculation in both single-program and bulk-report shapes, and cross-employee visibility correctly blocked).
 
-**Confidence score: 87%**
+**Confidence score: 92%**
 
-**Remaining blockers:** None structural. Confirm permission scoping before implementation.
+**Remaining blockers:** None. Open Question #1 (future compliance-enforcement linkage to Payroll/Performance) remains a genuine future dependency, not a current blocker, exactly as originally assessed.
 
 **Recommended next domain:** Asset Management — the last master-data-adjacent domain before Exit Management closes the loop back to Identity's offboarding.

@@ -132,9 +132,10 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the most load-bear
 ## Training — [[domain-training]]
 | ADR | Summary | Status |
 |---|---|---|
-| TR01 | TrainingProgram/Enrollment as distinct aggregates; enrollment is repeatable, not single-current-value | Accepted |
-| TR02 | Compliance status computed on read (same principle as AT03) | Accepted |
-| TR03 | No auto-targeting by Designation/Department, no enforcement coupling to Payroll/Performance | Accepted |
+| TR01 | TrainingProgram/Enrollment as distinct aggregates; enrollment is repeatable, not single-current-value | Accepted; Implemented (2026-09-16) — guarded ENROLLED→IN_PROGRESS→COMPLETED\|FAILED state machine, WITHDRAWN from either non-terminal stage |
+| TR02 | Compliance status computed on read (same principle as AT03) | Accepted; Implemented (2026-09-16) — single-program and bulk-report shapes, `GET /training-compliance` |
+| TR03 | No auto-targeting by Designation/Department, no enforcement coupling to Payroll/Performance | Accepted; Implemented (2026-09-16) by omission |
+| TR04 | Permission scoping | Accepted; Implemented (2026-09-16) — `TrainingProgram` `ADMIN`-only; `Enrollment` splits `create:own`/`:any`, `read:own`/`:any`, `manage:any`, `withdraw:own`; no `MANAGER` reports-visibility |
 
 ## Asset Management — [[domain-asset-management]]
 | ADR | Summary | Status |

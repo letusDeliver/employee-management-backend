@@ -7,28 +7,29 @@ datasource db {
 }
 
 model User {
-  id                         String              @id @default(uuid())
-  email                      String              @unique
-  password                   String
-  name                       String
-  profileImageUrl            String?
-  profileImagePublicId       String?
+  id                          String               @id @default(uuid())
+  email                       String               @unique
+  password                    String
+  name                        String
+  profileImageUrl             String?
+  profileImagePublicId        String?
   // Set to "now" on every /auth/logout call for this user (see auth.service.js's
   // `logout`). authMiddleware rejects any access token whose `iat` claim predates
   // this timestamp - the fix for a stateless-JWT gap where a logged-out browser tab
   // could keep using its still-unexpired, already-issued access token for up to
   // JWT_ACCESS_EXPIRES_IN after logout. Null means "no restriction" (never logged out
   // since this column was added).
-  tokensValidAfter           DateTime?
-  createdAt                  DateTime            @default(now())
-  updatedAt                  DateTime            @updatedAt
-  refreshTokens              RefreshToken[]
-  userRoles                  UserRole[]
-  employees                  Employee[]
-  auditLogs                  AuditLog[]
-  uploadedDocuments          EmployeeDocument[]
-  reviewAddenda              ReviewAddendum[]
-  uploadedCandidateDocuments CandidateDocument[] @relation("CandidateDocumentUploader")
+  tokensValidAfter            DateTime?
+  createdAt                   DateTime             @default(now())
+  updatedAt                   DateTime             @updatedAt
+  refreshTokens               RefreshToken[]
+  userRoles                   UserRole[]
+  employees                   Employee[]
+  auditLogs                   AuditLog[]
+  uploadedDocuments           EmployeeDocument[]
+  reviewAddenda               ReviewAddendum[]
+  uploadedCandidateDocuments  CandidateDocument[]  @relation("CandidateDocumentUploader")
+  uploadedEnrollmentDocuments EnrollmentDocument[] @relation("EnrollmentDocumentUploader")
 }
 
 model RefreshToken {
@@ -141,6 +142,7 @@ model Employee {
   performanceReviewsAsReviewer PerformanceReview[] @relation("PerformanceReviewReviewer")
   interviewsConducted          Interview[]
   hiredViaApplication          Application?
+  enrollments                  Enrollment[]
 
   // No @unique on userId: Prisma's schema DSL can't express a *partial*
   // unique constraint (scoped to non-deleted rows), so the real
@@ -830,6 +832,92 @@ model Offer {
   updatedAt     DateTime    @updatedAt
 
   @@index([applicationId])
+}
+
+// See docs/domain-training.md for the full business-architecture sign-off.
+// Master data, same status-lifecycle shape as Branch/Department/
+// Designation/LeaveType (ADR-TR01) - `mandatory` and `renewalPeriodDays`
+// are new axes this domain introduces, not carried over from any prior
+// one. No `code` field, same reasoning as LeaveType/HolidayCalendar/
+// ReviewCycle - this domain's own sign-off never names one as useful.
+enum TrainingProgramStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model TrainingProgram {
+  id                String                @id @default(uuid())
+  name              String                @unique
+  description       String?
+  mandatory         Boolean               @default(false)
+  // Days after completion before renewal is required - only meaningful
+  // for compliance courses. Null means "never expires once completed"
+  // (docs/domain-training.md §3's compliance calculation).
+  renewalPeriodDays Int?
+  status            TrainingProgramStatus @default(ACTIVE)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  enrollments       Enrollment[]
+}
+
+// Deliberately diverges from Branch/Department/Designation/Shift's single-
+// current-value pattern (ADR-TR01, §2/§7) - retaking or renewing training
+// is normal, so each attempt is its own historical row, not an overwritten
+// current value. No unique constraint on (employeeId, trainingProgramId),
+// unlike those axes. ENROLLED->IN_PROGRESS->COMPLETED|FAILED is strictly
+// sequential (no skipping, consistent with every other guarded workflow in
+// this project); WITHDRAWN is reachable from either non-terminal stage.
+// completedAt is set only on the COMPLETED transition and feeds the
+// compliance calculation (ADR-TR02) - compliance status itself is computed
+// on read, never stored, reusing Attendance's ADR-AT03 principle.
+enum EnrollmentStatus {
+  ENROLLED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  WITHDRAWN
+}
+
+model Enrollment {
+  id                String               @id @default(uuid())
+  employeeId        String
+  // Restrict, not Cascade - a personnel/compliance record with retention
+  // value, same reasoning as Payslip/PerformanceReview, not a pure
+  // operational fact like an Attendance check-in.
+  employee          Employee             @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  trainingProgramId String
+  trainingProgram   TrainingProgram      @relation(fields: [trainingProgramId], references: [id], onDelete: Restrict)
+  status            EnrollmentStatus     @default(ENROLLED)
+  score             Int?
+  completedAt       DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  documents         EnrollmentDocument[]
+
+  @@index([employeeId])
+  @@index([trainingProgramId])
+}
+
+// Certificate storage - reuses the same generic pattern already
+// established by EmployeeDocument/Recruitment's CandidateDocument (§4's
+// Recommended Practices: "reusing the same generic document-storage
+// pattern... rather than inventing a new certificate-file mechanism"),
+// rather than a single certificateUrl field on Enrollment itself.
+model EnrollmentDocument {
+  id           String     @id @default(uuid())
+  enrollmentId String
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  url          String
+  publicId     String
+  resourceType String
+  fileName     String
+  mimeType     String
+  size         Int
+  uploadedBy   String?
+  uploader     User?      @relation("EnrollmentDocumentUploader", fields: [uploadedBy], references: [id], onDelete: SetNull)
+  createdAt    DateTime   @default(now())
+
+  @@index([enrollmentId])
 }
 
 model EmployeeDocument {
