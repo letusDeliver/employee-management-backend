@@ -502,13 +502,28 @@ have an active Employee" requires a scoped query (`WHERE deletedAt IS NULL`),
 not a trivial FK-presence check.
 
 **ADR-004 — Employee Lifecycle Service**
-Status: Accepted (scope of "one service vs. two" — Open, see §5)
+Status: Accepted; **onboarding half Implemented** (2026-09-16, during
+Recruitment's build); scope of "one service vs. two" remains Open, see §5.
 Summary: A dedicated third module orchestrates onboarding and offboarding
 across `Employee` and `User`/`auth`, mirroring the existing
 `auth.service.js` cross-module orchestration precedent.
 Consequences: Keeps `employee.service.js` and `user`/`auth` modules from
 depending on each other directly; introduces a new module boundary that must
 be designed carefully once the open scope question is resolved.
+**Update (2026-09-16):** the onboarding half of this ADR is now real code -
+`backend/src/modules/employeeOnboarding/employeeOnboarding.service.js`'s
+`onboardEmployee`, built as the target `docs/domain-recruitment.md`'s
+ADR-RC03 (Hire Orchestration Service) needed to call something real rather
+than a still-vaporware process. Implements exactly the flow decided above
+(§2's Onboarding diagram): search-by-email first, access provisioning
+optional and explicit (defaults to no access), the User reuse/creation and
+Employee creation wrapped in one transaction. Deliberately scoped to
+onboarding only - the §5 "one service or two" question is *not* resolved by
+this, since offboarding remains exactly where it already lived
+(`employee.service.js`'s `softDeleteEmployee`, per ADR-006) and this new
+module makes no attempt to absorb it. `employeeService.createEmployee`
+gained an additive optional trailing `tx` parameter so it can participate in
+a caller-supplied transaction; every existing caller is unaffected.
 
 **ADR-005 — Administrator-Driven Account Provisioning**
 Status: Accepted
@@ -634,19 +649,28 @@ The **architecture** is ready. Offboarding's access-revocation behavior
 `employee.service.js`, without waiting for a dedicated Employee Lifecycle
 Service module — the §5 "one service or two" question turned out to be
 orthogonal to shipping ADR-006 and remains open for the broader onboarding
-orchestration question.
+orchestration question. **Update (2026-09-16):** onboarding's own core flow
+(ADR-004) is now implemented too - built during Recruitment's domain pass as
+`employeeOnboarding.service.js`, since Recruitment's Hire Orchestration
+Service needed a real target. Built narrowly (onboarding only), so §5's
+scope question is still genuinely unresolved, not quietly decided by this -
+offboarding was not folded in and remains exactly where ADR-006 already put
+it.
 
-**Confidence score: 87%**
+**Confidence score: 90%**
 Reasoning: every structural/relationship question raised in this review was
 resolved with clear reasoning grounded in verified codebase facts, and the
 resulting design is internally consistent with existing precedents in the
 codebase (transaction patterns, cross-module orchestration, session
-invalidation). Raised from 85% now that ADR-006's revocation half is
-implemented and verified rather than only designed. The remaining gap
-reflects: (a) the unresolved onboarding-vs-offboarding service-scope question
-in §5, and (b) ADR-007 (`User` account status) remaining deliberately
-deferred, so offboarding still cannot prevent a fresh re-login with
-still-valid credentials.
+invalidation). Raised from 87% now that both ADR-006's revocation half
+*and* ADR-004's onboarding half are implemented and verified (the latter
+end-to-end, via Recruitment's own test suite and live hire verification)
+rather than only designed. The remaining gap reflects: (a) the unresolved
+onboarding-vs-offboarding service-scope question in §5 (unaffected by this
+update - onboarding living in its own narrowly-scoped module doesn't answer
+whether it should eventually merge with offboarding), and (b) ADR-007
+(`User` account status) remaining deliberately deferred, so offboarding
+still cannot prevent a fresh re-login with still-valid credentials.
 
 **Remaining blockers before further implementation:**
 1. Resolve §5's open question: one Employee Lifecycle Service or two

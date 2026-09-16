@@ -472,6 +472,90 @@ const PERMISSIONS = [
     scope: 'own',
     description: "Add/update the caller's own self-assessment comments on their own review",
   },
+  {
+    key: 'jobRequisition:create',
+    resource: 'jobRequisition',
+    action: 'create',
+    scope: null,
+    description: 'Create a job requisition',
+  },
+  {
+    key: 'jobRequisition:read',
+    resource: 'jobRequisition',
+    action: 'read',
+    scope: null,
+    description: 'Read job requisitions',
+  },
+  {
+    key: 'jobRequisition:update',
+    resource: 'jobRequisition',
+    action: 'update',
+    scope: null,
+    description: 'Update a job requisition (including its status)',
+  },
+  {
+    key: 'jobRequisition:delete',
+    resource: 'jobRequisition',
+    action: 'delete',
+    scope: null,
+    description: 'Delete a job requisition with zero Application references',
+  },
+  {
+    key: 'candidate:create',
+    resource: 'candidate',
+    action: 'create',
+    scope: null,
+    description: 'Create a candidate record',
+  },
+  {
+    key: 'candidate:read',
+    resource: 'candidate',
+    action: 'read',
+    scope: null,
+    description: 'Read candidate records and their documents',
+  },
+  {
+    key: 'candidate:update',
+    resource: 'candidate',
+    action: 'update',
+    scope: null,
+    description: 'Update a candidate record and manage its documents',
+  },
+  {
+    key: 'candidate:delete',
+    resource: 'candidate',
+    action: 'delete',
+    scope: null,
+    description: 'Delete a candidate record with zero Application references',
+  },
+  {
+    key: 'application:create',
+    resource: 'application',
+    action: 'create',
+    scope: null,
+    description: 'Create an application (link a Candidate to a JobRequisition)',
+  },
+  {
+    key: 'application:read',
+    resource: 'application',
+    action: 'read',
+    scope: null,
+    description: 'Read applications, interviews, and offers',
+  },
+  {
+    key: 'application:update',
+    resource: 'application',
+    action: 'update',
+    scope: null,
+    description: 'Update an application’s status and manage its interviews/offers',
+  },
+  {
+    key: 'application:hire',
+    resource: 'application',
+    action: 'hire',
+    scope: null,
+    description: 'Hire an application - the Hire Orchestration Service boundary into Employee onboarding',
+  },
 ];
 
 const ROLE_PERMISSIONS = {
@@ -538,6 +622,18 @@ const ROLE_PERMISSIONS = {
     'performanceReview:read:any',
     'performanceReview:acknowledge:own',
     'performanceReview:selfAssess:own',
+    'jobRequisition:create',
+    'jobRequisition:read',
+    'jobRequisition:update',
+    'jobRequisition:delete',
+    'candidate:create',
+    'candidate:read',
+    'candidate:update',
+    'candidate:delete',
+    'application:create',
+    'application:read',
+    'application:update',
+    'application:hire',
   ],
   MANAGER: [
     'employee:create',
@@ -628,7 +724,7 @@ const seedRolesAndGrants = async () => {
 const main = async () => {
   await seedPermissions();
   await seedRolesAndGrants();
-  console.log('Seed complete: 3 system roles, 66 permissions, role-permission grants.');
+  console.log('Seed complete: 3 system roles, 78 permissions, role-permission grants.');
 };
 
 main()

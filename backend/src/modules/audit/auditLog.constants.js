@@ -23,4 +23,10 @@ export const AUDIT_ENTITY_TYPES = Object.freeze({
   REVIEW_CYCLE: 'ReviewCycle',
   PERFORMANCE_REVIEW: 'PerformanceReview',
   REVIEW_ADDENDUM: 'ReviewAddendum',
+  JOB_REQUISITION: 'JobRequisition',
+  CANDIDATE: 'Candidate',
+  CANDIDATE_DOCUMENT: 'CandidateDocument',
+  APPLICATION: 'Application',
+  INTERVIEW: 'Interview',
+  OFFER: 'Offer',
 });

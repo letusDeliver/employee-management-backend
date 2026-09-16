@@ -343,6 +343,100 @@ export const EmployeeDocumentSchema = z
   })
   .meta({ id: 'EmployeeDocument' });
 
+export const JobRequisitionSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e' }),
+    departmentId: z.uuid().meta({ example: '5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7c' }),
+    designationId: z.uuid().meta({ example: '5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d' }),
+    branchId: z.uuid().nullable().meta({ example: null }),
+    employmentType: z.enum(['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERN']).meta({
+      example: 'FULL_TIME',
+    }),
+    numberOfOpenings: z.int().meta({ example: 2 }),
+    remainingOpenings: z.int().meta({ example: 2 }),
+    status: z.enum(['OPEN', 'ON_HOLD', 'CLOSED', 'CANCELLED']).meta({ example: 'OPEN' }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+  })
+  .meta({ id: 'JobRequisition' });
+
+export const CandidateDocumentSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'c2d3e4f5-a6b7-4c8d-9e0f-1a2b3c4d5e6f' }),
+    candidateId: z.uuid().meta({ example: 'd3e4f5a6-b7c8-4d9e-0f1a-2b3c4d5e6f7a' }),
+    url: z.url().meta({
+      example: 'https://res.cloudinary.com/dhfxv7gdp/raw/upload/v1/emp-mgmt/candidates/c2d3.pdf',
+    }),
+    publicId: z.string().meta({ example: 'emp-mgmt/production/candidates/c2d3/documents/e4f5' }),
+    resourceType: z.string().meta({ example: 'raw' }),
+    fileName: z.string().meta({ example: 'resume.pdf' }),
+    mimeType: z.string().meta({ example: 'application/pdf' }),
+    size: z.int().meta({ example: 245678 }),
+    uploadedBy: z.uuid().nullable().meta({ example: null }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+  })
+  .meta({ id: 'CandidateDocument' });
+
+export const CandidateSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'd3e4f5a6-b7c8-4d9e-0f1a-2b3c4d5e6f7a' }),
+    name: z.string().meta({ example: 'Jane Doe' }),
+    email: z.email().meta({ example: 'jane.doe@example.com' }),
+    phone: z.string().nullable().meta({ example: null }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+  })
+  .meta({ id: 'Candidate' });
+
+export const InterviewSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'e4f5a6b7-c8d9-4e0f-1a2b-3c4d5e6f7a8b' }),
+    applicationId: z.uuid().meta({ example: 'f5a6b7c8-d9e0-4f1a-2b3c-4d5e6f7a8b9c' }),
+    interviewerId: z.uuid().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    scheduledAt: z.iso.datetime().meta({ example: '2026-10-01T14:00:00.000Z' }),
+    feedback: z.string().nullable().meta({ example: null }),
+    recommendation: z.enum(['STRONG_YES', 'YES', 'NO', 'STRONG_NO']).nullable().meta({
+      example: null,
+    }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+  })
+  .meta({ id: 'Interview' });
+
+export const OfferSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'a6b7c8d9-e0f1-4a2b-3c4d-5e6f7a8b9c0d' }),
+    applicationId: z.uuid().meta({ example: 'f5a6b7c8-d9e0-4f1a-2b3c-4d5e6f7a8b9c' }),
+    salary: z.string().meta({ example: '95000', description: 'Decimal, serialized as a string' }),
+    startDate: z.iso.datetime().meta({ example: '2026-11-01T00:00:00.000Z' }),
+    status: z.enum(['PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED']).meta({ example: 'PENDING' }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+  })
+  .meta({ id: 'Offer' });
+
+export const ApplicationSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'f5a6b7c8-d9e0-4f1a-2b3c-4d5e6f7a8b9c' }),
+    candidateId: z.uuid().meta({ example: 'd3e4f5a6-b7c8-4d9e-0f1a-2b3c4d5e6f7a' }),
+    jobRequisitionId: z.uuid().meta({ example: 'b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e' }),
+    status: z
+      .enum(['APPLIED', 'SCREENING', 'INTERVIEW', 'OFFER', 'HIRED', 'REJECTED', 'WITHDRAWN'])
+      .meta({ example: 'APPLIED' }),
+    hiredEmployeeId: z.uuid().nullable().meta({ example: null }),
+    candidate: CandidateSchema.optional(),
+    jobRequisition: JobRequisitionSchema.optional(),
+    interviews: z.array(InterviewSchema).optional().meta({
+      description: 'Only present on GET /applications/:id, not the list endpoint',
+    }),
+    offers: z.array(OfferSchema).optional().meta({
+      description: 'Only present on GET /applications/:id, not the list endpoint',
+    }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-16T10:00:00.000Z' }),
+  })
+  .meta({ id: 'Application' });
+
 export const PaginationMetaSchema = z
   .object({
     page: z.int().meta({ example: 1 }),

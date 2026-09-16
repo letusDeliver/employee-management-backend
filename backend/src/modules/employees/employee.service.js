@@ -52,7 +52,16 @@ const rethrowForeignKeyViolationAsBadRequest = (error) => {
   throw new BadRequestError(`${field}: references a record that does not exist`);
 };
 
-const createEmployee = async (data, actor) => {
+// The optional trailing `tx` lets a caller-supplied transaction participate
+// instead of opening its own - added for employeeOnboarding.service.js,
+// which must wrap User creation/reuse and Employee creation in a single
+// transaction (docs/domain-identity-employee-lifecycle.md §3's "if access
+// is provisioned during onboarding, Employee+User link creation must be
+// wrapped in a way that a partial failure never leaves an inconsistent
+// state"). Every existing caller omits it and is unaffected - additive,
+// backward-compatible, same optional-trailing-client shape every
+// repository function in this codebase already uses.
+const createEmployee = async (data, actor, tx) => {
   if (data.userId) {
     const existing = await employeeRepository.findByUserId(data.userId);
 
@@ -80,25 +89,27 @@ const createEmployee = async (data, actor) => {
   // (docs/domain-designation.md ADR-DS07).
   await designationService.assertDesignationAssignable(data.designationId);
 
+  const runInTransaction = async (client) => {
+    const employee = await employeeRepository.create(data, client);
+
+    await auditLogRepository.create(
+      {
+        actorId: actor.id,
+        action: AUDIT_ACTIONS.CREATE,
+        entityType: AUDIT_ENTITY_TYPES.EMPLOYEE,
+        entityId: employee.id,
+        beforeData: null,
+        afterData: normalizeForAudit(employee),
+        ipAddress: actor.ipAddress ?? null,
+      },
+      client,
+    );
+
+    return employee;
+  };
+
   try {
-    return await prisma.$transaction(async (tx) => {
-      const employee = await employeeRepository.create(data, tx);
-
-      await auditLogRepository.create(
-        {
-          actorId: actor.id,
-          action: AUDIT_ACTIONS.CREATE,
-          entityType: AUDIT_ENTITY_TYPES.EMPLOYEE,
-          entityId: employee.id,
-          beforeData: null,
-          afterData: normalizeForAudit(employee),
-          ipAddress: actor.ipAddress ?? null,
-        },
-        tx,
-      );
-
-      return employee;
-    });
+    return tx ? await runInTransaction(tx) : await prisma.$transaction(runInTransaction);
   } catch (error) {
     // A concurrent request could slip past the pre-check above between the
     // read and the write - the database's own unique constraint on userId

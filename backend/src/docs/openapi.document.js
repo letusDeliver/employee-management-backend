@@ -20,6 +20,9 @@ import '../modules/leave/leave.docs.js';
 import '../modules/payroll/payroll.docs.js';
 import '../modules/reviewCycles/reviewCycle.docs.js';
 import '../modules/performance/performance.docs.js';
+import '../modules/recruitment/jobRequisition.docs.js';
+import '../modules/recruitment/candidate.docs.js';
+import '../modules/recruitment/application.docs.js';
 
 // Import order matters: every *.docs.js file must finish calling
 // registry.registerPath() (a side effect of import) before

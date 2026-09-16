@@ -20569,3 +20569,5519 @@ addenda appear, oldest-first, in the `addenda` array.
 - ✅ `401` with no token
 - ✅ `AuditLog` row created; addendum has no `updatedAt` field
 - ✅ Deleting the parent review (endpoint 91, `DRAFT`-only) cascades to any addenda
+
+---
+
+---
+
+# 93. `POST /job-requisitions`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Create Job Requisition
+Description:        Opens a new JobRequisition in OPEN status; remainingOpenings is initialized equal to numberOfOpenings
+Method:             POST
+URL:                /api/v1/job-requisitions
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `jobRequisition:create` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the entry point for the recruitment pipeline —
+  opens a position against Department/Designation/(optionally) Branch/
+  EmploymentType/openings count, `docs/domain-recruitment.md` §2: "`ADMIN`/
+  hiring manager opens a requisition specifying Department, Designation,
+  Branch, Employment Type, and number of openings."
+- **`remainingOpenings` is a derived, service-set field, not a client
+  input** — `jobRequisition.service.js`'s `createJobRequisition` sets it
+  to `data.numberOfOpenings` regardless of what (if anything) the body
+  contains for it; the field isn't even on `createJobRequisitionSchema`
+  at all. It only ever moves afterward via the Hire flow's guarded
+  decrement (endpoint 110), never through any direct write path.
+- **Reuses Employee's own cross-module assignability checks verbatim** —
+  `departmentService.assertDepartmentAssignable` /
+  `designationService.assertDesignationAssignable` /
+  `branchService.assertBranchAssignable`, the identical functions
+  `employee.service.js`'s `createEmployee` calls (endpoint 9) — a
+  deliberate mirroring, since `docs/domain-recruitment.md` §3 frames a
+  requisition as "a template for the Employee record a successful hire
+  will produce," carrying the same four axes.
+- **`employmentType` reuses the existing `EmploymentType` enum**, not a
+  new one — `FULL_TIME`/`PART_TIME`/`CONTRACT`/`INTERN`, identical to
+  Employee's own field.
+- **ADMIN-only (ADR-RC05)** — unlike Leave/Payroll/Performance, no
+  Recruitment aggregate has a natural "own" concept, so there is no
+  `:any`/`:own` split anywhere in this domain, including this endpoint.
+- **Expected callers**: `ADMIN`/hiring manager.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                       |
+| -------------------------------------- | -------- | ------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `jobRequisition:create` permission        |
+| `Content-Type: application/json`     | **Yes**  |                                                               |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "departmentId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7c",
+  "designationId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+  "branchId": null,
+  "employmentType": "FULL_TIME",
+  "numberOfOpenings": 2
+}
+```
+
+| Field              | Type          | Required | Description                                                                         |
+| -------------------- | ------------- | -------- | --------------------------------------------------------------------------------------- |
+| `departmentId`      | string (UUID) | **Yes**  | Must reference an existing, `ACTIVE` Department                                          |
+| `designationId`     | string (UUID) | **Yes**  | Must reference an existing, `ACTIVE` Designation                                         |
+| `branchId`          | string (UUID) | No       | If supplied, must reference an existing, `ACTIVE` Branch                                 |
+| `employmentType`    | string (enum) | **Yes**  | One of `FULL_TIME`, `PART_TIME`, `CONTRACT`, `INTERN` — the same `EmploymentType` enum Employee uses |
+| `numberOfOpenings`  | integer       | **Yes**  | Positive integer; seeds `remainingOpenings` at creation                                  |
+
+## 7. Validation Rules
+
+Enforced by `jobRequisition.validation.js`'s `createJobRequisitionSchema`
+(Zod), via `validateMiddleware`:
+
+- `departmentId` / `designationId`: `z.string().uuid()`, required. A
+  missing field produces `"departmentId: Invalid input: expected
+  string, received undefined"` (and likewise for `designationId`).
+- `branchId`: `z.string().uuid()`, optional.
+- `employmentType`: `z.enum(['FULL_TIME', 'PART_TIME', 'CONTRACT',
+  'INTERN'])`, required — the same closed list and identical message
+  shape as Employee's own field (endpoint 9).
+- `numberOfOpenings`: `z.number().int().positive('numberOfOpenings must
+  be a positive integer')`, required. A missing value produces
+  `"numberOfOpenings: Invalid input: expected number, received
+  undefined"`; `0` or a negative value produces `"numberOfOpenings:
+  numberOfOpenings must be a positive integer"`.
+
+**Business-rule validation (in the service, not the schema)** — all run
+*before* the transaction, identical pattern to `employee.service.js`'s
+`createEmployee`:
+
+1. `branchService.assertBranchAssignable(branchId)` — only if `branchId`
+   is supplied.
+2. `departmentService.assertDepartmentAssignable(departmentId)` —
+   unconditional.
+3. `designationService.assertDesignationAssignable(designationId)` —
+   unconditional.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "jobRequisition": {
+    "id": "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+    "departmentId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7c",
+    "designationId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "branchId": null,
+    "employmentType": "FULL_TIME",
+    "numberOfOpenings": 2,
+    "remainingOpenings": 2,
+    "status": "OPEN",
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T10:00:00.000Z"
+  }
+}
+```
+
+`jobRequisitionRepository.create` performs no `include` — unlike `GET
+/job-requisitions`/`GET /job-requisitions/:id` (endpoints 94/95), this
+response carries only the raw FK ids, never nested `department`/
+`designation`/`branch` objects. `numberOfOpenings`/`remainingOpenings`
+are plain `Int` columns, so they serialize as JSON numbers, not strings
+(unlike `Employee.salary`/`Offer.salary`, both `Decimal`).
+
+## 9. Error Responses
+
+| Status | Reason                                       | Response (`message`)                                                | When                                              |
+| ------ | ----------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `400`  | Validation failed                                | e.g. `"departmentId: Invalid input: expected string, received undefined"` | Missing/malformed required field                     |
+| `400`  | `numberOfOpenings` not positive                  | `"numberOfOpenings: numberOfOpenings must be a positive integer"`          | `0` or negative                                       |
+| `400`  | `departmentId` doesn't reference a real Department | `"departmentId: references a record that does not exist"`                | Nonexistent id                                        |
+| `400`  | `departmentId` exists but isn't `ACTIVE`          | `"departmentId: this department is not active and cannot be assigned"`     |                                                        |
+| `400`  | `designationId` doesn't reference a real Designation | `"designationId: references a record that does not exist"`             | Nonexistent id                                        |
+| `400`  | `designationId` exists but isn't `ACTIVE`         | `"designationId: this designation is not active and cannot be assigned"`   |                                                        |
+| `400`  | `branchId` doesn't reference a real Branch        | `"branchId: references a record that does not exist"`                      | Only when `branchId` is supplied                      |
+| `400`  | `branchId` exists but isn't `ACTIVE`              | `"branchId: this branch is not active and cannot be assigned"`             |                                                        |
+| `401`  | Missing/invalid/expired access token              | Same as every other protected endpoint                                    | `authMiddleware` failure                              |
+| `403`  | Caller lacks `jobRequisition:create`              | `"You do not have permission to perform this action"`                      | Any non-`ADMIN` token — no role but `ADMIN` holds it   |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                      | Expected |
+| --- | -------------------------------------------------------------- | -------- |
+| 1   | Valid body, `branchId` omitted                                  | `201`, `remainingOpenings === numberOfOpenings` |
+| 2   | Valid body, `branchId` supplied and `ACTIVE`                     | `201`    |
+| 3   | Nonexistent `departmentId`                                       | `400`    |
+| 4   | `INACTIVE` `designationId`                                       | `400`    |
+| 5   | `numberOfOpenings: 0`                                             | `400`    |
+| 6   | Missing `employmentType`                                          | `400`    |
+| 7   | As `MANAGER`/`EMPLOYEE` token                                     | `403`    |
+| 8   | No token                                                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                          | Expected                                                                 |
+| ------------------------------------------------------ | --------------------------------------------------------------------------- |
+| `numberOfOpenings` as a non-integer (e.g. `2.5`)         | `400`                                                                       |
+| Malformed (non-UUID) `departmentId`/`designationId`/`branchId` | `400`                                                                 |
+| `employmentType: "FREELANCER"` (outside the enum)         | `400`                                                                       |
+| Tampered/expired JWT                                     | `401`                                                                       |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                   |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `numberOfOpenings: 1`                                             | `201` — a single-opening requisition auto-closes on its very first successful hire (see endpoint 110)                    |
+| `branchId` omitted entirely                                       | `201`, `branchId: null` — a requisition need not be tied to a specific branch, mirroring Employee's own optional field   |
+| `departmentId` and `designationId` both valid but from an unrelated org pairing | `201` — no cross-check exists between Department and Designation; any active pairing is accepted                        |
+
+## 13. Security Testing
+
+- **Authorization**: confirm every non-`ADMIN` role (`MANAGER`,
+  `EMPLOYEE`) is rejected at the middleware layer — no `:own`/`:reports`
+  variant exists for this permission.
+- **Mass assignment**: `status` (always `OPEN` at creation) and
+  `remainingOpenings` (always mirrors `numberOfOpenings`) cannot be
+  client-supplied — neither field is present on
+  `createJobRequisitionSchema` at all.
+
+## 14. Database Impact
+
+- **Tables affected**: `JobRequisition` (insert), `AuditLog` (insert),
+  inside one `prisma.$transaction`.
+- **Pre-checks (outside the transaction)**: conditionally `Branch.findById`,
+  unconditionally `Department.findById` and `Designation.findById` (via
+  the three `assert*Assignable` calls).
+- **Indexes**: `JobRequisition_departmentId_idx`,
+  `JobRequisition_designationId_idx`, `JobRequisition_branchId_idx` —
+  support the filtered list endpoint (94), not this create path.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/job-requisitions
+    ↓
+authMiddleware
+    ↓
+requirePermission('jobRequisition:create')
+    ↓ (403 if not granted)
+validateMiddleware(createJobRequisitionSchema)
+    ↓ (400 if invalid)
+jobRequisition.controller.create → jobRequisition.service.createJobRequisition(data, actor)
+    ├─ branchService.assertBranchAssignable(branchId) → missing/inactive → 400 (only if supplied)
+    ├─ departmentService.assertDepartmentAssignable(departmentId) → missing/inactive → 400
+    ├─ designationService.assertDesignationAssignable(designationId) → missing/inactive → 400
+    └─ prisma.$transaction:
+         ├─ jobRequisitionRepository.create({ ...data, remainingOpenings: data.numberOfOpenings }, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', entityType: 'JobRequisition', afterData, ... }, tx)
+    ↓
+201 { jobRequisition }
+```
+
+## 16. Performance Notes
+
+Up to three sequential lookups before the transaction (`Branch`
+conditionally, `Department`, `Designation`) plus one insert and one
+audit-log insert — no notable performance concerns; requisition volume
+is bounded by open-position count, far smaller than per-employee or
+per-day domains like Attendance.
+
+## 17. Interview Notes
+
+- **Q: Why does `remainingOpenings` exist as a separate stored column
+  instead of being computed from `numberOfOpenings` minus a count of
+  `HIRED` applications each time?** A single guarded `UPDATE ... WHERE
+  status='OPEN' AND remainingOpenings>0` (used at hire time, endpoint
+  110) is atomic at the database level under Postgres row-level locking —
+  a computed-on-read value would require either a second query per hire
+  or an application-level lock to avoid two concurrent hires both
+  reading "1 opening left" and both succeeding.
+- **Q: Why is `CLOSED` not a directly settable status on this endpoint's
+  sibling, `PATCH .../status` (endpoint 96)?** So it stays meaningful as
+  "filled" specifically — see endpoint 96's own notes; `CANCELLED`
+  already covers "manually stopped."
+- **Q: Why reuse `departmentService`/`designationService`/
+  `branchService` instead of writing Recruitment-specific assignability
+  checks?** `docs/domain-recruitment.md` §5: "synchronous reads of
+  Department/Designation/Branch/Employment Type (existence + active-
+  status validation, identical pattern to Employee's own assignment
+  checks)" — a deliberate reuse, not a coincidence, since a requisition
+  is explicitly framed as a template for the Employee record a hire
+  will eventually produce.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/job-requisitions \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"departmentId":"5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7c","designationId":"5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d","employmentType":"FULL_TIME","numberOfOpenings":2}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `jobRequisition.id` as `{{jobRequisitionId}}` — used
+by every other `/job-requisitions/:id*` endpoint (94-97) and as the
+`jobRequisitionId` body field on `POST /applications` (endpoint 106).
+
+## 20. Testing Checklist
+
+- ✅ Valid create → `201`, `remainingOpenings === numberOfOpenings`
+- ✅ Nonexistent/`INACTIVE` `departmentId`/`designationId`/`branchId` → `400`
+- ✅ `numberOfOpenings <= 0` → `400`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created, `entityType: 'JobRequisition'`
+
+---
+
+---
+
+# 94. `GET /job-requisitions`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           List Job Requisitions
+Description:        Returns a paginated, filterable list of JobRequisitions, each with its Department/Designation/Branch included
+Method:             GET
+URL:                /api/v1/job-requisitions
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `jobRequisition:read` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: browse/search open (and historical) requisitions —
+  the pipeline's starting index.
+- **No auto-scoping** — unlike Leave/Payroll/Performance's own/any
+  splits, there is exactly one `jobRequisition:read` permission and it
+  is ADMIN-only (ADR-RC05); every caller who clears the middleware sees
+  every requisition, filtered only by the query parameters they supply.
+- **`findAll` always includes `department`/`designation`/`branch`** —
+  unlike the flat create response (endpoint 93), every list item carries
+  the full nested relation objects, the same shape `GET
+  /job-requisitions/:id` (endpoint 95) returns.
+- **Expected callers**: `ADMIN`/hiring manager.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                  |
+| -------------------------------------- | -------- | ----------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `jobRequisition:read` permission        |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name            | Type          | Required | Default     | Description                                              |
+| ----------------- | ------------- | -------- | ------------- | ---------------------------------------------------------- |
+| `page`          | integer       | No       | `1`         | 1-indexed page number                                      |
+| `limit`         | integer       | No       | `10` (max 100) | Page size                                                 |
+| `departmentId`  | string (UUID) | No       | —           | Exact match                                                 |
+| `designationId` | string (UUID) | No       | —           | Exact match                                                 |
+| `branchId`      | string (UUID) | No       | —           | Exact match                                                 |
+| `status`        | enum          | No       | —           | `OPEN`, `ON_HOLD`, `CLOSED`, `CANCELLED`                    |
+| `sortBy`        | enum          | No       | `createdAt` | `status`, `employmentType`, or `createdAt`                 |
+| `order`         | enum          | No       | `desc`      | `asc` or `desc`                                             |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Enforced by `listJobRequisitionsQuerySchema`. All filters are optional;
+`departmentId`/`designationId`/`branchId` require valid UUID syntax if
+supplied (no existence check — a well-formed but nonexistent id simply
+matches zero rows). Filters are combined with implicit `AND` in
+`buildJobRequisitionWhere` (`jobRequisition.service.js`) — supplying
+several narrows further, never widens.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "jobRequisitions": [
+    {
+      "id": "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+      "departmentId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7c",
+      "department": { "id": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7c", "name": "Engineering", "status": "ACTIVE", "...": "..." },
+      "designationId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+      "designation": { "id": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d", "name": "Software Engineer", "status": "ACTIVE", "...": "..." },
+      "branchId": null,
+      "branch": null,
+      "employmentType": "FULL_TIME",
+      "numberOfOpenings": 2,
+      "remainingOpenings": 2,
+      "status": "OPEN",
+      "createdAt": "2026-09-16T10:00:00.000Z",
+      "updatedAt": "2026-09-16T10:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                             | When                                             |
+| ------ | -------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------- |
+| `400`  | A query parameter failed validation    | e.g. `"limit: Too big: expected number to be <=100"`, `"status: Invalid option"` | Out-of-bounds `limit`, invalid `status`/`sortBy`  |
+| `401`  | Missing/invalid/expired access token   | Same as every other protected endpoint                                | `authMiddleware` failure                          |
+| `403`  | Caller lacks `jobRequisition:read`     | `"You do not have permission to perform this action"`                  | Any non-`ADMIN` token                             |
+
+## 10. Postman Test Cases
+
+| #   | Case                                       | Expected |
+| --- | ------------------------------------------------ | -------- |
+| 1   | No filters                                        | `200`, every requisition, each with nested `department`/`designation`/`branch` |
+| 2   | `status=OPEN`                                     | `200`, filtered |
+| 3   | `departmentId` + `status` together                | `200`, both `AND`ed |
+| 4   | `limit=101`                                       | `400`    |
+| 5   | As `MANAGER`/`EMPLOYEE` token                     | `403`    |
+| 6   | No token                                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected |
+| ----------------------------------- | -------- |
+| `sortBy`/`status` outside their allowlists | `400` |
+| Well-formed but nonexistent `departmentId` filter | `200`, empty `jobRequisitions` array — not an error |
+| Tampered/expired JWT               | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                        | Expected Behavior                                                        |
+| ---------------------------------------------------- | -------------------------------------------------------------------------- |
+| `page` beyond the last page                          | `200` with an empty `jobRequisitions` array, not an error                  |
+| No `JobRequisition` rows exist at all                | `200`, `{ jobRequisitions: [], pagination: { total: 0, totalPages: 0 } }` |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can list — no `:own`
+  scoping exists for this endpoint to bypass in the first place.
+
+## 14. Database Impact
+
+Read-only — `jobRequisition.findMany` (with `department`/`designation`/
+`branch` `include`) + `.count`, run in parallel via `Promise.all`.
+Supported by `JobRequisition_departmentId_idx`/`_designationId_idx`/
+`_branchId_idx` for the corresponding filters.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/job-requisitions
+    ↓
+authMiddleware
+    ↓
+requirePermission('jobRequisition:read')
+    ↓ (403 if not granted)
+validateMiddleware(listJobRequisitionsQuerySchema, 'query')
+    ↓ (400 if invalid)
+jobRequisition.controller.list → jobRequisition.service.listJobRequisitions(query)
+    └─ Promise.all([
+         jobRequisitionRepository.findAll({ where, orderBy: [{ [sortBy]: order }, { id: 'asc' }], skip, take }),
+         jobRequisitionRepository.count(where),
+       ])
+    ↓
+200 { jobRequisitions, pagination }
+```
+
+## 16. Performance Notes
+
+Standard `findMany`/`count` pair, run in parallel; the `include` of
+three shallow relations per row is bounded by page size (max 100), no
+notable concern at this domain's expected scale.
+
+## 17. Interview Notes
+
+- **Q: Why does the list response include nested `department`/
+  `designation`/`branch` objects while the create response (endpoint
+  93) does not?** `jobRequisitionRepository.create` performs no
+  `include` at all, while `findAll`/`findById` both do — a deliberate
+  split consistent with the general project pattern of returning only
+  what was written on create, and the fuller shape on subsequent reads.
+- **Q: Why no own/any scoping here, unlike Leave/Payroll/Performance's
+  list endpoints?** ADR-RC05: no Recruitment aggregate has a natural
+  "own" concept — every caller who clears the single `jobRequisition:read`
+  permission sees the same unscoped result set.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/job-requisitions?status=OPEN&sortBy=createdAt&order=desc" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run once with no filters to confirm the full set, then once with
+`status=OPEN` to confirm filtering before exercising the status-
+transition endpoint (96).
+
+## 20. Testing Checklist
+
+- ✅ Unfiltered list returns nested `department`/`designation`/`branch`
+- ✅ `departmentId`/`designationId`/`branchId`/`status` filters work individually and combined
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `400` on out-of-bounds `limit`/invalid `status`/`sortBy`
+- ✅ Empty result set returns `200`, not `404`
+
+---
+
+---
+
+# 95. `GET /job-requisitions/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Get Job Requisition by ID
+Description:        Returns a single JobRequisition with its Department/Designation/Branch included
+Method:             GET
+URL:                /api/v1/job-requisitions/:id
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `jobRequisition:read` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the detail view for a single requisition — used
+  before creating an Application against it (endpoint 106) to confirm
+  its current `status`/`remainingOpenings`.
+- **Expected callers**: `ADMIN`/hiring manager.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                  |
+| -------------------------------------- | -------- | ----------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `jobRequisition:read` permission        |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                  |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The JobRequisition's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+None beyond the path parameter being consumed as-is; a malformed
+(non-UUID) `id` simply fails the subsequent `findUnique` and surfaces as
+`404`, not `400` — this project's established pattern for path-parameter
+ids (Prisma throws on a malformed UUID for `findUnique`, which
+`asyncHandler` forwards to the generic error handler; verified consistent
+with every other `GET /:id` endpoint in this domain).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "jobRequisition": {
+    "id": "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+    "departmentId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7c",
+    "department": { "id": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7c", "name": "Engineering", "status": "ACTIVE", "...": "..." },
+    "designationId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "designation": { "id": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d", "name": "Software Engineer", "status": "ACTIVE", "...": "..." },
+    "branchId": null,
+    "branch": null,
+    "employmentType": "FULL_TIME",
+    "numberOfOpenings": 2,
+    "remainingOpenings": 1,
+    "status": "OPEN",
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T11:00:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                          | Response (`message`)               | When                                      |
+| ------ | ---------------------------------- | ----------------------------------------- | -------------------------------------------- |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint  | `authMiddleware` failure                     |
+| `403`  | Caller lacks `jobRequisition:read` | `"You do not have permission to perform this action"` | Any non-`ADMIN` token       |
+| `404`  | No such JobRequisition             | `"Job requisition not found"`             | Nonexistent/malformed `id`                    |
+
+## 10. Postman Test Cases
+
+| #   | Case                        | Expected |
+| --- | -------------------------------- | -------- |
+| 1   | Valid, existing `id`              | `200`, full nested shape |
+| 2   | Nonexistent `id`                  | `404`    |
+| 3   | As `MANAGER`/`EMPLOYEE` token     | `403`    |
+| 4   | No token                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                  | Expected |
+| ---------------------------- | -------- |
+| Malformed (non-UUID) `id`     | `404` — not `400`, per §7 |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                    | Expected Behavior                                                 |
+| ------------------------------------------------ | --------------------------------------------------------------------- |
+| Requesting a `CLOSED`/`CANCELLED` requisition       | `200` — terminal statuses remain fully readable, never hidden          |
+
+## 13. Security Testing
+
+- **BOLA**: N/A in the sense that there is no ownership scoping to
+  bypass — every `ADMIN`-permission holder can read every requisition by
+  design (ADR-RC05).
+
+## 14. Database Impact
+
+Read-only — a single `jobRequisition.findUnique` with `department`/
+`designation`/`branch` `include`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/job-requisitions/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('jobRequisition:read')
+    ↓ (403 if not granted)
+jobRequisition.controller.getById → jobRequisition.service.getJobRequisitionById(id)
+    └─ jobRequisitionRepository.findById(id) → not found → 404
+    ↓
+200 { jobRequisition }
+```
+
+## 16. Performance Notes
+
+Single primary-key lookup with a shallow three-relation `include` — no
+notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why does this endpoint 404 on a malformed UUID instead of 400?**
+  Unlike the list endpoint's query-parameter ids (validated by Zod
+  before ever reaching the repository), path-parameter ids here are
+  passed straight to `findUnique` with no `validateMiddleware` step in
+  front of them — Prisma's own rejection of a non-UUID `where.id` is
+  what ultimately produces the `404`-mapped "not found" outcome via
+  `getJobRequisitionById`'s own `!requisition` check after a caught
+  lookup failure, the same shape every other `GET /:id` endpoint in this
+  codebase uses.
+
+## 18. cURL Examples
+
+```bash
+curl -s http://localhost:3000/api/v1/job-requisitions/$JOB_REQUISITION_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run immediately after `POST /job-requisitions` (endpoint 93) using the
+saved `{{jobRequisitionId}}` to confirm the freshly created record's
+full nested shape.
+
+## 20. Testing Checklist
+
+- ✅ Valid `id` → `200`, nested `department`/`designation`/`branch` present
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `CLOSED`/`CANCELLED` requisitions remain readable
+
+---
+
+---
+
+# 96. `PATCH /job-requisitions/:id/status`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Update Job Requisition Status
+Description:        Transitions a JobRequisition between OPEN/ON_HOLD, or manually cancels it; CLOSED is never settable through this endpoint
+Method:             PATCH
+URL:                /api/v1/job-requisitions/:id/status
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `jobRequisition:update` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the only mutation path for `JobRequisition.status`
+  after creation — pause a search (`ON_HOLD`), resume it (`OPEN`), or
+  call it off entirely (`CANCELLED`).
+- **A guarded state machine, `ALLOWED_TRANSITIONS`
+  (`jobRequisition.service.js`)**:
+  - `OPEN → ON_HOLD | CANCELLED`
+  - `ON_HOLD → OPEN | CANCELLED`
+  - `CLOSED → ` (no outgoing transition — terminal)
+  - `CANCELLED → ` (no outgoing transition — terminal)
+- **`CLOSED` is explicitly rejected with `400`, checked before the
+  transition map is even consulted** — it is deliberately unreachable
+  through this endpoint at all, regardless of the requisition's current
+  status: `jobRequisition.service.js` throws immediately with
+  `"status: CLOSED is set automatically when a requisition's openings
+  are exhausted, not settable directly"` for **any** `status: "CLOSED"`
+  request, even one that would otherwise be a structurally valid
+  transition. `CLOSED` is reached only automatically, via
+  `closeIfExhausted` inside the Hire flow (endpoint 110), when
+  `remainingOpenings` hits zero — this keeps `CLOSED` meaningful as
+  "filled," distinct from `CANCELLED`'s "manually stopped."
+- **Expected callers**: `ADMIN`/hiring manager.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                  |
+| -------------------------------------- | -------- | ----------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `jobRequisition:update` permission       |
+| `Content-Type: application/json`     | **Yes**  |                                                             |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                  |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The JobRequisition's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "status": "ON_HOLD"
+}
+```
+
+| Field    | Type          | Required | Description                                              |
+| -------- | ------------- | -------- | ------------------------------------------------------------ |
+| `status` | string (enum) | **Yes**  | One of `OPEN`, `ON_HOLD`, `CLOSED`, `CANCELLED` — see §2 for why `CLOSED` always `400`s |
+
+## 7. Validation Rules
+
+- `status`: `z.enum(['OPEN', 'ON_HOLD', 'CLOSED', 'CANCELLED'])`,
+  required — Zod only validates it's one of the four enum values; the
+  transition-legality check (§2) is entirely a service-layer concern.
+- Service-layer order of checks:
+  1. `jobRequisitionRepository.findById(id)` → `404` if missing.
+  2. `status === 'CLOSED'` → `400`, unconditionally (§2).
+  3. `ALLOWED_TRANSITIONS[requisition.status]` doesn't include `status`
+     → `409`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "jobRequisition": {
+    "id": "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+    "departmentId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7c",
+    "designationId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "branchId": null,
+    "employmentType": "FULL_TIME",
+    "numberOfOpenings": 2,
+    "remainingOpenings": 2,
+    "status": "ON_HOLD",
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T12:00:00.000Z"
+  }
+}
+```
+
+`jobRequisitionRepository.update` performs no `include`, same flat shape
+as the create response (endpoint 93) — unlike the two `GET` endpoints
+(94/95), this response carries no nested `department`/`designation`/
+`branch`.
+
+## 9. Error Responses
+
+| Status | Reason                                          | Response (`message`)                                                                                  | When                                              |
+| ------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| `400`  | Validation failed                                     | `"status: Invalid option: expected one of "OPEN"\|"ON_HOLD"\|"CLOSED"\|"CANCELLED""`                          | Missing/invalid `status`                              |
+| `400`  | `status: "CLOSED"` requested directly                 | `"status: CLOSED is set automatically when a requisition's openings are exhausted, not settable directly"`   | Any request naming `CLOSED`, regardless of current status |
+| `401`  | Missing/invalid/expired access token                  | Same as every other protected endpoint                                                                       | `authMiddleware` failure                              |
+| `403`  | Caller lacks `jobRequisition:update`                  | `"You do not have permission to perform this action"`                                                         | Any non-`ADMIN` token                                 |
+| `404`  | No such JobRequisition                                | `"Job requisition not found"`                                                                                 | Nonexistent `id`                                       |
+| `409`  | Requested status isn't reachable from the current one | `"Cannot transition a job requisition from <current> to <status>"`                                            | e.g. `CLOSED → OPEN`, `CANCELLED → ON_HOLD`             |
+
+## 10. Postman Test Cases
+
+| #   | Case                                    | Expected |
+| --- | ---------------------------------------------- | -------- |
+| 1   | `OPEN → ON_HOLD`                                | `200`    |
+| 2   | `ON_HOLD → OPEN`                                | `200`    |
+| 3   | `OPEN → CANCELLED`                              | `200`    |
+| 4   | `ON_HOLD → CANCELLED`                           | `200`    |
+| 5   | Any status `→ CLOSED`                           | `400`    |
+| 6   | `CANCELLED → OPEN` (terminal, no outgoing edge)   | `409`    |
+| 7   | `CLOSED → ON_HOLD` (terminal, no outgoing edge)   | `409`    |
+| 8   | Nonexistent `id`                                | `404`    |
+| 9   | As `MANAGER`/`EMPLOYEE` token                    | `403`    |
+| 10  | No token                                         | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                | Expected |
+| -------------------------------------------- | -------- |
+| `status: "FILLED"` (outside the enum)         | `400`    |
+| Tampered/expired JWT                          | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                             | Expected Behavior                                                                                                       |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `status: "CLOSED"` requested on an already-`CLOSED` requisition            | `400`, not `409` — the `CLOSED` check runs **before** the transition-map lookup, so it always wins regardless of current status |
+| `OPEN → OPEN` (no-op, same status)                                        | `409` — `ALLOWED_TRANSITIONS.OPEN` is `['ON_HOLD', 'CANCELLED']`; a status is never listed as its own valid target        |
+| A requisition auto-`CLOSED` by a concurrent hire (endpoint 110) between this request's `findById` and its `update` | `200` still succeeds on the stale in-memory `requisition.status` this call read — a rare, narrow race not defended against by an optimistic-lock check (no verified requirement identified it) |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can transition a
+  requisition's status.
+- **Business-logic bypass**: confirm `CLOSED` cannot be forced via this
+  endpoint under any current status — the guard is unconditional, not
+  merely "not a valid transition from `OPEN`."
+
+## 14. Database Impact
+
+- **Tables affected**: `JobRequisition` (update), `AuditLog` (insert),
+  inside one `prisma.$transaction`.
+- **Pre-checks**: `JobRequisition.findById` (`404` gate).
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/job-requisitions/:id/status
+    ↓
+authMiddleware
+    ↓
+requirePermission('jobRequisition:update')
+    ↓ (403 if not granted)
+validateMiddleware(updateJobRequisitionStatusSchema)
+    ↓ (400 if invalid)
+jobRequisition.controller.updateStatus → jobRequisition.service.updateJobRequisitionStatus(id, status, actor)
+    ├─ jobRequisitionRepository.findById(id) → not found → 404
+    ├─ status === 'CLOSED' → 400
+    ├─ ALLOWED_TRANSITIONS[requisition.status].includes(status) → false → 409
+    └─ prisma.$transaction:
+         ├─ jobRequisitionRepository.update(id, { status }, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'JobRequisition', beforeData, afterData, ... }, tx)
+    ↓
+200 { jobRequisition }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup, one update, one audit-log insert — no notable
+performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why is `CLOSED` blocked with a hard `400` instead of simply never
+  appearing in any `ALLOWED_TRANSITIONS` entry (which would produce the
+  same-looking `409` every other illegal transition gets)?** A
+  deliberate design choice, not an oversight — the code comment in
+  `jobRequisition.service.js` explains `CLOSED` is "deliberately not
+  reachable through this map," and the dedicated `400` with its own
+  explanatory message tells the caller *why* (openings-exhaustion is
+  automatic) rather than leaving them to infer it from a generic
+  transition-`409`.
+- **Q: What's the difference between `CANCELLED` and `CLOSED` from a
+  reporting perspective?** `CLOSED` means every opening was filled
+  (success); `CANCELLED` means the search was called off before that
+  happened (search abandoned) — `docs/domain-recruitment.md`'s own
+  lifecycle line (§2) keeps them as distinct terminal outcomes rather
+  than collapsing them into one "no longer active" state.
+- **Q: Can a requisition go from `ON_HOLD` directly to `CLOSED`
+  automatically, bypassing `OPEN`?** No — `closeIfExhausted`
+  (`jobRequisition.repository.js`) only fires from within the Hire
+  flow, whose own decrement guard (`decrementRemainingOpenings`)
+  requires `status: 'OPEN'` in its `WHERE` clause; a hire against an
+  `ON_HOLD` requisition is rejected with `409` before `closeIfExhausted`
+  is ever reached (see endpoint 110).
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/job-requisitions/$JOB_REQUISITION_ID/status \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"ON_HOLD"}'
+```
+
+## 19. Postman Collection Notes
+
+Exercise `OPEN → ON_HOLD → OPEN → CANCELLED` in sequence in one run to
+confirm the full legal graph, then a fresh requisition's `OPEN →
+CLOSED` attempt to confirm the dedicated `400` (not `409`).
+
+## 20. Testing Checklist
+
+- ✅ `OPEN ↔ ON_HOLD` both directions → `200`
+- ✅ `OPEN`/`ON_HOLD → CANCELLED` → `200`
+- ✅ Any `→ CLOSED` → `400`, exact message
+- ✅ `CANCELLED`/`CLOSED → ` anything → `409`
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 97. `DELETE /job-requisitions/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Delete Job Requisition
+Description:        Hard-deletes a JobRequisition, blocked while any Application references it
+Method:             DELETE
+URL:                /api/v1/job-requisitions/:id
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `jobRequisition:delete` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: cleans up a requisition created in error, before
+  any candidate has actually applied against it.
+- **Zero-reference convenience delete, the same convention as Shift/
+  ReviewCycle/LeaveType/Candidate** — `Application.jobRequisitionId` is
+  `onDelete: Restrict` at the schema level, and
+  `jobRequisitionRepository.countApplicationsForRequisition` enforces
+  the same rule proactively in the service, producing a clean `409`
+  instead of surfacing a raw database FK-violation error.
+- **A genuine hard delete, not a status change** — distinct from
+  `CANCELLED` (endpoint 96), which keeps the record (and any historical
+  reporting value) while marking the search over. Delete is for
+  requisitions that should never have existed in the record at all.
+- **Expected callers**: `ADMIN`/hiring manager, correcting a mistaken
+  create.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                  |
+| -------------------------------------- | -------- | ----------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `jobRequisition:delete` permission       |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description                  |
+| ---- | ------------- | -------- | -------------------------------- |
+| `id` | string (UUID) | **Yes**  | The JobRequisition's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- `id`: consumed as a path parameter, no schema.
+- Service-layer order of checks:
+  1. `jobRequisitionRepository.findById(id)` → `404` if missing.
+  2. `jobRequisitionRepository.countApplicationsForRequisition(id) > 0`
+     → `409`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Job requisition deleted successfully"
+}
+```
+
+No `jobRequisition` object is returned — consistent with every other
+delete endpoint in this project's convention (e.g. Candidate's own
+delete, endpoint 102).
+
+## 9. Error Responses
+
+| Status | Reason                                       | Response (`message`)                                                                                  | When                                              |
+| ------ | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token              | Same as every other protected endpoint                                                                          | `authMiddleware` failure                              |
+| `403`  | Caller lacks `jobRequisition:delete`              | `"You do not have permission to perform this action"`                                                            | Any non-`ADMIN` token                                 |
+| `404`  | No such JobRequisition                            | `"Job requisition not found"`                                                                                    | Nonexistent `id`                                       |
+| `409`  | One or more Applications reference this requisition | `"This job requisition has Application records referencing it and cannot be deleted - cancel it instead"`      | `countApplicationsForRequisition(id) > 0`              |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                 | Expected |
+| --- | ----------------------------------------------------------- | -------- |
+| 1   | Delete a freshly created requisition, zero Applications        | `200`    |
+| 2   | Delete a requisition with at least one Application              | `409`    |
+| 3   | Nonexistent `id`                                                | `404`    |
+| 4   | As `MANAGER`/`EMPLOYEE` token                                    | `403`    |
+| 5   | No token                                                         | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                  | Expected |
+| ---------------------------- | -------- |
+| Deleting the same `id` twice   | `200` then `404` |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                    | Expected Behavior                                                                                       |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Requisition has an Application in a terminal state (`REJECTED`/`WITHDRAWN`/`HIRED`) | `409` — the reference count is unconditional on `Application.status`; even a rejected/withdrawn/hired Application still counts, matching the schema-level `Restrict` |
+| `CLOSED`/`CANCELLED` requisition, zero Applications                | `200` — deletability depends only on the reference count, not the requisition's own `status`                  |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can delete.
+- **Referential integrity**: confirm the `409` guard is enforced even
+  under a crafted request — the schema-level `onDelete: Restrict` on
+  `Application.jobRequisitionId` is the actual backstop even if the
+  service-layer count check were somehow bypassed.
+
+## 14. Database Impact
+
+- **Tables affected**: `JobRequisition` (hard delete), `AuditLog`
+  (insert), inside one `prisma.$transaction`.
+- **Pre-checks (outside the transaction)**: `JobRequisition.findById`,
+  `Application.count({ where: { jobRequisitionId } })`.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/job-requisitions/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('jobRequisition:delete')
+    ↓ (403 if not granted)
+jobRequisition.controller.remove → jobRequisition.service.deleteJobRequisition(id, actor)
+    ├─ jobRequisitionRepository.findById(id) → not found → 404
+    ├─ jobRequisitionRepository.countApplicationsForRequisition(id) > 0 → 409
+    └─ prisma.$transaction:
+         ├─ jobRequisitionRepository.remove(id, tx)
+         └─ auditLogRepository.create({ action: 'DELETE', entityType: 'JobRequisition', beforeData, afterData: null, ... }, tx)
+    ↓
+200 { message: 'Job requisition deleted successfully' }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup, one count query, one delete, one audit-log
+insert — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why hard-delete a JobRequisition but soft-delete an Employee?**
+  A requisition with zero Applications carries no historical HR-record
+  retention value the way an Employee does — it's a mistaken or
+  abandoned entry, not a personnel record. The same reasoning already
+  applies to Shift/ReviewCycle/LeaveType's own zero-reference hard
+  deletes; Recruitment simply extends the established convention rather
+  than inventing a new one.
+- **Q: Why not just let the database's own `onDelete: Restrict`
+  constraint surface the error?** A raw Postgres foreign-key violation
+  would produce an unhandled `500` with a database-specific error
+  string, not this project's clean, typed `409` with an actionable
+  message ("cancel it instead") — the service-layer count check exists
+  specifically to give the caller a better error before ever reaching
+  the database constraint, which remains only as a defense-in-depth
+  backstop.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/job-requisitions/$JOB_REQUISITION_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this against a requisition created solely for this test (never one
+already used to seed an Application in the same collection run) to
+avoid a spurious `409`.
+
+## 20. Testing Checklist
+
+- ✅ Delete with zero Applications → `200`
+- ✅ Delete with at least one Application (any status) → `409`
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created, `entityType: 'JobRequisition'`, `afterData: null`
+
+---
+
+---
+
+# 98. `POST /candidates`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Create Candidate
+Description:        Creates a new Candidate profile — not a User, no system login
+Method:             POST
+URL:                /api/v1/candidates
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `candidate:create` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: records a person's basic profile — name, email,
+  phone — "created when they apply or are added to a pipeline"
+  (`docs/domain-recruitment.md` §2).
+- **Candidate is deliberately not a `User` (ADR-RC02)** — no system
+  login, no `role`, no password. A candidate has no verified requirement
+  for self-service, so this record is a plain profile, nothing more.
+- **No email uniqueness constraint, unlike `User.email`** — the Prisma
+  model carries no `@unique` on `Candidate.email`; a recruiter, not the
+  schema, is responsible for not creating an accidental duplicate
+  candidate. Verified directly in the schema (no `@@unique`/`@unique` on
+  this field).
+- **Expected callers**: recruiter/HR staff, `ADMIN`-permissioned per
+  ADR-RC05.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `candidate:create` permission  |
+| `Content-Type: application/json`     | **Yes**  |                                                   |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "name": "Jane Doe",
+  "email": "jane.doe@example.com",
+  "phone": "+1-555-0100"
+}
+```
+
+| Field   | Type   | Required | Description                        |
+| ------- | ------ | -------- | ---------------------------------- |
+| `name`  | string | **Yes**  | Trimmed, minimum length 1          |
+| `email` | string | **Yes**  | Trimmed, valid email format; **no uniqueness check** |
+| `phone` | string | No       | Trimmed, minimum length 1 if present |
+
+## 7. Validation Rules
+
+Enforced by `candidate.validation.js`'s `createCandidateSchema`:
+
+- `name`: `z.string().trim().min(1, 'Candidate name is required')`.
+- `email`: `z.string().trim().email()` — Zod's built-in format check.
+  Invalid format produces `"email: Invalid email address"`, the same
+  message text every other email field in this project's Zod schemas
+  produces.
+- `phone`: `z.string().trim().min(1).optional()` — omit entirely for no
+  phone number on file.
+- **No business-rule validation runs at all** — unlike every other
+  create endpoint in this domain (JobRequisition, Application), there is
+  no cross-module existence check to perform; a Candidate references
+  nothing.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "candidate": {
+    "id": "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+    "name": "Jane Doe",
+    "email": "jane.doe@example.com",
+    "phone": "+1-555-0100",
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T10:00:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                | Response (`message`)                     | When                                      |
+| ------ | ---------------------------------------- | ------------------------------------------------ | ---------------------------------------------- |
+| `400`  | Validation failed — missing `name`         | `"name: Candidate name is required"`             | Blank or missing `name`                        |
+| `400`  | Validation failed — invalid `email`        | `"email: Invalid email address"`                 | Malformed email                                |
+| `401`  | Missing/invalid/expired access token        | Same as every other protected endpoint           | `authMiddleware` failure                        |
+| `403`  | Caller lacks `candidate:create`             | `"You do not have permission to perform this action"` | Any non-`ADMIN` token                     |
+
+## 10. Postman Test Cases
+
+| #   | Case                                        | Expected |
+| --- | -------------------------------------------------- | -------- |
+| 1   | Valid body, `phone` supplied                          | `201`    |
+| 2   | Valid body, `phone` omitted                            | `201`, `phone: null` |
+| 3   | Duplicate `email` for a second candidate                | `201` — no uniqueness check, both rows created |
+| 4   | Blank `name`                                            | `400`    |
+| 5   | Malformed `email`                                       | `400`    |
+| 6   | As `MANAGER`/`EMPLOYEE` token                           | `403`    |
+| 7   | No token                                                | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected |
+| ----------------------------------- | -------- |
+| Whitespace-only `name`/`phone`        | `400` — `.trim().min(1)` rejects after trimming |
+| SQL injection attempt in `name`       | Stored as a literal string only — never interpolated into a query |
+| Tampered/expired JWT                  | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                              | Expected Behavior                                                                                     |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Creating two Candidates with the identical `email`           | `201` both times — a deliberate accepted trade-off (§2/ADR-RC02: "a recruiter, not the schema" is responsible for dedup) |
+| `phone: ""`                                                 | `400` — empty string fails `.min(1)`; use omission, not an empty string, for "no phone"                        |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can create a candidate.
+- **Mass assignment**: only `name`/`email`/`phone` are ever read from
+  the body; there is no `id`/`createdAt` override path.
+- **PII handling**: a Candidate's `email`/`phone`/`name` are genuine
+  personal data with no encryption-at-rest beyond the database's own —
+  consistent with every other PII field in this project (e.g.
+  `Employee.email` via `User`), and explicitly flagged as an open
+  retention-policy question at the domain level (ADR-RC04), not
+  something this endpoint itself resolves.
+
+## 14. Database Impact
+
+- **Tables affected**: `Candidate` (insert), `AuditLog` (insert), inside
+  one `prisma.$transaction`.
+- **Pre-checks**: none.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/candidates
+    ↓
+authMiddleware
+    ↓
+requirePermission('candidate:create')
+    ↓ (403 if not granted)
+validateMiddleware(createCandidateSchema)
+    ↓ (400 if invalid)
+candidate.controller.create → candidate.service.createCandidate(data, actor)
+    └─ prisma.$transaction:
+         ├─ candidateRepository.create(data, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', entityType: 'Candidate', afterData, ... }, tx)
+    ↓
+201 { candidate }
+```
+
+## 16. Performance Notes
+
+A single insert plus one audit-log insert — no pre-checks at all, the
+lightest create path in this entire domain.
+
+## 17. Interview Notes
+
+- **Q: Why no email uniqueness constraint, unlike `User.email`?** A
+  Candidate is explicitly not a `User` (ADR-RC02) — there's no login to
+  protect from collision, and no verified requirement demands fuzzy-dedup
+  logic. The domain doc frames this as an accepted trade-off, not an
+  oversight: "a recruiter, not the schema, is responsible for not
+  creating an accidental duplicate" (`docs/domain-recruitment.md` §3).
+- **Q: Why does a Candidate carry no `resume` field directly on the
+  model?** Resume/document storage reuses the generic `CandidateDocument`
+  pattern (endpoints 103-105) instead — the same one-to-many shape
+  `EmployeeDocument` already established, rather than a single-slot
+  field that couldn't hold more than one file.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/candidates \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Jane Doe","email":"jane.doe@example.com","phone":"+1-555-0100"}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `candidate.id` as `{{candidateId}}` — used by every
+other `/candidates/:id*` endpoint (99-105) and as the `candidateId`
+body field on `POST /applications` (endpoint 106).
+
+## 20. Testing Checklist
+
+- ✅ Valid create, with and without `phone` → `201`
+- ✅ Duplicate `email` across two candidates → `201` both times (no uniqueness check)
+- ✅ Blank `name`/malformed `email` → `400`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created, `entityType: 'Candidate'`
+
+---
+
+---
+
+# 99. `GET /candidates`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           List Candidates
+Description:        Returns a paginated, searchable list of Candidates
+Method:             GET
+URL:                /api/v1/candidates
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `candidate:read` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: browse/search the candidate pool independent of
+  any specific Application or requisition.
+- **`search` matches across three fields at once** —
+  `buildCandidateWhere` (`candidate.service.js`) builds a single `OR`
+  of case-insensitive `contains` checks against `name`, `email`, and
+  `phone` — one query parameter covers all three, rather than three
+  separate filter fields.
+- **No auto-scoping** — a single `candidate:read` permission, ADMIN-only
+  (ADR-RC05); every caller who clears the middleware sees the full
+  candidate pool.
+- **Expected callers**: recruiter/HR staff.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                        |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `candidate:read` permission     |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name      | Type    | Required | Default     | Description                                                |
+| ----------- | ------- | -------- | ------------- | ------------------------------------------------------------ |
+| `page`    | integer | No       | `1`         | 1-indexed page number                                        |
+| `limit`   | integer | No       | `10` (max 100) | Page size                                                   |
+| `search`  | string  | No       | —           | Case-insensitive substring match against `name`, `email`, and `phone` |
+| `sortBy`  | enum    | No       | `createdAt` | `name`, `email`, or `createdAt`                               |
+| `order`   | enum    | No       | `desc`      | `asc` or `desc`                                               |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Enforced by `listCandidatesQuerySchema`. `search` is optional and, if
+supplied as an empty string, is transformed to `undefined` (`.transform((value) =>
+(value === '' ? undefined : value))`) — so `?search=` behaves identically
+to omitting the parameter entirely, not as "match nothing."
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "candidates": [
+    {
+      "id": "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+      "name": "Jane Doe",
+      "email": "jane.doe@example.com",
+      "phone": "+1-555-0100",
+      "createdAt": "2026-09-16T10:00:00.000Z",
+      "updatedAt": "2026-09-16T10:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+No nested relations — unlike JobRequisition's list endpoint (94), a
+Candidate's list item never embeds its `documents` or `applications`;
+those are fetched separately (endpoints 104 and 107 respectively).
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                             | When                                             |
+| ------ | -------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------- |
+| `400`  | A query parameter failed validation    | e.g. `"limit: Too big: expected number to be <=100"`, `"sortBy: Invalid option"` | Out-of-bounds `limit`, invalid `sortBy`           |
+| `401`  | Missing/invalid/expired access token   | Same as every other protected endpoint                                | `authMiddleware` failure                          |
+| `403`  | Caller lacks `candidate:read`          | `"You do not have permission to perform this action"`                  | Any non-`ADMIN` token                             |
+
+## 10. Postman Test Cases
+
+| #   | Case                                       | Expected |
+| --- | ------------------------------------------------ | -------- |
+| 1   | No filters                                        | `200`, every candidate |
+| 2   | `search=jane`                                     | `200`, matches by `name`/`email`/`phone` |
+| 3   | `search=` (empty string)                          | `200`, behaves as unfiltered |
+| 4   | `limit=101`                                       | `400`    |
+| 5   | As `MANAGER`/`EMPLOYEE` token                     | `403`    |
+| 6   | No token                                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected |
+| ----------------------------------- | -------- |
+| `sortBy` outside its allowlist        | `400`    |
+| `search` matching zero candidates     | `200`, empty array — not an error |
+| Tampered/expired JWT                  | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                        | Expected Behavior                                                        |
+| ---------------------------------------------------- | -------------------------------------------------------------------------- |
+| `search` matching a substring mid-phone-number (e.g. `0100`) | `200`, matched — the `contains`/`insensitive` filter applies identically to `phone` as to `name`/`email` |
+| `page` beyond the last page                          | `200` with an empty `candidates` array, not an error                       |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can list candidates.
+- **Injection**: `search` is passed through Prisma's parameterized
+  `contains` filter, never raw SQL — no injection surface.
+
+## 14. Database Impact
+
+Read-only — `candidate.findMany` + `.count`, run in parallel via
+`Promise.all`. No dedicated index backs the `search` filter's three-field
+`OR contains` — acceptable at this domain's expected candidate-pool
+scale.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/candidates
+    ↓
+authMiddleware
+    ↓
+requirePermission('candidate:read')
+    ↓ (403 if not granted)
+validateMiddleware(listCandidatesQuerySchema, 'query')
+    ↓ (400 if invalid)
+candidate.controller.list → candidate.service.listCandidates(query)
+    └─ Promise.all([
+         candidateRepository.findAll({ where, orderBy: [{ [sortBy]: order }, { id: 'asc' }], skip, take }),
+         candidateRepository.count(where),
+       ])
+    ↓
+200 { candidates, pagination }
+```
+
+## 16. Performance Notes
+
+Standard `findMany`/`count` pair in parallel; the three-field `OR
+contains` search is a full scan of matching rows with no covering index
+— acceptable given no verified requirement for candidate-pool scale
+beyond what this pattern already comfortably handles.
+
+## 17. Interview Notes
+
+- **Q: Why one `search` parameter instead of separate `name`/`email`/
+  `phone` filters?** A recruiter searching for a candidate typically
+  doesn't know in advance which field the query term will match — one
+  box searching all three mirrors how every real ATS-style search box
+  behaves, and avoids forcing the caller to guess which specific field
+  to query.
+- **Q: Why does `search=""` behave as "no filter" rather than "match
+  nothing"?** The explicit `.transform()` on the schema exists
+  specifically to make an accidentally-empty query string (e.g. a UI
+  clearing its search box to `""` rather than removing the parameter)
+  behave the same as omitting it, rather than surprising the caller with
+  zero results.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/candidates?search=jane&sortBy=name&order=asc" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run once unfiltered, then once with `search` set to a substring of the
+candidate created in endpoint 98, to confirm both the full list and the
+search match.
+
+## 20. Testing Checklist
+
+- ✅ Unfiltered list returns every candidate
+- ✅ `search` matches by `name`, `email`, and `phone` independently
+- ✅ `search=""` behaves as unfiltered
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `400` on out-of-bounds `limit`/invalid `sortBy`
+
+---
+
+---
+
+# 100. `GET /candidates/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Get Candidate by ID
+Description:        Returns a single Candidate profile
+Method:             GET
+URL:                /api/v1/candidates/:id
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `candidate:read` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the detail view for a single candidate — used
+  before linking them to an Application (endpoint 106).
+- **Expected callers**: recruiter/HR staff.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                        |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `candidate:read` permission     |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description             |
+| ---- | ------------- | -------- | --------------------------- |
+| `id` | string (UUID) | **Yes**  | The Candidate's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+None beyond the path parameter; a malformed `id` surfaces as `404`, the
+same convention as `GET /job-requisitions/:id` (endpoint 95).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "candidate": {
+    "id": "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+    "name": "Jane Doe",
+    "email": "jane.doe@example.com",
+    "phone": "+1-555-0100",
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T10:00:00.000Z"
+  }
+}
+```
+
+No nested `documents`/`applications` — fetched separately via endpoints
+104 and 107.
+
+## 9. Error Responses
+
+| Status | Reason                          | Response (`message`)      | When                          |
+| ------ | ---------------------------------- | -------------------------------- | -------------------------------- |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint | `authMiddleware` failure |
+| `403`  | Caller lacks `candidate:read`      | `"You do not have permission to perform this action"` | Any non-`ADMIN` token |
+| `404`  | No such Candidate                  | `"Candidate not found"`          | Nonexistent/malformed `id`       |
+
+## 10. Postman Test Cases
+
+| #   | Case                        | Expected |
+| --- | -------------------------------- | -------- |
+| 1   | Valid, existing `id`              | `200`    |
+| 2   | Nonexistent `id`                  | `404`    |
+| 3   | As `MANAGER`/`EMPLOYEE` token     | `403`    |
+| 4   | No token                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                  | Expected |
+| ---------------------------- | -------- |
+| Malformed (non-UUID) `id`     | `404`    |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+None beyond the standard lookup — a Candidate carries no status field
+whose value would change this endpoint's behavior.
+
+## 13. Security Testing
+
+- **BOLA**: N/A — no ownership scoping exists to bypass (ADR-RC05,
+  ADMIN-only across the board).
+
+## 14. Database Impact
+
+Read-only — a single `candidate.findUnique`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/candidates/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('candidate:read')
+    ↓ (403 if not granted)
+candidate.controller.getById → candidate.service.getCandidateById(id)
+    └─ candidateRepository.findById(id) → not found → 404
+    ↓
+200 { candidate }
+```
+
+## 16. Performance Notes
+
+Single primary-key lookup — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why does this endpoint return no nested `documents`?** Consistent
+  with how `Application`'s own `GET /:id` (endpoint 108) *does* eagerly
+  include its child `interviews`/`offers` — the difference is
+  deliberate: a Candidate's documents are typically viewed via their own
+  dedicated list (endpoint 104), which itself needs no `candidate.findById`
+  round-trip duplicated into this one.
+
+## 18. cURL Examples
+
+```bash
+curl -s http://localhost:3000/api/v1/candidates/$CANDIDATE_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run immediately after `POST /candidates` (endpoint 98) using the saved
+`{{candidateId}}`.
+
+## 20. Testing Checklist
+
+- ✅ Valid `id` → `200`
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+
+---
+
+---
+
+# 101. `PATCH /candidates/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Update Candidate
+Description:        Partially updates a Candidate's name/email/phone
+Method:             PATCH
+URL:                /api/v1/candidates/:id
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `candidate:update` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: corrects/updates a candidate's contact details as
+  the pipeline progresses (e.g. an updated phone number, a corrected
+  email typo).
+- **A true partial update** — `updateCandidateSchema` is
+  `createCandidateSchema.partial()`, every field optional; only the
+  fields actually present in the body are written.
+- **`phone` can be explicitly cleared** — unlike the create schema's
+  plain `.optional()`, the update schema additionally accepts `phone:
+  null` (`.nullable().optional()`), letting a caller remove a
+  previously-set phone number, not just leave it untouched by omission.
+- **Expected callers**: recruiter/HR staff.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `candidate:update` permission   |
+| `Content-Type: application/json`     | **Yes**  |                                                   |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description             |
+| ---- | ------------- | -------- | --------------------------- |
+| `id` | string (UUID) | **Yes**  | The Candidate's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "phone": "+1-555-0199"
+}
+```
+
+| Field   | Type           | Required | Description                                    |
+| ------- | -------------- | -------- | ----------------------------------------------- |
+| `name`  | string         | No       | Trimmed, minimum length 1 if present              |
+| `email` | string         | No       | Trimmed, valid email format if present; **no uniqueness check** |
+| `phone` | string \| null | No       | Trimmed, minimum length 1 if a string; may be explicitly `null` to clear |
+
+## 7. Validation Rules
+
+- `name`: `z.string().trim().min(1, 'Candidate name is required')`, optional.
+- `email`: `z.string().trim().email()`, optional — same `"email: Invalid
+  email address"` message as creation.
+- `phone`: `z.string().trim().min(1).nullable().optional()`.
+- No business-rule validation beyond the existence check (§8).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "candidate": {
+    "id": "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+    "name": "Jane Doe",
+    "email": "jane.doe@example.com",
+    "phone": "+1-555-0199",
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T13:00:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                          | Response (`message`)                     | When                          |
+| ------ | ---------------------------------- | ------------------------------------------------ | -------------------------------- |
+| `400`  | Validation failed                   | e.g. `"email: Invalid email address"`             | Malformed `email`/blank `name`/blank `phone` string |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint          | `authMiddleware` failure          |
+| `403`  | Caller lacks `candidate:update`     | `"You do not have permission to perform this action"` | Any non-`ADMIN` token       |
+| `404`  | No such Candidate                   | `"Candidate not found"`                          | Nonexistent `id`                  |
+
+## 10. Postman Test Cases
+
+| #   | Case                                        | Expected |
+| --- | -------------------------------------------------- | -------- |
+| 1   | Update only `phone`                                  | `200`, `name`/`email` unchanged |
+| 2   | Update `phone: null`                                 | `200`, `phone` cleared |
+| 3   | Update `email` to a value already used by another candidate | `200` — no uniqueness check |
+| 4   | Empty body `{}`                                       | `200`, no fields changed |
+| 5   | Malformed `email`                                     | `400`    |
+| 6   | Nonexistent `id`                                      | `404`    |
+| 7   | As `MANAGER`/`EMPLOYEE` token                         | `403`    |
+| 8   | No token                                              | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected |
+| ----------------------------------- | -------- |
+| `phone: ""` (empty string, not `null`) | `400` — `.min(1)` rejects an empty string; use `null` to clear |
+| Tampered/expired JWT                  | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                          | Expected Behavior                                                  |
+| -------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Body contains a field not on the schema (e.g. `id`)         | Silently ignored — Zod strips unknown keys by default in this project's schema style |
+| Updating a candidate who already has Applications/documents | `200` — no status-gate exists on Candidate the way `ACKNOWLEDGED` gates PerformanceReview; updates remain open at any pipeline stage |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can update.
+- **Mass assignment**: only `name`/`email`/`phone` are ever read; no
+  `id`/`createdAt` override path.
+
+## 14. Database Impact
+
+- **Tables affected**: `Candidate` (update), `AuditLog` (insert), inside
+  one `prisma.$transaction`.
+- **Pre-checks**: `Candidate.findById` (`404` gate).
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/candidates/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('candidate:update')
+    ↓ (403 if not granted)
+validateMiddleware(updateCandidateSchema)
+    ↓ (400 if invalid)
+candidate.controller.update → candidate.service.updateCandidate(id, data, actor)
+    ├─ candidateRepository.findById(id) → not found → 404
+    └─ prisma.$transaction:
+         ├─ candidateRepository.update(id, data, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'Candidate', beforeData, afterData, ... }, tx)
+    ↓
+200 { candidate }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup, one update, one audit-log insert — no notable
+performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why does `phone` accept explicit `null` on update but not on
+  create?** There's nothing to "clear" at creation time — the field
+  simply starts unset if omitted. On update, though, a caller may have
+  previously set a phone number and now needs to remove it entirely;
+  `.optional()` alone (as on create) can only mean "leave unchanged," so
+  `.nullable()` was added specifically to give update a way to express
+  "set this to nothing."
+- **Q: Why no re-check of anything when `email` changes?** Because
+  nothing downstream keys off `Candidate.email` at write time —
+  `Application`/`Interview`/`Offer` all reference `Candidate` by `id`,
+  not `email`. `email` only becomes load-bearing again at hire time
+  (endpoint 110), where it's read fresh off the current `Candidate` row,
+  not cached from Application-creation time.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/candidates/$CANDIDATE_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"phone":"+1-555-0199"}'
+```
+
+## 19. Postman Collection Notes
+
+Run once to update `phone`, then once more with `phone: null` in the
+same collection to confirm both the set and clear paths.
+
+## 20. Testing Checklist
+
+- ✅ Partial update of any single field → `200`, others unchanged
+- ✅ `phone: null` clears the field
+- ✅ Duplicate `email` across candidates still allowed → `200`
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 102. `DELETE /candidates/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Delete Candidate
+Description:        Hard-deletes a Candidate, blocked while any Application references it
+Method:             DELETE
+URL:                /api/v1/candidates/:id
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `candidate:delete` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: removes a candidate record that should never have
+  been created, or satisfies a deletion request for someone who never
+  entered a real pipeline.
+- **A genuine hard delete — unlike Employee's soft-delete (ADR-RC02)** —
+  Candidate carries no HR-record retention value of its own; this is a
+  real `DELETE FROM "Candidate"`, not a `deletedAt` timestamp.
+  `CandidateDocument` rows for this candidate cascade-delete at the
+  database level (`onDelete: Cascade` on `CandidateDocument.candidateId`)
+  — their Cloudinary assets are fetched **before** the transaction and
+  cleaned up (best-effort) **after** it commits, so a hard-deleted
+  candidate never leaves orphaned cloud storage behind (see Interview
+  Notes).
+- **Zero-reference convenience delete, same convention as
+  JobRequisition (endpoint 97)/Shift/ReviewCycle/LeaveType** —
+  `Application.candidateId` is `onDelete: Restrict`; a proactive
+  `countApplicationsForCandidate` check produces a clean `409` rather
+  than a raw database error.
+- **Does NOT resolve the PII-retention question (ADR-RC04)** — a
+  zero-Application candidate can be deleted, but this says nothing about
+  what should happen to a candidate who *did* go through a real
+  pipeline; that remains genuinely deferred to legal/compliance input,
+  per `docs/domain-recruitment.md` §8.
+- **Expected callers**: `ADMIN`/hiring manager, correcting a mistaken
+  create or honoring an erasure request for a candidate with no pipeline
+  history.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `candidate:delete` permission   |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description             |
+| ---- | ------------- | -------- | --------------------------- |
+| `id` | string (UUID) | **Yes**  | The Candidate's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- `id`: consumed as a path parameter, no schema.
+- Service-layer order of checks:
+  1. `candidateRepository.findById(id)` → `404` if missing.
+  2. `candidateRepository.countApplicationsForCandidate(id) > 0` →
+     `409`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Candidate deleted successfully"
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                    | Response (`message`)                                                          | When                                              |
+| ------ | ---------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token              | Same as every other protected endpoint                                                | `authMiddleware` failure                              |
+| `403`  | Caller lacks `candidate:delete`                   | `"You do not have permission to perform this action"`                                  | Any non-`ADMIN` token                                 |
+| `404`  | No such Candidate                                 | `"Candidate not found"`                                                                | Nonexistent `id`                                       |
+| `409`  | One or more Applications reference this candidate | `"This candidate has Application records referencing it and cannot be deleted"`       | `countApplicationsForCandidate(id) > 0`                |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                | Expected |
+| --- | ---------------------------------------------------------- | -------- |
+| 1   | Delete a freshly created candidate, zero Applications          | `200`    |
+| 2   | Delete a candidate with at least one Application                | `409`    |
+| 3   | Nonexistent `id`                                                | `404`    |
+| 4   | As `MANAGER`/`EMPLOYEE` token                                    | `403`    |
+| 5   | No token                                                         | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                  | Expected |
+| ---------------------------- | -------- |
+| Deleting the same `id` twice   | `200` then `404` |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                            | Expected Behavior                                                                                                  |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Candidate has an Application in a terminal state (`REJECTED`/`WITHDRAWN`/`HIRED`) | `409` — same unconditional reference count as `JobRequisition`'s own delete guard (endpoint 97); even a hired candidate's record blocks deletion |
+| Candidate has zero Applications but has `CandidateDocument` rows              | `200` — the delete guard only checks `Application` references; document rows cascade-delete at the database level and their Cloudinary assets are cleaned up (best-effort) right after |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can delete.
+- **Referential integrity**: the schema-level `onDelete: Restrict` on
+  `Application.candidateId` is the backstop even if the service-layer
+  count check were bypassed.
+
+## 14. Database Impact
+
+- **Tables affected**: `Candidate` (hard delete, cascading to
+  `CandidateDocument`), `AuditLog` (insert), inside one
+  `prisma.$transaction`.
+- **Pre-checks (outside the transaction)**: `Candidate.findById`,
+  `Application.count({ where: { candidateId } })`,
+  `CandidateDocument.findAllByCandidateId` (to know which Cloudinary
+  assets to clean up once the transaction commits).
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/candidates/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('candidate:delete')
+    ↓ (403 if not granted)
+candidate.controller.remove → candidate.service.deleteCandidate(id, actor)
+    ├─ candidateRepository.findById(id) → not found → 404
+    ├─ candidateRepository.countApplicationsForCandidate(id) > 0 → 409
+    ├─ candidateDocumentRepository.findAllByCandidateId(id)   [snapshot before delete]
+    ├─ prisma.$transaction:
+    │    ├─ candidateRepository.remove(id, tx)   [cascades to CandidateDocument]
+    │    └─ auditLogRepository.create({ action: 'DELETE', entityType: 'Candidate', beforeData, afterData: null, ... }, tx)
+    └─ Promise.all(documents.map(d => cloudinaryStorage.deleteAsset(d.publicId, d.resourceType, ...)))   [best-effort, after commit]
+    ↓
+200 { message: 'Candidate deleted successfully' }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup, one count query, one document-list query, one
+delete (cascading at the database level to any `CandidateDocument` rows),
+one audit-log insert, plus one Cloudinary delete call per document
+(parallelized via `Promise.all`, after the transaction commits) — no
+notable performance concerns for realistic per-candidate document counts.
+
+## 17. Interview Notes
+
+- **Q: What happens to a deleted candidate's Cloudinary-hosted documents?**
+  The `CandidateDocument` rows cascade-delete at the database level
+  (`onDelete: Cascade`), and `deleteCandidate` fetches every document row
+  *before* that delete so it can call `cloudinaryStorage.deleteAsset` for
+  each one *after* the transaction commits — the same best-effort,
+  after-commit ordering `DELETE /candidates/:id/documents/:documentId`
+  (endpoint 105) already uses for a single document. `deleteAsset` itself
+  swallows and logs any Cloudinary-side failure rather than throwing, so
+  a Cloudinary outage never blocks or rolls back the candidate's own
+  deletion — worst case is an orphaned asset, logged, not a failed
+  request. This was flagged as a real, verified-by-code-inspection gap
+  during this domain's handbook write-up (Employee's equivalent never
+  needed this, since Employee is only ever soft-deleted, so
+  `EmployeeDocument` rows are never actually cascade-removed in
+  practice) and fixed before this section was finalized.
+- **Q: Why hard-delete here but soft-delete Employee?** Same reasoning as
+  JobRequisition's own hard-delete (endpoint 97) — a Candidate with zero
+  Applications carries no HR-record retention value the way an Employee
+  does.
+- **Q: Does this endpoint resolve ADR-RC04 (candidate PII retention)?**
+  No, explicitly — `docs/domain-recruitment.md` §8 is direct about this:
+  the hard-delete-when-zero-references guard "does not by itself answer
+  the retention question for a candidate who did go through a pipeline";
+  that remains open, pending legal/compliance input.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/candidates/$CANDIDATE_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this against a candidate created solely for this test (never one
+already linked to an Application in the same collection run) to avoid a
+spurious `409`. If documents were uploaded to this candidate earlier in
+the collection, their Cloudinary assets are cleaned up (best-effort)
+as part of this call — see Interview Notes.
+
+## 20. Testing Checklist
+
+- ✅ Delete with zero Applications → `200`
+- ✅ Delete with at least one Application (any status) → `409`
+- ✅ `CandidateDocument` rows cascade-delete at the database level
+- ✅ Cloudinary assets for those documents are deleted (best-effort, after commit; verified by code inspection)
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created, `entityType: 'Candidate'`, `afterData: null`
+
+---
+
+---
+
+# 103. `POST /candidates/:id/documents`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Upload Candidate Document
+Description:        Uploads a document (resume, portfolio, ID proof) attached to a Candidate record
+Method:             POST
+URL:                /api/v1/candidates/:id/documents
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `candidate:update` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: attaches resumes/portfolios/ID proofs to a
+  Candidate — a genuine one-to-many, mirroring `EmployeeDocument`
+  exactly (`docs/domain-recruitment.md` §3: resume/document storage
+  "reuses the same generic pattern already established by
+  `EmployeeDocument`... rather than inventing a new document-handling
+  mechanism for Recruitment specifically").
+- **Gated by `candidate:update`, not a dedicated `candidateDocument:*`
+  permission** — document management is treated as part of managing the
+  candidate record itself, the same shape Employee's own document
+  endpoints use (`employee:update:any`, not a separate key).
+- **Identical mechanics to `POST /employees/:id/documents` (endpoint
+  16)**: `multipart/form-data`, a single `file` field, Cloudinary
+  storage via `cloudinaryStorage.uploadBuffer` with `resourceType:
+  'auto'`, a fresh server-generated UUID `publicId` (never derived from
+  the original filename), and the same MIME/size limits.
+- **Expected callers**: recruiter/HR staff.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                |
+| -------------------------------------- | -------- | ------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `candidate:update` permission        |
+| `Content-Type: multipart/form-data`   | **Yes**  | Set automatically by any HTTP client sending a file       |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description             |
+| ---- | ------------- | -------- | --------------------------- |
+| `id` | string (UUID) | **Yes**  | The Candidate's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+`multipart/form-data` with a single field:
+
+| Field  | Type | Required | Notes                               |
+| ------ | ---- | -------- | ------------------------------------ |
+| `file` | file | **Yes**  | The document — see Validation Rules |
+
+## 7. Validation Rules
+
+- **File presence**: `!file` → `400 "A file is required"`, the identical
+  explicit check `employeeDocument.service.js` uses.
+- **MIME type whitelist**: `application/pdf`, `image/jpeg`,
+  `image/png`, `image/webp` — the identical list `createUploadMiddleware`
+  is configured with for Employee documents.
+- **Size limit**: 10 MB.
+- **Candidate existence**: checked **before** any Cloudinary call, same
+  ordering as Employee's own upload path.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "document": {
+    "id": "e3f4a5b6-7c8d-4e9f-0a1b-2c3d4e5f6a7b",
+    "candidateId": "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+    "url": "https://res.cloudinary.com/dhfxv7gdp/raw/upload/v1783254636/emp-mgmt/development/candidates/d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a/documents/4f0a2ca2-194d-4b71-9a76-24286153f357",
+    "publicId": "emp-mgmt/development/candidates/d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a/documents/4f0a2ca2-194d-4b71-9a76-24286153f357",
+    "resourceType": "raw",
+    "fileName": "resume.pdf",
+    "mimeType": "application/pdf",
+    "size": 500,
+    "uploadedBy": "e1b07e0b-3c8d-4f7d-aa1f-fffec7648b21",
+    "createdAt": "2026-09-16T10:00:00.000Z"
+  }
+}
+```
+
+Structurally identical to `EmployeeDocument`'s own response shape
+(endpoint 16) — `candidateId` in place of `employeeId`, and the
+Cloudinary `publicId` path segment reads `.../candidates/{candidateId}/documents/{uuid}`
+instead of `.../employees/{employeeId}/documents/{uuid}`
+(`candidateDocument.service.js`'s `buildDocumentPublicId`).
+
+## 9. Error Responses
+
+| Status | Reason                                  | Response (`message`)                                                                          | When                                                                          |
+| ------ | ----------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `400`  | No file provided                          | `"A file is required"`                                                                          | `file` field missing                                                            |
+| `400`  | Invalid MIME type                         | `"file: must be one of application/pdf, image/jpeg, image/png, image/webp (received <type>)"`  | Wrong file type                                                                  |
+| `400`  | File too large                            | `"File exceeds the maximum allowed size"`                                                      | File over 10 MB                                                                  |
+| `401`  | Missing/invalid/expired access token      | Same as every other protected endpoint                                                          | `authMiddleware` failure                                                        |
+| `403`  | Caller lacks `candidate:update`           | `"You do not have permission to perform this action"`                                            | Any non-`ADMIN` token                                                            |
+| `404`  | Nonexistent Candidate                     | `"Candidate not found"`                                                                          | Invalid `id`, checked before any Cloudinary call                                 |
+| `500`  | Cloudinary upload failure                 | Generic `"Internal Server Error"`, logged server-side with context                              | No `CandidateDocument`/`AuditLog` row is created for a failed upload             |
+
+## 10. Postman Test Cases
+
+| #   | Case                            | Expected |
+| --- | -------------------------------- | -------- |
+| 1   | Valid PDF upload                  | `201`    |
+| 2   | Valid image upload                | `201`    |
+| 3   | Upload the identical file twice     | `201` both times — two separate rows, no dedup logic |
+| 4   | Invalid file type (e.g. `.exe`)     | `400`    |
+| 5   | Oversized file (> 10 MB)            | `400`    |
+| 6   | As `MANAGER`/`EMPLOYEE` token       | `403`    |
+| 7   | Nonexistent candidate `id`          | `404`    |
+| 8   | No token                            | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                                       | Expected |
+| ------------------------------------------------------------------ | -------- |
+| A crafted filename containing `../` or path-traversal segments       | No effect — `fileName` is display-only; `publicId` is always a fresh, server-generated UUID |
+| Malformed multipart body                                              | `400`    |
+| Tampered/expired JWT                                                   | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                      | Expected Behavior                                                                                                          |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Cloudinary upload succeeds but the database transaction fails         | An orphaned Cloudinary asset (unreferenced by any `CandidateDocument` row) — harmless, not automatically reconciled, same accepted risk category as Employee's own upload path |
+| Concurrent uploads for the same candidate                             | Both succeed independently — documents aren't a single slot                                                                    |
+
+## 13. Security Testing
+
+- **Authorization**: confirm every non-`candidate:update` caller is
+  rejected.
+- **Path traversal**: closed by construction — `publicId` is always
+  `emp-mgmt/{env}/candidates/{candidateId}/documents/{uuid}`.
+- **Mass assignment**: no field beyond `file` (e.g. `id`, `uploadedBy`,
+  `resourceType`) can be client-supplied and honored.
+
+## 14. Database Impact
+
+- **Tables affected**: `CandidateDocument` (insert), `AuditLog`
+  (insert), inside one `prisma.$transaction`. The Cloudinary upload
+  happens **before** this transaction.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/candidates/:id/documents
+    ↓
+authMiddleware
+    ↓
+requirePermission('candidate:update')
+    ↓ (403 if not granted)
+uploadDocument.single('file')   [Multer, memory storage]
+    ↓ (400 on MIME rejection, or MulterError → 400)
+candidateDocument.controller.upload → candidateDocument.service.uploadDocument(candidateId, file, actor)
+    ├─ !file → 400 "A file is required"
+    ├─ candidateRepository.findById(candidateId) → not found → 404
+    ├─ cloudinaryStorage.uploadBuffer(file.buffer, { publicId: freshUuid, resourceType: 'auto' })
+    └─ prisma.$transaction:
+         ├─ candidateDocumentRepository.create({ ...file metadata, resourceType }, tx)
+         └─ auditLogRepository.create({ entityType: 'CandidateDocument', action: 'CREATE', ... }, tx)
+    ↓
+201 { document }
+```
+
+## 16. Performance Notes
+
+Identical shape to Employee's own document upload (endpoint 16) —
+candidate-existence check before the Cloudinary call bounds wasted
+upload quota; `resourceType: 'auto'` costs one content-inspection step
+on Cloudinary's side.
+
+## 17. Interview Notes
+
+- **Q: Why mirror `EmployeeDocument`'s exact shape as a separate table
+  instead of making `CandidateDocument` polymorphic (one table, an owner
+  type + owner id)?** `docs/domain-recruitment.md` §3/ADR-RC02: a
+  deliberate choice to avoid "forcing polymorphism onto that already-
+  accepted model" — `EmployeeDocument` was already signed off with a
+  fixed `employeeId` FK; adding a second owner type to it would have
+  reopened an accepted domain. A structurally identical sibling table
+  keeps both models simple and independently evolvable.
+- **Q: Why `candidate:update` rather than a dedicated document
+  permission?** Same reasoning as Employee documents — document
+  management is part of managing the parent record, not a distinct
+  capability worth its own permission key, consistent with ADR-RC05's
+  general preference against unnecessary permission proliferation in
+  this domain.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/candidates/$CANDIDATE_ID/documents \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -F "file=@/path/to/resume.pdf"
+```
+
+## 19. Postman Collection Notes
+
+Requires `{{accessToken}}` to resolve to `candidate:update`. Use
+`form-data` with a `file`-type field named `file`. Save the returned
+`document.id` as `{{candidateDocumentId}}` for endpoint 105.
+
+## 20. Testing Checklist
+
+- ✅ Valid PDF and image upload → `201`
+- ✅ Duplicate file upload allowed (no dedup)
+- ✅ `400` on invalid type, oversized file, missing file
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `404` for nonexistent candidate, `401` with no token
+- ✅ `resourceType` correctly recorded from Cloudinary's own response
+- ✅ `AuditLog` entry created, `entityType: 'CandidateDocument'`
+
+---
+
+---
+
+# 104. `GET /candidates/:id/documents`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           List Candidate Documents
+Description:        Returns every document attached to a Candidate record
+Method:             GET
+URL:                /api/v1/candidates/:id/documents
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `candidate:read` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: lets recruiter/HR staff review a candidate's
+  uploaded documents (resume, portfolio, ID proof).
+- **Read-gated by `candidate:read`, not `candidate:update`** — listing
+  is a read operation like any other, distinct from the write-gated
+  upload/delete endpoints (103/105).
+- **Ordered newest-first** — `findAllByCandidateId` sorts by
+  `createdAt: 'desc'`.
+- **Expected callers**: recruiter/HR staff.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                        |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `candidate:read` permission     |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description             |
+| ---- | ------------- | -------- | --------------------------- |
+| `id` | string (UUID) | **Yes**  | The Candidate's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+None beyond the path parameter. A nonexistent `id` produces `404`
+(candidate-existence is checked before the documents are fetched).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "documents": [
+    {
+      "id": "e3f4a5b6-7c8d-4e9f-0a1b-2c3d4e5f6a7b",
+      "candidateId": "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+      "url": "https://res.cloudinary.com/dhfxv7gdp/raw/upload/v1783254636/emp-mgmt/development/candidates/d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a/documents/4f0a2ca2-194d-4b71-9a76-24286153f357",
+      "publicId": "emp-mgmt/development/candidates/d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a/documents/4f0a2ca2-194d-4b71-9a76-24286153f357",
+      "resourceType": "raw",
+      "fileName": "resume.pdf",
+      "mimeType": "application/pdf",
+      "size": 500,
+      "uploadedBy": "e1b07e0b-3c8d-4f7d-aa1f-fffec7648b21",
+      "createdAt": "2026-09-16T10:00:00.000Z"
+    }
+  ]
+}
+```
+
+No pagination — unlike `GET /candidates` (endpoint 99), this returns
+the full array for the candidate in one response (mirrors `GET
+/employees/:id/documents`, endpoint 17).
+
+## 9. Error Responses
+
+| Status | Reason                          | Response (`message`)      | When                          |
+| ------ | ---------------------------------- | -------------------------------- | -------------------------------- |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint | `authMiddleware` failure |
+| `403`  | Caller lacks `candidate:read`      | `"You do not have permission to perform this action"` | Any non-`ADMIN` token |
+| `404`  | Nonexistent Candidate              | `"Candidate not found"`          | Invalid `id`                     |
+
+## 10. Postman Test Cases
+
+| #   | Case                                 | Expected |
+| --- | ------------------------------------------- | -------- |
+| 1   | Candidate with two uploaded documents         | `200`, both returned, newest first |
+| 2   | Candidate with zero documents                 | `200`, `documents: []` |
+| 3   | Nonexistent candidate `id`                    | `404`    |
+| 4   | As `MANAGER`/`EMPLOYEE` token                 | `403`    |
+| 5   | No token                                      | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                  | Expected |
+| ---------------------------- | -------- |
+| Malformed (non-UUID) candidate `id` | `404` |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+None beyond the empty-array case above.
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can list a candidate's
+  documents.
+
+## 14. Database Impact
+
+Read-only — `candidate.findById` (existence check) followed by
+`candidateDocument.findMany({ where: { candidateId }, orderBy: {
+createdAt: 'desc' } })`, both indexed via
+`CandidateDocument_candidateId_idx`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/candidates/:id/documents
+    ↓
+authMiddleware
+    ↓
+requirePermission('candidate:read')
+    ↓ (403 if not granted)
+candidateDocument.controller.list → candidateDocument.service.listDocuments(candidateId)
+    ├─ candidateRepository.findById(candidateId) → not found → 404
+    └─ candidateDocumentRepository.findAllByCandidateId(candidateId)
+    ↓
+200 { documents }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup plus one indexed `findMany` — no notable
+performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why is this gated by `candidate:read` rather than the
+  `candidate:update` the upload/delete endpoints require?** Reading a
+  candidate's documents is symmetrical with reading the candidate record
+  itself — the read/write split for documents mirrors the read/write
+  split already established for the parent `Candidate` resource, not a
+  document-specific decision.
+
+## 18. cURL Examples
+
+```bash
+curl -s http://localhost:3000/api/v1/candidates/$CANDIDATE_ID/documents \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this after `POST /candidates/:id/documents` (endpoint 103) to
+confirm the uploaded document appears.
+
+## 20. Testing Checklist
+
+- ✅ Returns every document for the candidate, newest first
+- ✅ Empty array for a candidate with none
+- ✅ Nonexistent candidate `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+
+---
+
+---
+
+# 105. `DELETE /candidates/:id/documents/:documentId`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Delete Candidate Document
+Description:        Deletes a CandidateDocument row and its underlying Cloudinary asset
+Method:             DELETE
+URL:                /api/v1/candidates/:id/documents/:documentId
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `candidate:update` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: removes a document uploaded in error, or one the
+  candidate has asked to have removed.
+- **Deletes both the database row and the Cloudinary asset** — unlike
+  `DELETE /candidates/:id` (endpoint 102), which leaves a deleted
+  candidate's documents' Cloudinary assets orphaned, this endpoint
+  explicitly calls `cloudinaryStorage.deleteAsset(document.publicId,
+  document.resourceType, ...)` after the database transaction commits.
+- **`documentId` is scoped to `candidateId`** — `candidateDocumentRepository.findById(documentId,
+  candidateId)` uses `findFirst({ where: { id, candidateId } })`, so a
+  `documentId` that exists but belongs to a *different* candidate
+  produces the same `404` as a nonexistent one — never a cross-candidate
+  leak.
+- **Expected callers**: recruiter/HR staff.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                |
+| -------------------------------------- | -------- | ------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `candidate:update` permission         |
+
+## 4. Path Parameters
+
+| Name         | Type          | Required | Description                                     |
+| -------------- | ------------- | -------- | --------------------------------------------------- |
+| `id`         | string (UUID) | **Yes**  | The Candidate's id                           |
+| `documentId` | string (UUID) | **Yes**  | The CandidateDocument's id, must belong to `id` |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- Service-layer order of checks:
+  1. `candidateRepository.findById(candidateId)` → `404 "Candidate not
+     found"` if missing.
+  2. `candidateDocumentRepository.findById(documentId, candidateId)` →
+     `404 "Document not found"` if missing **or** if it belongs to a
+     different candidate.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Document deleted successfully"
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                | Response (`message`)                     | When                                                        |
+| ------ | ------------------------------------------ | ------------------------------------------------ | --------------------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token          | Same as every other protected endpoint           | `authMiddleware` failure                                        |
+| `403`  | Caller lacks `candidate:update`               | `"You do not have permission to perform this action"` | Any non-`ADMIN` token                                      |
+| `404`  | Nonexistent Candidate                         | `"Candidate not found"`                          | Invalid `id`                                                     |
+| `404`  | Nonexistent Document, or belongs to a different Candidate | `"Document not found"`             | Invalid/mismatched `documentId`                                  |
+| `500`  | Cloudinary delete failure                     | Generic `"Internal Server Error"`, logged server-side with context | The database row is already committed deleted by this point — see Interview Notes |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                       | Expected |
+| --- | ------------------------------------------------------------------ | -------- |
+| 1   | Delete an existing document belonging to the candidate                | `200`    |
+| 2   | `documentId` belonging to a different candidate                        | `404`    |
+| 3   | Nonexistent `documentId`                                                | `404`    |
+| 4   | Nonexistent candidate `id`                                              | `404`    |
+| 5   | As `MANAGER`/`EMPLOYEE` token                                            | `403`    |
+| 6   | No token                                                                 | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                  | Expected |
+| ---------------------------- | -------- |
+| Deleting the same document twice | `200` then `404` |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                                     |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| The Cloudinary delete call fails after the database row is already committed deleted | The `CandidateDocument` row is gone, but the Cloudinary asset remains live — the same failure mode endpoint 102's own bulk cleanup accepts (best-effort, logged, not automatically reconciled) |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can delete.
+- **BOLA**: the primary test — confirm a `documentId` valid for one
+  candidate cannot be deleted through a different candidate's `:id` in
+  the path; verified by the scoped `findFirst({ id, candidateId })`
+  lookup rather than a bare `findUnique({ id })`.
+
+## 14. Database Impact
+
+- **Tables affected**: `CandidateDocument` (delete), `AuditLog`
+  (insert), inside one `prisma.$transaction`; the Cloudinary
+  `deleteAsset` call runs **after** this transaction commits.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/candidates/:id/documents/:documentId
+    ↓
+authMiddleware
+    ↓
+requirePermission('candidate:update')
+    ↓ (403 if not granted)
+candidateDocument.controller.remove → candidateDocument.service.deleteDocument(candidateId, documentId, actor)
+    ├─ candidateRepository.findById(candidateId) → not found → 404
+    ├─ candidateDocumentRepository.findById(documentId, candidateId) → not found → 404
+    ├─ prisma.$transaction:
+    │    ├─ candidateDocumentRepository.deleteById(documentId, tx)
+    │    └─ auditLogRepository.create({ action: 'DELETE', entityType: 'CandidateDocument', beforeData, afterData: null, ... }, tx)
+    └─ cloudinaryStorage.deleteAsset(document.publicId, document.resourceType, { entityType: 'CandidateDocument', entityId: documentId })
+    ↓
+200 { message: 'Document deleted successfully' }
+```
+
+## 16. Performance Notes
+
+Two primary-key/scoped lookups, one delete, one audit-log insert, plus
+one external Cloudinary API call after commit — no notable performance
+concerns; identical shape to Employee's own document delete path.
+
+## 17. Interview Notes
+
+- **Q: Why does the Cloudinary delete happen *after* the database
+  transaction, rather than inside it or before it?** Consistent with
+  Employee's own document-delete ordering — the database is the source
+  of truth for what the application considers deleted; deleting the row
+  first and the external asset second means a Cloudinary failure leaves
+  an orphaned (but harmless) asset rather than a `CandidateDocument` row
+  pointing at nothing, or worse, a partially-committed transaction
+  retried against an already-deleted external asset.
+- **Q: Why store `resourceType` at all rather than guessing it from
+  `mimeType` at delete time?** Same real bug this project already found
+  and fixed for Employee documents (endpoint 16's Interview Notes):
+  `cloudinary.uploader.destroy()` defaults to `resource_type: "image"`
+  and silently no-ops for any other type. Storing Cloudinary's own
+  classification at upload time is what makes this delete call reliably
+  target the right asset.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/candidates/$CANDIDATE_ID/documents/$CANDIDATE_DOCUMENT_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this after `POST /candidates/:id/documents` (endpoint 103), using
+the saved `{{candidateDocumentId}}`; confirm a subsequent `GET
+/candidates/:id/documents` (endpoint 104) no longer lists it.
+
+## 20. Testing Checklist
+
+- ✅ Valid delete → `200`, row removed, Cloudinary asset removed
+- ✅ Cross-candidate `documentId` → `404`, not a leak
+- ✅ Nonexistent `documentId`/candidate `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created, `entityType: 'CandidateDocument'`, `afterData: null`
+
+---
+
+---
+
+# 106. `POST /applications`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Create Application
+Description:        Links a Candidate to a JobRequisition, creating an Application in APPLIED status
+Method:             POST
+URL:                /api/v1/applications
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `application:create` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the join between Candidate and JobRequisition —
+  `docs/domain-recruitment.md` §3: "Application is the join between
+  Candidate and JobRequisition, carrying its own workflow status
+  independent of both."
+- **The target JobRequisition must be accepting applications** —
+  `application.service.js`'s `createApplication` requires
+  `jobRequisition.status` to be `OPEN` or `ON_HOLD`; `CLOSED`/`CANCELLED`
+  requisitions reject new applications with `400`.
+- **No uniqueness constraint on `(candidateId, jobRequisitionId)`** —
+  unlike PerformanceReview's `(employeeId, reviewCycleId)` pair, a
+  candidate may apply to the same requisition more than once; nothing in
+  the schema or service prevents it.
+- **Expected callers**: recruiter/HR staff, after both the Candidate
+  (endpoint 98) and JobRequisition (endpoint 93) already exist.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `application:create` permission |
+| `Content-Type: application/json`     | **Yes**  |                                                   |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "candidateId": "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+  "jobRequisitionId": "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
+}
+```
+
+| Field              | Type          | Required | Description                                                         |
+| -------------------- | ------------- | -------- | ----------------------------------------------------------------------- |
+| `candidateId`       | string (UUID) | **Yes**  | Must reference an existing Candidate                                     |
+| `jobRequisitionId`  | string (UUID) | **Yes**  | Must reference an existing JobRequisition whose status is `OPEN`/`ON_HOLD` |
+
+## 7. Validation Rules
+
+Enforced by `createApplicationSchema` — both fields `z.string().uuid()`,
+required. All existence/status checks are business-rule validation in
+the service, not the schema:
+
+1. `candidateRepository.findById(candidateId)` → `400` if missing.
+2. `jobRequisitionRepository.findById(jobRequisitionId)` → `400` if
+   missing.
+3. `['OPEN', 'ON_HOLD'].includes(jobRequisition.status)` → `400` if
+   false.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "application": {
+    "id": "f4a5b6c7-8d9e-4f0a-1b2c-3d4e5f6a7b8c",
+    "candidateId": "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+    "jobRequisitionId": "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+    "status": "APPLIED",
+    "hiredEmployeeId": null,
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T10:00:00.000Z"
+  }
+}
+```
+
+`applicationRepository.create` performs no `include` — the flat shape,
+unlike `GET /applications/:id` (endpoint 108), which eagerly includes
+`candidate`/`jobRequisition`/`interviews`/`offers`.
+
+## 9. Error Responses
+
+| Status | Reason                                       | Response (`message`)                                             | When                                              |
+| ------ | ----------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `400`  | Validation failed                                | e.g. `"candidateId: Invalid input: expected string, received undefined"`  | Missing/malformed field                              |
+| `400`  | `candidateId` doesn't reference a real Candidate  | `"candidateId: references a record that does not exist"`                 |                                                        |
+| `400`  | `jobRequisitionId` doesn't reference a real JobRequisition | `"jobRequisitionId: references a record that does not exist"`   |                                                        |
+| `400`  | JobRequisition is `CLOSED`/`CANCELLED`            | `"jobRequisitionId: this requisition is no longer accepting applications"` | Verified against the exact string in `application.service.js` |
+| `401`  | Missing/invalid/expired access token              | Same as every other protected endpoint                                    | `authMiddleware` failure                              |
+| `403`  | Caller lacks `application:create`                 | `"You do not have permission to perform this action"`                      | Any non-`ADMIN` token                                 |
+
+## 10. Postman Test Cases
+
+| #   | Case                                              | Expected |
+| --- | -------------------------------------------------------- | -------- |
+| 1   | Valid `candidateId` + `OPEN` `jobRequisitionId`             | `201`, `status: "APPLIED"` |
+| 2   | Valid `candidateId` + `ON_HOLD` `jobRequisitionId`           | `201`    |
+| 3   | Valid `candidateId` + `CLOSED` `jobRequisitionId`            | `400`    |
+| 4   | Nonexistent `candidateId`                                    | `400`    |
+| 5   | Nonexistent `jobRequisitionId`                               | `400`    |
+| 6   | The same candidate applying to the same requisition twice     | `201` both times — no uniqueness constraint |
+| 7   | As `MANAGER`/`EMPLOYEE` token                                | `403`    |
+| 8   | No token                                                     | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                  | Expected |
+| ---------------------------------------------- | -------- |
+| Malformed (non-UUID) `candidateId`/`jobRequisitionId` | `400` |
+| Tampered/expired JWT                            | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                             |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `jobRequisitionId` valid and `CANCELLED`                                | `400` — the same check covers both `CLOSED` and `CANCELLED`; only `OPEN`/`ON_HOLD` pass                             |
+| A `jobRequisitionId` whose `remainingOpenings` is already `0` but `status` is still `OPEN` (a narrow race window before `closeIfExhausted` runs) | `201` — creating an Application never checks `remainingOpenings`, only `status`; the openings guard lives entirely at hire time (endpoint 110) |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can create an
+  Application.
+- **Mass assignment**: `status` (always `APPLIED`) and
+  `hiredEmployeeId` (always `null`) cannot be client-supplied — neither
+  is on `createApplicationSchema`.
+
+## 14. Database Impact
+
+- **Tables affected**: `Application` (insert), `AuditLog` (insert),
+  inside one `prisma.$transaction`.
+- **Pre-checks (outside the transaction)**: `Candidate.findById`,
+  `JobRequisition.findById`.
+- **Indexes**: `Application_candidateId_idx`,
+  `Application_jobRequisitionId_idx` support the filtered list endpoint
+  (107), not this create path.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/applications
+    ↓
+authMiddleware
+    ↓
+requirePermission('application:create')
+    ↓ (403 if not granted)
+validateMiddleware(createApplicationSchema)
+    ↓ (400 if invalid)
+application.controller.create → application.service.createApplication(data, actor)
+    ├─ candidateRepository.findById(candidateId) → missing → 400
+    ├─ jobRequisitionRepository.findById(jobRequisitionId) → missing → 400
+    ├─ ['OPEN','ON_HOLD'].includes(jobRequisition.status) → false → 400
+    └─ prisma.$transaction:
+         ├─ applicationRepository.create(data, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', entityType: 'Application', afterData, ... }, tx)
+    ↓
+201 { application }
+```
+
+## 16. Performance Notes
+
+Two sequential lookups (`Candidate`, `JobRequisition`) plus one insert
+and one audit-log insert — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why is there no uniqueness constraint preventing a duplicate
+  Application for the same `(candidateId, jobRequisitionId)` pair,
+  unlike PerformanceReview's `(employeeId, reviewCycleId)`?** No
+  verified requirement demands one — a candidate could legitimately
+  reapply to the same posting (e.g. after withdrawing, or after being
+  rejected and reconsidered later), and `docs/domain-recruitment.md`
+  never names duplicate-prevention as a rule the way it explicitly does
+  for the Offer/JobRequisition invariants in §4.
+- **Q: Why check `jobRequisition.status` here but not
+  `remainingOpenings`?** `remainingOpenings` only matters at the moment
+  openings are actually consumed — hiring (endpoint 110). Multiple
+  candidates can legitimately be in an active pipeline against a
+  requisition with only one opening left; the scarcity is enforced only
+  where it's actually spent, via the guarded decrement, not earlier at
+  application-creation time where it would just add unnecessary friction.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/applications \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"candidateId":"d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a","jobRequisitionId":"c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f"}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `application.id` as `{{applicationId}}` — used by
+every other `/applications/:id*` endpoint (107-118).
+
+## 20. Testing Checklist
+
+- ✅ Valid create against `OPEN`/`ON_HOLD` requisition → `201`, `status: "APPLIED"`
+- ✅ `CLOSED`/`CANCELLED` requisition → `400`
+- ✅ Nonexistent `candidateId`/`jobRequisitionId` → `400`
+- ✅ Duplicate `(candidateId, jobRequisitionId)` allowed → `201` both times
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created, `entityType: 'Application'`
+
+---
+
+---
+
+# 107. `GET /applications`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           List Applications
+Description:        Returns a paginated, filterable list of Applications, each with its Candidate and JobRequisition included
+Method:             GET
+URL:                /api/v1/applications
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `application:read` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: browse/search the pipeline across candidates and
+  requisitions — filterable by either side of the join, or by workflow
+  `status`.
+- **`findAll` includes `candidate`/`jobRequisition`, but not
+  `interviews`/`offers`** — the full child-record breakdown is
+  exclusively a `GET /applications/:id` (endpoint 108) addition, the
+  same list-vs-detail split PerformanceReview's `addenda` uses.
+- **No auto-scoping** — a single `application:read` permission,
+  ADMIN-only (ADR-RC05).
+- **Expected callers**: recruiter/HR staff.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                        |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `application:read` permission   |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name                | Type          | Required | Default     | Description                                                            |
+| ---------------------- | ------------- | -------- | ------------- | ---------------------------------------------------------------------------- |
+| `page`               | integer       | No       | `1`         | 1-indexed page number                                                        |
+| `limit`              | integer       | No       | `10` (max 100) | Page size                                                                   |
+| `candidateId`        | string (UUID) | No       | —           | Exact match                                                                   |
+| `jobRequisitionId`   | string (UUID) | No       | —           | Exact match                                                                   |
+| `status`             | enum          | No       | —           | `APPLIED`, `SCREENING`, `INTERVIEW`, `OFFER`, `HIRED`, `REJECTED`, `WITHDRAWN` |
+| `sortBy`             | enum          | No       | `createdAt` | `status` or `createdAt`                                                      |
+| `order`              | enum          | No       | `desc`      | `asc` or `desc`                                                               |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Enforced by `listApplicationsQuerySchema`. All filters optional and
+combined with `AND` (`buildApplicationWhere`).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "applications": [
+    {
+      "id": "f4a5b6c7-8d9e-4f0a-1b2c-3d4e5f6a7b8c",
+      "candidateId": "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+      "candidate": { "id": "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a", "name": "Jane Doe", "email": "jane.doe@example.com", "phone": "+1-555-0100", "createdAt": "...", "updatedAt": "..." },
+      "jobRequisitionId": "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+      "jobRequisition": { "id": "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f", "status": "OPEN", "employmentType": "FULL_TIME", "...": "..." },
+      "status": "APPLIED",
+      "hiredEmployeeId": null,
+      "createdAt": "2026-09-16T10:00:00.000Z",
+      "updatedAt": "2026-09-16T10:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                             | When                                             |
+| ------ | -------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------- |
+| `400`  | A query parameter failed validation    | e.g. `"limit: Too big: expected number to be <=100"`, `"status: Invalid option"` | Out-of-bounds `limit`, invalid `status`/`sortBy`  |
+| `401`  | Missing/invalid/expired access token   | Same as every other protected endpoint                                | `authMiddleware` failure                          |
+| `403`  | Caller lacks `application:read`        | `"You do not have permission to perform this action"`                  | Any non-`ADMIN` token                             |
+
+## 10. Postman Test Cases
+
+| #   | Case                                       | Expected |
+| --- | ------------------------------------------------ | -------- |
+| 1   | No filters                                        | `200`, every application with nested `candidate`/`jobRequisition` |
+| 2   | `status=INTERVIEW`                                | `200`, filtered |
+| 3   | `candidateId` + `status` together                 | `200`, both `AND`ed |
+| 4   | `limit=101`                                       | `400`    |
+| 5   | As `MANAGER`/`EMPLOYEE` token                     | `403`    |
+| 6   | No token                                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected |
+| ----------------------------------- | -------- |
+| `sortBy`/`status` outside their allowlists | `400` |
+| Tampered/expired JWT                  | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                | Expected Behavior                                                        |
+| ---------------------------------------------- | -------------------------------------------------------------------------- |
+| `page` beyond the last page                     | `200` with an empty array, not an error                                    |
+| `status=HIRED` filter                           | `200` — returns Applications whose `hiredEmployeeId` is set                |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can list.
+
+## 14. Database Impact
+
+Read-only — `application.findMany` (with `candidate`/`jobRequisition`
+`include`) + `.count`, in parallel. Supported by
+`Application_candidateId_idx`/`_jobRequisitionId_idx`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/applications
+    ↓
+authMiddleware
+    ↓
+requirePermission('application:read')
+    ↓ (403 if not granted)
+validateMiddleware(listApplicationsQuerySchema, 'query')
+    ↓ (400 if invalid)
+application.controller.list → application.service.listApplications(query)
+    └─ Promise.all([
+         applicationRepository.findAll({ where, orderBy: [{ [sortBy]: order }, { id: 'asc' }], skip, take }),
+         applicationRepository.count(where),
+       ])
+    ↓
+200 { applications, pagination }
+```
+
+## 16. Performance Notes
+
+Standard `findMany`/`count` pair in parallel — no notable performance
+concerns.
+
+## 17. Interview Notes
+
+- **Q: Why does the list response omit `interviews`/`offers` while the
+  detail endpoint includes them?** Bounding the list response's payload
+  size — a page of up to 100 applications, each additionally carrying
+  every interview and offer, would be a materially larger response for
+  a view where that detail usually isn't needed; the same list-vs-detail
+  split every other domain in this project already uses.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/applications?status=INTERVIEW&sortBy=createdAt&order=desc" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run once unfiltered, then once with `status` set to confirm filtering,
+before moving to the lifecycle endpoints (109-118).
+
+## 20. Testing Checklist
+
+- ✅ Unfiltered list returns nested `candidate`/`jobRequisition`
+- ✅ `candidateId`/`jobRequisitionId`/`status` filters work individually and combined
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `400` on out-of-bounds `limit`/invalid `status`/`sortBy`
+
+---
+
+---
+
+# 108. `GET /applications/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Get Application by ID
+Description:        Returns a single Application with its Candidate, JobRequisition, Interviews, and Offers included
+Method:             GET
+URL:                /api/v1/applications/:id
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `application:read` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the full pipeline-record detail view — the only
+  endpoint that surfaces an Application's `interviews` and `offers`
+  arrays together in one response.
+- **`interviews` sorted oldest-first (`scheduledAt: 'asc'`), `offers`
+  sorted newest-first (`createdAt: 'desc'`)** — `applicationRepository.findById`'s
+  own `include` ordering; a chronological read of the interview timeline
+  alongside the most-recent-offer-first view of the offer history.
+- **This is also the record the Hire endpoint (110) reads from** — its
+  internal `applicationRepository.findById` call is exactly this same
+  query, which is why `hireApplication` can locate `application.offers`'s
+  `ACCEPTED` entry and `application.jobRequisition`'s four axes without a
+  second query.
+- **Expected callers**: recruiter/HR staff reviewing a candidate's full
+  pipeline history for one requisition.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                        |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `application:read` permission   |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description               |
+| ---- | ------------- | -------- | ------------------------------ |
+| `id` | string (UUID) | **Yes**  | The Application's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+None beyond the path parameter; a malformed `id` surfaces as `404`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "application": {
+    "id": "f4a5b6c7-8d9e-4f0a-1b2c-3d4e5f6a7b8c",
+    "candidateId": "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+    "candidate": { "id": "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a", "name": "Jane Doe", "email": "jane.doe@example.com", "phone": "+1-555-0100", "createdAt": "...", "updatedAt": "..." },
+    "jobRequisitionId": "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+    "jobRequisition": { "id": "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f", "departmentId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7c", "designationId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d", "branchId": null, "employmentType": "FULL_TIME", "numberOfOpenings": 2, "remainingOpenings": 2, "status": "OPEN", "createdAt": "...", "updatedAt": "..." },
+    "status": "OFFER",
+    "hiredEmployeeId": null,
+    "interviews": [
+      {
+        "id": "b7c8d9e0-1f2a-4b3c-4d5e-6f7a8b9c0d1e",
+        "applicationId": "f4a5b6c7-8d9e-4f0a-1b2c-3d4e5f6a7b8c",
+        "interviewerId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a72",
+        "scheduledAt": "2026-10-01T14:00:00.000Z",
+        "feedback": "Strong technical fundamentals",
+        "recommendation": "YES",
+        "createdAt": "...",
+        "updatedAt": "..."
+      }
+    ],
+    "offers": [
+      {
+        "id": "c8d9e0f1-2a3b-4c4d-5e6f-7a8b9c0d1e2f",
+        "applicationId": "f4a5b6c7-8d9e-4f0a-1b2c-3d4e5f6a7b8c",
+        "salary": "95000",
+        "startDate": "2026-11-01T00:00:00.000Z",
+        "status": "PENDING",
+        "createdAt": "...",
+        "updatedAt": "..."
+      }
+    ],
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T14:00:00.000Z"
+  }
+}
+```
+
+`Offer.salary` is `Decimal`, so it serializes as a JSON string
+(`"95000"`), the same convention `Employee.salary` already uses
+(endpoint 9).
+
+## 9. Error Responses
+
+| Status | Reason                          | Response (`message`)      | When                          |
+| ------ | ---------------------------------- | -------------------------------- | -------------------------------- |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint | `authMiddleware` failure |
+| `403`  | Caller lacks `application:read`    | `"You do not have permission to perform this action"` | Any non-`ADMIN` token |
+| `404`  | No such Application                | `"Application not found"`        | Nonexistent/malformed `id`       |
+
+## 10. Postman Test Cases
+
+| #   | Case                                            | Expected |
+| --- | -------------------------------------------------------- | -------- |
+| 1   | Application with no interviews/offers yet                    | `200`, `interviews: []`, `offers: []` |
+| 2   | Application with interviews and offers                        | `200`, both arrays populated in their respective sort orders |
+| 3   | Nonexistent `id`                                              | `404`    |
+| 4   | As `MANAGER`/`EMPLOYEE` token                                  | `403`    |
+| 5   | No token                                                       | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                  | Expected |
+| ---------------------------- | -------- |
+| Malformed (non-UUID) `id`     | `404`    |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                            | Expected Behavior                                                                  |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| An Application with multiple `Offer` rows across its history (e.g. one `EXPIRED`, one `ACCEPTED`) | `200`, `offers` shows every one, newest-created first — history is never pruned |
+| An Application already `HIRED`                              | `200`, `hiredEmployeeId` populated, `jobRequisition` reflects whatever its current status is (possibly `CLOSED` by now) |
+
+## 13. Security Testing
+
+- **BOLA**: N/A — no ownership scoping to bypass (ADR-RC05).
+
+## 14. Database Impact
+
+Read-only — a single `application.findUnique` with a four-relation
+`include` (`candidate`, `jobRequisition`, `interviews`, `offers`).
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/applications/:id
+    ↓
+authMiddleware
+    ↓
+requirePermission('application:read')
+    ↓ (403 if not granted)
+application.controller.getById → application.service.getApplicationById(id)
+    └─ applicationRepository.findById(id) → not found → 404
+    ↓
+200 { application }
+```
+
+## 16. Performance Notes
+
+Single primary-key lookup with a four-relation `include`, each bounded
+by the interview/offer count for one application (typically small) — no
+notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why does `GET /applications/:id`'s `include` shape exactly match
+  what `hireApplication` (endpoint 110) needs internally?** Not a
+  coincidence — `hireApplication` calls the very same
+  `applicationRepository.findById`, so the same one query serves both
+  this read endpoint and the hire flow's own internal data needs
+  (`application.offers.find(o => o.status === 'ACCEPTED')`,
+  `application.jobRequisition.departmentId`, etc.) without a second,
+  differently-shaped query existing anywhere in the codebase.
+
+## 18. cURL Examples
+
+```bash
+curl -s http://localhost:3000/api/v1/applications/$APPLICATION_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this after each lifecycle-changing call (109, 111-118) to visually
+confirm the Application's current `status`, `interviews`, and `offers`
+state in one place.
+
+## 20. Testing Checklist
+
+- ✅ Valid `id` → `200`, `candidate`/`jobRequisition`/`interviews`/`offers` all present
+- ✅ Empty `interviews`/`offers` arrays for a fresh Application
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+
+---
+
+---
+
+# 109. `PATCH /applications/:id/status`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Update Application Status
+Description:        Advances or terminates an Application's workflow status; HIRED is never reachable through this endpoint
+Method:             PATCH
+URL:                /api/v1/applications/:id/status
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `application:update` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: moves an Application through its pipeline —
+  `docs/domain-recruitment.md` §2: `APPLIED → SCREENING → INTERVIEW →
+  OFFER → HIRED | REJECTED | WITHDRAWN`.
+- **Forward stages are strictly sequential — no skipping** —
+  `isValidApplicationTransition` (`application.service.js`) only allows
+  `target === FORWARD_STAGES[currentIndex + 1]` for a forward move; an
+  `APPLIED` application cannot jump straight to `OFFER`, for instance.
+- **`REJECTED`/`WITHDRAWN` are reachable from any non-terminal forward
+  stage** — `APPLIED`, `SCREENING`, `INTERVIEW`, or `OFFER` can all move
+  directly to either, regardless of how far the pipeline has progressed.
+- **`HIRED` is not settable on this schema at all, and even if crafted
+  in would be rejected** — `updateApplicationStatusSchema`'s `status`
+  enum is `['SCREENING', 'INTERVIEW', 'OFFER', 'REJECTED', 'WITHDRAWN']`
+  — `HIRED` isn't even a member of the enum, so Zod rejects it with a
+  `400` before the service's own transition logic ever runs. The only
+  path to `HIRED` is `POST /applications/:id/hire` (endpoint 110), so
+  its onboarding side-effect always fires.
+- **No outgoing transition from any terminal state** — `HIRED`,
+  `REJECTED`, `WITHDRAWN` are all dead ends; `TERMINAL_STATES.includes(current)`
+  short-circuits `isValidApplicationTransition` to `false` for any
+  target.
+- **Expected callers**: recruiter/HR staff progressing a candidate
+  through the pipeline.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `application:update` permission |
+| `Content-Type: application/json`     | **Yes**  |                                                   |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description               |
+| ---- | ------------- | -------- | ------------------------------ |
+| `id` | string (UUID) | **Yes**  | The Application's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "status": "SCREENING"
+}
+```
+
+| Field    | Type          | Required | Description                                                                 |
+| -------- | ------------- | -------- | --------------------------------------------------------------------------- |
+| `status` | string (enum) | **Yes**  | One of `SCREENING`, `INTERVIEW`, `OFFER`, `REJECTED`, `WITHDRAWN` — `HIRED` is not a member of this enum |
+
+## 7. Validation Rules
+
+- `status`: `z.enum(['SCREENING', 'INTERVIEW', 'OFFER', 'REJECTED',
+  'WITHDRAWN'])`, required. `HIRED` (or anything else outside this list)
+  produces `"status: Invalid option: expected one of "SCREENING"|
+  "INTERVIEW"|"OFFER"|"REJECTED"|"WITHDRAWN""`.
+- Service-layer order of checks:
+  1. `applicationRepository.findById(id)` → `404` if missing.
+  2. `isValidApplicationTransition(application.status, status)` →
+     `409` if false.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "application": {
+    "id": "f4a5b6c7-8d9e-4f0a-1b2c-3d4e5f6a7b8c",
+    "candidateId": "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+    "jobRequisitionId": "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+    "status": "SCREENING",
+    "hiredEmployeeId": null,
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T11:00:00.000Z"
+  }
+}
+```
+
+Flat shape — `applicationRepository.update` performs no `include`, same
+convention as the create response (endpoint 106).
+
+## 9. Error Responses
+
+| Status | Reason                                          | Response (`message`)                                                                 | When                                              |
+| ------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `400`  | Validation failed                                     | `"status: Invalid option: expected one of "SCREENING"\|"INTERVIEW"\|"OFFER"\|"REJECTED"\|"WITHDRAWN""` | Missing/invalid `status`, including `"HIRED"`        |
+| `401`  | Missing/invalid/expired access token                  | Same as every other protected endpoint                                                       | `authMiddleware` failure                              |
+| `403`  | Caller lacks `application:update`                     | `"You do not have permission to perform this action"`                                         | Any non-`ADMIN` token                                 |
+| `404`  | No such Application                                   | `"Application not found"`                                                                     | Nonexistent `id`                                       |
+| `409`  | Requested status isn't reachable from the current one | `"Cannot transition an application from <current> to <status>"`                               | e.g. `APPLIED → OFFER` (skips stages), any transition from a terminal state |
+
+## 10. Postman Test Cases
+
+| #   | Case                                     | Expected |
+| --- | ----------------------------------------------- | -------- |
+| 1   | `APPLIED → SCREENING`                             | `200`    |
+| 2   | `SCREENING → INTERVIEW`                           | `200`    |
+| 3   | `INTERVIEW → OFFER`                               | `200`    |
+| 4   | `APPLIED → OFFER` (skips two stages)                | `409`    |
+| 5   | `SCREENING → REJECTED`                            | `200`    |
+| 6   | `OFFER → WITHDRAWN`                               | `200`    |
+| 7   | `status: "HIRED"`                                 | `400`    |
+| 8   | Any transition from `HIRED`/`REJECTED`/`WITHDRAWN`  | `409`    |
+| 9   | Nonexistent `id`                                  | `404`    |
+| 10  | As `MANAGER`/`EMPLOYEE` token                     | `403`    |
+| 11  | No token                                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected |
+| ----------------------------------- | -------- |
+| `status: "SCREENING"` on an already-`SCREENING` application (no-op, same status) | `409` — a status is never a valid transition target from itself |
+| Tampered/expired JWT                  | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                       | Expected Behavior                                                                                                     |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `REJECTED` requested from `APPLIED` (earliest possible non-terminal stage) | `200` — `REJECTED`/`WITHDRAWN` are reachable from *any* non-terminal forward stage, not just the later ones             |
+| Attempting `PATCH .../status` with `status: "HIRED"` crafted directly into the request (bypassing a client that respects the enum) | `400` — Zod's enum check rejects it before the service layer is ever reached; it never reaches the `409` "invalid transition" path at all |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can transition status.
+- **Business-logic bypass**: the primary test for this endpoint —
+  confirm `HIRED` is genuinely unreachable through this route under any
+  input, and that stage-skipping is rejected even when the skipped
+  stages would otherwise each individually be valid one-hop moves.
+
+## 14. Database Impact
+
+- **Tables affected**: `Application` (update), `AuditLog` (insert),
+  inside one `prisma.$transaction`.
+- **Pre-checks**: `Application.findById` (`404` gate).
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/applications/:id/status
+    ↓
+authMiddleware
+    ↓
+requirePermission('application:update')
+    ↓ (403 if not granted)
+validateMiddleware(updateApplicationStatusSchema)
+    ↓ (400 if invalid, including status: "HIRED")
+application.controller.updateStatus → application.service.updateApplicationStatus(id, status, actor)
+    ├─ applicationRepository.findById(id) → not found → 404
+    ├─ isValidApplicationTransition(application.status, status) → false → 409
+    └─ prisma.$transaction:
+         ├─ applicationRepository.update(id, { status }, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'Application', beforeData, afterData, ... }, tx)
+    ↓
+200 { application }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup, one update, one audit-log insert — no notable
+performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why exclude `HIRED` from this schema's enum instead of letting
+  the service-layer transition map simply never list it as reachable
+  (which would produce the same-looking `409` every other illegal move
+  gets)?** A deliberate double-layer guard, the same shape
+  JobRequisition's `CLOSED` block uses (endpoint 96) — `HIRED` carries a
+  mandatory side-effect (real Employee/User creation via the Hire flow)
+  that must never fire implicitly through a plain status PATCH. Keeping
+  it entirely off the schema means a client can't even construct a
+  request that would reach the service's transition logic with `target
+  === 'HIRED'` at all.
+- **Q: Why is `REJECTED`/`WITHDRAWN` treated identically in the
+  transition logic, both simply checked via `FORWARD_STAGES.includes(current)`?**
+  They serve the same structural role (a non-hire terminal outcome) even
+  though they mean different things to a recruiter (the company rejected
+  the candidate vs. the candidate withdrew) — `docs/domain-recruitment.md`'s
+  own lifecycle line lists them side-by-side with no distinct rule
+  governing when each applies, so the implementation doesn't invent one
+  either.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/applications/$APPLICATION_ID/status \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"SCREENING"}'
+```
+
+## 19. Postman Collection Notes
+
+Walk an Application through `APPLIED → SCREENING → INTERVIEW → OFFER` in
+sequence in one collection run before exercising the Offer/Hire
+endpoints (115-118, 110), which require the `OFFER` stage as a
+precondition.
+
+## 20. Testing Checklist
+
+- ✅ Each valid one-hop forward transition → `200`
+- ✅ Any stage-skip → `409`
+- ✅ `REJECTED`/`WITHDRAWN` from any non-terminal stage → `200`
+- ✅ Any transition from a terminal state → `409`
+- ✅ `status: "HIRED"` → `400`, not `409`
+- ✅ Nonexistent `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 110. `POST /applications/:id/hire`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Hire Application
+Description:        The Hire Orchestration Service (ADR-RC03) — converts an Application with an Accepted Offer into a real Employee (and optionally a User), decrements the JobRequisition's remaining openings, and transitions the Application to HIRED
+Method:             POST
+URL:                /api/v1/applications/:id/hire
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `application:hire` permission required (ADMIN only, as seeded) — a distinct permission key from `application:update`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the single boundary event between Recruitment and
+  Identity — `docs/domain-recruitment.md` §2: "a coordinating service
+  reads the Application/Offer/Candidate data and invokes Identity's
+  existing, unmodified employee-creation process, exactly as if an admin
+  had entered the same data directly." This is the most complex endpoint
+  in the entire domain — read carefully.
+- **`application:hire` is deliberately a distinct permission key from
+  `application:update`** (ADR-RC05) — hiring triggers real `Employee`
+  (and optionally `User`) creation, a materially bigger consequence than
+  an ordinary status `PATCH`, so it is gated separately even though both
+  are ADMIN-only in this seed data.
+- **Preconditions, both required (`application.service.js`'s
+  `hireApplication`)**:
+  1. `application.status === 'OFFER'` — `400` otherwise.
+  2. At least one of `application.offers` has `status === 'ACCEPTED'` —
+     `400` otherwise (`application.offers.find(o => o.status ===
+     'ACCEPTED')`).
+- **Everything below runs inside one outer `prisma.$transaction`** — the
+  `JobRequisition.remainingOpenings` decrement, the User/Employee
+  onboarding (via `employeeOnboardingService.onboardEmployee`, which
+  itself accepts the same `tx`), and the Application's `HIRED`
+  transition all commit or roll back together. Without this, a crash
+  mid-flow could leave a decremented-but-never-hired requisition (a
+  "leaked" opening) or a hired Employee whose Application was never
+  marked `HIRED`.
+- **The openings decrement is a single guarded `UPDATE`, not a
+  read-then-write** — `jobRequisitionRepository.decrementRemainingOpenings`
+  runs `UPDATE ... WHERE id = ? AND status = 'OPEN' AND
+  remainingOpenings > 0`, atomic at the database level under Postgres
+  row-level locking. `decrementResult.count === 0` (the requisition is
+  no longer `OPEN`, or has no openings left — e.g. it was placed
+  `ON_HOLD` after this Application reached `OFFER`) → `409`. On success,
+  `jobRequisitionRepository.closeIfExhausted` runs immediately after,
+  auto-transitioning the requisition to `CLOSED` once `remainingOpenings`
+  hits zero.
+- **The Employee's data is derived, not re-entered** — `salary` and
+  `dateOfJoining` come from the **Accepted** Offer's own `salary`/
+  `startDate` (not this request's body — `dateOfJoining` is deliberately
+  absent from `hireApplicationSchema`, "avoiding a second value that
+  could disagree with the offer the candidate actually accepted");
+  `departmentId`/`designationId`/`branchId`/`employmentType` all come
+  from the Application's `JobRequisition`, not from this request either.
+- **`provisionAccess` is an explicit, default-`false` opt-in** — mirrors
+  Identity's own "no access by default" (ADR-005, per
+  `docs/domain-identity-employee-lifecycle.md`). When `true`,
+  `employeeOnboardingService.resolveUser` searches for an existing
+  `User` by the **candidate's current email** and reuses it untouched if
+  found; otherwise it creates a new `User`, hashing `initialPassword`
+  (`bcrypt`, 10 salt rounds) and assigning the default `EMPLOYEE` role —
+  required in the body in this case (`400` if omitted and no existing
+  User matches), since **no invite-email mechanism exists anywhere in
+  this project**.
+- **`managerId`/`shiftId` are optional, pass-through fields** — carried
+  straight into `employeeOnboardingService.onboardEmployee`'s
+  `employeeData`, subject to the same `employeeService.createEmployee`
+  validation (existing `Employee`/`Shift`, `ACTIVE` status) any direct
+  Employee creation would apply.
+- **Expected callers**: `ADMIN`/hiring manager, at the final step of a
+  successful pipeline.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `application:hire` permission   |
+| `Content-Type: application/json`     | **Yes**  |                                                   |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description               |
+| ---- | ------------- | -------- | ------------------------------ |
+| `id` | string (UUID) | **Yes**  | The Application's id, must currently be `OFFER` stage with an `ACCEPTED` offer |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "managerId": null,
+  "shiftId": null,
+  "provisionAccess": false,
+  "initialPassword": null
+}
+```
+
+| Field              | Type           | Required                                             | Description                                                                                   |
+| -------------------- | -------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `managerId`         | string (UUID)  | No                                                    | Passed straight to Employee creation, same validation as `POST /employees`'s own `managerId`       |
+| `shiftId`           | string (UUID)  | No                                                    | Must reference an existing, `ACTIVE` Shift if supplied                                            |
+| `provisionAccess`   | boolean        | No (default `false`)                                  | Explicit opt-in to create/link a `User` for this hire                                              |
+| `initialPassword`   | string         | Only if `provisionAccess: true` **and** no existing `User` matches the candidate's email | Minimum 8 characters                                                        |
+
+Note: `dateOfJoining` is **not** accepted here — it is always the
+Accepted Offer's own `startDate`.
+
+## 7. Validation Rules
+
+Enforced by `hireApplicationSchema`:
+
+- `managerId` / `shiftId`: `z.string().uuid()`, optional.
+- `provisionAccess`: `z.boolean().default(false)`.
+- `initialPassword`: `z.string().min(8, 'initialPassword must be at
+  least 8 characters')`, optional at the schema level — its true
+  requiredness is conditional and enforced in the service, not Zod
+  (§8 below).
+
+**Business-rule validation (in the service)**, in order:
+
+1. `applicationRepository.findById(id)` → `404` if missing.
+2. `application.status === 'OFFER'` → `400` otherwise:
+   `"An application must be in the Offer stage to be hired"`.
+3. `application.offers.find(o => o.status === 'ACCEPTED')` → `400` if
+   none: `"This application has no Accepted offer to hire against"`.
+4. Inside the transaction: `decrementRemainingOpenings` → `409` if the
+   requisition is no longer `OPEN`/has no openings left.
+5. Inside `onboardEmployee` → `resolveUser` (only if `provisionAccess`):
+   no existing `User` for the candidate's email **and** no
+   `initialPassword` supplied → `400`:
+   `"initialPassword: required when provisioning access for a candidate
+   with no existing User account"`.
+6. Inside `employeeService.createEmployee` (same checks as `POST
+   /employees`, endpoint 9): `managerId`/`shiftId` existence/status,
+   and — only reachable if `provisionAccess` resolved to an existing
+   `userId` already linked to a *different* Employee —
+   `"This user already has an employee record"` (`409`).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "application": {
+    "id": "f4a5b6c7-8d9e-4f0a-1b2c-3d4e5f6a7b8c",
+    "candidateId": "d2e3f4a5-6b7c-4d8e-9f0a-1b2c3d4e5f6a",
+    "jobRequisitionId": "c1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+    "status": "HIRED",
+    "hiredEmployeeId": "d9e0f1a2-3b4c-4d5e-6f7a-8b9c0d1e2f3a",
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T15:00:00.000Z"
+  },
+  "employee": {
+    "id": "d9e0f1a2-3b4c-4d5e-6f7a-8b9c0d1e2f3a",
+    "userId": null,
+    "departmentId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7c",
+    "designationId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "employmentType": "FULL_TIME",
+    "salary": "95000",
+    "dateOfJoining": "2026-11-01T00:00:00.000Z",
+    "managerId": null,
+    "branchId": null,
+    "shiftId": null,
+    "deletedAt": null,
+    "createdAt": "2026-09-16T15:00:00.000Z",
+    "updatedAt": "2026-09-16T15:00:00.000Z"
+  },
+  "userId": null
+}
+```
+
+**Not wrapped under a `hire` key** — the response is exactly
+`{ application, employee, userId }` at the top level, since
+`applicationService.hireApplication` returns that shape directly and
+`application.controller.js`'s `hire` action does `res.status(200).json(result)`
+with no further nesting. `employee.salary` serializes as a `Decimal`
+string (`"95000"`), copied verbatim from the Accepted Offer's own
+`salary`. `userId` is `null` unless `provisionAccess: true` was sent, in
+which case it is the linked (reused or newly created) `User`'s id — the
+full `User` object itself is never returned here, only its id.
+
+## 9. Error Responses
+
+| Status | Reason                                                               | Response (`message`)                                                                                  | When                                                                     |
+| ------ | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `400`  | Validation failed                                                          | e.g. `"initialPassword: initialPassword must be at least 8 characters"`                                           | Malformed body field                                                          |
+| `400`  | Application isn't in `OFFER` stage                                         | `"An application must be in the Offer stage to be hired"`                                                          | e.g. still `INTERVIEW`, or already `HIRED`/`REJECTED`                        |
+| `400`  | No `ACCEPTED` offer exists on this Application                             | `"This application has no Accepted offer to hire against"`                                                         | Every offer is `PENDING`/`DECLINED`/`EXPIRED`                                |
+| `400`  | `provisionAccess: true`, no existing User for the candidate's email, no `initialPassword` | `"initialPassword: required when provisioning access for a candidate with no existing User account"`  | New-hire access provisioning without a password                              |
+| `400`  | `managerId`/`shiftId` reference nonexistent or `INACTIVE` records          | Same messages as `POST /employees` (endpoint 9), e.g. `"shiftId: this shift is not active and cannot be assigned"` |                                                                                |
+| `401`  | Missing/invalid/expired access token                                       | Same as every other protected endpoint                                                                             | `authMiddleware` failure                                                      |
+| `403`  | Caller lacks `application:hire`                                            | `"You do not have permission to perform this action"`                                                              | Any non-`ADMIN` token — note this is a **different** permission from `application:update`, so a caller who can PATCH status may still lack this |
+| `404`  | No such Application                                                        | `"Application not found"`                                                                                          | Nonexistent `id`                                                              |
+| `409`  | JobRequisition no longer `OPEN` or has no `remainingOpenings`              | `"This job requisition is no longer OPEN or has no remaining openings - cannot hire"`                              | e.g. placed `ON_HOLD` after this Application reached `OFFER`, or a concurrent hire exhausted the last opening |
+| `409`  | Resolved `userId` already belongs to a different Employee                  | `"This user already has an employee record"`                                                                       | `provisionAccess: true` resolves to an existing `User` already linked elsewhere |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                                     | Expected |
+| --- | --------------------------------------------------------------------------------- | -------- |
+| 1   | `OFFER` stage, `ACCEPTED` offer, `provisionAccess: false`                            | `200`, `employee` created, `userId: null` |
+| 2   | Same, `provisionAccess: true`, candidate email matches no existing User, `initialPassword` supplied | `200`, new `User` created, `userId` populated |
+| 3   | Same, `provisionAccess: true`, candidate email matches an existing User                | `200`, that `User` reused untouched, `userId` populated, `initialPassword` ignored if supplied |
+| 4   | `provisionAccess: true`, no matching User, `initialPassword` omitted                  | `400`    |
+| 5   | Application still in `INTERVIEW` stage                                                | `400`    |
+| 6   | `OFFER` stage but every offer `PENDING`/`DECLINED`/`EXPIRED`                            | `400`    |
+| 7   | JobRequisition placed `ON_HOLD` after reaching `OFFER`                                 | `409`    |
+| 8   | JobRequisition already exhausted (`remainingOpenings: 0`) by a prior hire                | `409`, and requisition auto-`CLOSED` after that prior hire |
+| 9   | `numberOfOpenings: 1` requisition, single successful hire                              | `200`, requisition auto-transitions to `CLOSED` |
+| 10  | Nonexistent `id`                                                                       | `404`    |
+| 11  | As `MANAGER`/`EMPLOYEE` token (including one holding `application:update` but not `application:hire`) | `403` |
+| 12  | No token                                                                                | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                                  | Expected |
+| ---------------------------------------------- | -------- |
+| `initialPassword` under 8 characters              | `400`    |
+| Malformed (non-UUID) `managerId`/`shiftId`        | `400`    |
+| Tampered/expired JWT                              | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                                     | Expected Behavior                                                                                                                                  |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Two concurrent hire requests against the same single-opening requisition               | Exactly one succeeds (`200`); the other's `decrementRemainingOpenings` returns `count: 0` → `409` — the atomic guarded `UPDATE` is what prevents a double-spend of the last opening, not application-level locking |
+| An Application with **multiple** Offers, one `EXPIRED` and one `ACCEPTED`               | `200` — `application.offers.find` takes the first `ACCEPTED` match; history of other offers is irrelevant to eligibility                                    |
+| `provisionAccess: true`, candidate's email matches an existing but soft-deleted Employee's linked User | `200` — `resolveUser` only checks `User` existence by email, entirely independent of any `Employee.deletedAt` state; the reused `User` is then linked to a **new** Employee row, since Employees are never un-soft-deleted |
+| Hire succeeds but crashes before the final `AuditLog` insert (hypothetical)             | Impossible under normal operation — every step, including the audit log, is inside the same outer transaction; a crash anywhere rolls back the entire hire, never a partial one |
+
+## 13. Security Testing
+
+- **Authorization**: the primary test — confirm `application:hire` is
+  checked as its own distinct permission, not implied by
+  `application:update`; a caller with only the latter must be rejected
+  here even though they can freely `PATCH .../status`.
+- **Mass assignment**: `dateOfJoining`/`salary`/`departmentId`/
+  `designationId`/`branchId`/`employmentType` cannot be supplied in this
+  request at all — every one is derived server-side from the Accepted
+  Offer and JobRequisition, closing off any path to hiring an Employee
+  under different terms than what the candidate actually accepted.
+- **Credential handling**: `initialPassword`, when supplied, is hashed
+  with `bcrypt` (10 salt rounds) before storage and never echoed back in
+  the response.
+
+## 14. Database Impact
+
+- **Tables affected**, all inside **one** outer `prisma.$transaction`:
+  `JobRequisition` (guarded `UPDATE` for the decrement, then a second
+  guarded `UPDATE` for `closeIfExhausted`), conditionally `User`
+  (lookup, and insert if none found), conditionally `Role`/`UserRole`
+  (the default `EMPLOYEE` role assignment for a newly created User),
+  `Employee` (insert), `Application` (update to `HIRED` +
+  `hiredEmployeeId`), `AuditLog` (insert, for the Application's own
+  `UPDATE` — `employeeService.createEmployee`'s own internal audit-log
+  insert for the `Employee` `CREATE` happens too, inside the same
+  transaction).
+- **Pre-checks (outside the transaction)**: `Application.findById`
+  (which itself includes `candidate`/`jobRequisition`/`interviews`/
+  `offers` — the same query as endpoint 108).
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/applications/:id/hire
+    ↓
+authMiddleware
+    ↓
+requirePermission('application:hire')
+    ↓ (403 if not granted)
+validateMiddleware(hireApplicationSchema)
+    ↓ (400 if invalid)
+application.controller.hire → application.service.hireApplication(id, data, actor)
+    ├─ applicationRepository.findById(id) → not found → 404
+    ├─ application.status !== 'OFFER' → 400
+    ├─ application.offers.find(o => o.status === 'ACCEPTED') → none → 400
+    └─ prisma.$transaction:
+         ├─ jobRequisitionRepository.decrementRemainingOpenings(jobRequisitionId, tx) → count 0 → 409
+         ├─ jobRequisitionRepository.closeIfExhausted(jobRequisitionId, tx)
+         ├─ employeeOnboardingService.onboardEmployee(employeeData, accessProvisioning, actor, tx)
+         │    ├─ if provisionAccess:
+         │    │    ├─ userRepository.findByEmail(candidate.email, tx) → found? reuse : 
+         │    │    │    (no initialPassword → 400) → bcrypt.hash → userRepository.create(...) → rbacRepository.assignRoleToUser(EMPLOYEE)
+         │    │    └─ userId resolved
+         │    └─ employeeService.createEmployee({ ...employeeData, userId }, actor, tx)
+         │         ├─ userId already linked → 409 "This user already has an employee record"
+         │         ├─ branchService/shiftService/departmentService/designationService asserts
+         │         └─ employeeRepository.create(...) + AuditLog(CREATE, Employee)
+         ├─ applicationRepository.update(id, { status: 'HIRED', hiredEmployeeId: employee.id }, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'Application', beforeData, afterData, ... }, tx)
+    ↓
+200 { application, employee, userId }
+```
+
+## 16. Performance Notes
+
+The heaviest single write path in this domain: one pre-check read, then
+inside the transaction up to two guarded `JobRequisition` updates, a
+conditional `User` lookup/insert plus role assignment, the full
+`Employee`-creation validation chain (branch/shift/department/
+designation), the `Employee` insert, the `Application` update, and two
+`AuditLog` inserts — still a bounded, single-record operation, not a
+batch process; no notable concern at this domain's scale (nowhere near
+Payroll's `/process`, endpoint 73).
+
+## 17. Interview Notes
+
+- **Q: Why is this the single most complex endpoint in the domain?**
+  It's the one place Recruitment's data crosses into Identity's already
+  -signed-off Employee/User model — every invariant from both domains
+  has to hold simultaneously: the openings-scarcity invariant (§4 of
+  `docs/domain-recruitment.md`), Identity's own "search-by-email before
+  create" and "no partial failure" invariants (§3 of
+  `docs/domain-identity-employee-lifecycle.md`), and the Application's
+  own terminal-transition rule — all inside one atomic operation.
+- **Q: Why does `hireApplicationSchema` not accept `dateOfJoining`?**
+  Explicitly by design (`application.validation.js`'s own comment):
+  "it's derived from the Application's Accepted Offer's own `startDate`,
+  avoiding a second value that could disagree with the offer the
+  candidate actually accepted." Accepting a second, independently
+  supplied `dateOfJoining` here would reopen exactly the class of bug
+  this design closes off.
+- **Q: Does the Hire Orchestration Service modify Identity's onboarding
+  process at all?** No — `employeeOnboardingService.onboardEmployee` is
+  Identity's own, unmodified process (recon during this feature found it
+  hadn't actually been built yet, despite being assumed to already exist
+  — see ADR-RC03's implementation notes); `hireApplication` is its sole
+  caller from Recruitment, and calls it with no special-cased bypass of
+  any of its validation.
+- **Q: What happens if `provisionAccess: true` and the candidate's email
+  belongs to a User already linked to another (non-deleted) Employee?**
+  `employeeService.createEmployee`'s own existing duplicate-`userId`
+  check catches this and throws `409 "This user already has an employee
+  record"` — the same guard every direct `POST /employees` call is
+  already subject to; Recruitment adds no special case around it.
+- **Q: Why does the response return the full `employee` object but only
+  the `userId`, not a full `user` object?** `hireApplication` itself
+  only ever resolves and holds a `userId` internally (`onboardEmployee`
+  returns `{ employee, userId }`) — no `User` record is ever fetched in
+  full within this flow, so there is nothing richer to return.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/applications/$APPLICATION_ID/hire \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"provisionAccess":true,"initialPassword":"ChangeMe123!"}'
+```
+
+## 19. Postman Collection Notes
+
+Run this only after the Application has reached `OFFER` (endpoint 109)
+and its Offer has been Accepted (endpoint 116) — attempting it any
+earlier correctly `400`s. Run once with `provisionAccess: false` (no
+`User` side-effects) and once with `provisionAccess: true` against a
+*different* Application/candidate to exercise the new-User path without
+colliding with the first Application's own hire. Save the returned
+`employee.id` as `{{hiredEmployeeId}}` to chain into any downstream
+Employee-domain testing.
+
+## 20. Testing Checklist
+
+- ✅ `OFFER` stage + `ACCEPTED` offer → `200`, real `Employee` created (verified live)
+- ✅ `provisionAccess: false` → `userId: null`, no `User` touched
+- ✅ `provisionAccess: true`, new email → new `User` created, default `EMPLOYEE` role assigned
+- ✅ `provisionAccess: true`, existing email → that `User` reused untouched
+- ✅ `provisionAccess: true`, new email, no `initialPassword` → `400`
+- ✅ Non-`OFFER` stage → `400`
+- ✅ No `ACCEPTED` offer → `400`
+- ✅ `JobRequisition.remainingOpenings` decrements; auto-`CLOSED` at zero (verified live)
+- ✅ `ON_HOLD`/exhausted requisition at hire time → `409`
+- ✅ Concurrent hires against the last opening → exactly one `200`, the other `409`
+- ✅ `Employee.salary`/`dateOfJoining` exactly match the Accepted Offer's `salary`/`startDate`
+- ✅ `403` for `application:update`-only callers (not `application:hire`), `401` with no token
+- ✅ Nonexistent `id` → `404`
+- ✅ Everything committed atomically — no partial state under any failure point (verified by code inspection)
+
+---
+
+---
+
+# 111. `POST /applications/:id/interviews`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Schedule Interview
+Description:        Creates a new Interview (interviewer + scheduled time) as a child of an Application
+Method:             POST
+URL:                /api/v1/applications/:id/interviews
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `application:update` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: schedules an interview round for a candidate's
+  Application — `docs/domain-recruitment.md` §2: "an optional child
+  record of an Application (scheduled time, interviewer, feedback,
+  recommendation) — kept minimal."
+- **Deliberately minimal, by design (§4's Recommended Practices)** — at
+  creation only `interviewerId`/`scheduledAt` are accepted;
+  `feedback`/`recommendation` are added later via `PATCH` (endpoint
+  113). No interview-panel management, structured scorecards, or
+  multi-round calibration workflow exists — explicitly named as out of
+  scope, not an oversight.
+- **No status gate whatsoever** — unlike every Offer endpoint (115-118)
+  and JobRequisition's status endpoint (96), scheduling an interview has
+  no precondition on `Application.status` at all; an interview can be
+  created regardless of the Application's current stage.
+- **`interviewerId` references an `Employee`, not a `Candidate`** — the
+  interviewer is internal staff; `Interview.interviewerId` is `onDelete:
+  Restrict` (a personnel record with retention value, "same reasoning as
+  `PerformanceReview.reviewerId`").
+- **Expected callers**: recruiter/HR staff coordinating interview
+  scheduling.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `application:update` permission |
+| `Content-Type: application/json`     | **Yes**  |                                                   |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description               |
+| ---- | ------------- | -------- | ------------------------------ |
+| `id` | string (UUID) | **Yes**  | The Application's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "interviewerId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a72",
+  "scheduledAt": "2026-10-01T14:00:00.000Z"
+}
+```
+
+| Field           | Type          | Required | Description                            |
+| ----------------- | ------------- | -------- | ------------------------------------------ |
+| `interviewerId`  | string (UUID) | **Yes**  | Must reference an existing `Employee`        |
+| `scheduledAt`    | string (date) | **Yes**  | Coerced to a `Date`; no future/past constraint |
+
+## 7. Validation Rules
+
+Enforced by `createInterviewSchema`:
+
+- `interviewerId`: `z.string().uuid()`, required.
+- `scheduledAt`: `z.coerce.date()`, required. An entirely missing value
+  produces `"scheduledAt: Invalid input: expected date, received Date"`
+  — the same `z.coerce.date()` quirk documented for Employee's
+  `dateOfJoining` (endpoint 9): `undefined` coerces to an `Invalid Date`
+  (still typeof `Date`) before the type check runs.
+- **No `assertEmployeeAssignable`-style pre-check exists** — unlike
+  JobRequisition's Department/Designation/Branch checks,
+  `interviewerId`'s existence is enforced only by the database's own
+  foreign-key constraint, caught as Prisma error code `P2003` and
+  translated to a `400`.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "interview": {
+    "id": "b7c8d9e0-1f2a-4b3c-4d5e-6f7a8b9c0d1e",
+    "applicationId": "f4a5b6c7-8d9e-4f0a-1b2c-3d4e5f6a7b8c",
+    "interviewerId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a72",
+    "scheduledAt": "2026-10-01T14:00:00.000Z",
+    "feedback": null,
+    "recommendation": null,
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T10:00:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                       | Response (`message`)                                               | When                                                   |
+| ------ | ----------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `400`  | Validation failed                                | e.g. `"interviewerId: Invalid input: expected string, received undefined"` | Missing/malformed field                                     |
+| `400`  | `interviewerId` doesn't reference a real Employee | `"interviewerId: references a record that does not exist"`                | Caught from Prisma's `P2003` foreign-key violation           |
+| `401`  | Missing/invalid/expired access token             | Same as every other protected endpoint                                     | `authMiddleware` failure                                     |
+| `403`  | Caller lacks `application:update`                | `"You do not have permission to perform this action"`                       | Any non-`ADMIN` token                                        |
+| `404`  | No such Application                              | `"Application not found"`                                                   | Nonexistent `id`                                              |
+
+## 10. Postman Test Cases
+
+| #   | Case                                        | Expected |
+| --- | -------------------------------------------------- | -------- |
+| 1   | Valid `interviewerId` + `scheduledAt`                | `201`, `feedback`/`recommendation` both `null` |
+| 2   | Nonexistent `interviewerId`                          | `400`    |
+| 3   | Interview scheduled on an `APPLIED`-stage Application  | `201` — no status gate |
+| 4   | Interview scheduled on a `REJECTED` Application         | `201` — still no status gate, even on a terminal Application |
+| 5   | Nonexistent Application `id`                         | `404`    |
+| 6   | As `MANAGER`/`EMPLOYEE` token                        | `403`    |
+| 7   | No token                                             | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected |
+| ----------------------------------- | -------- |
+| Malformed (non-UUID) `interviewerId`  | `400`    |
+| Missing `scheduledAt`                 | `400`, the `z.coerce.date()` quirk message above |
+| Tampered/expired JWT                  | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                       | Expected Behavior                                                                                           |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Multiple `Interview` rows created for the same Application               | `201` each time — a one-to-many relationship by design, one row per interview round, no limit enforced          |
+| `scheduledAt` set in the past                                            | `201` — no constraint on past vs. future, unlike Offer's own free-entry `startDate` (also unconstrained)         |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can schedule an
+  interview.
+- **Referential integrity**: confirm a crafted `interviewerId` for a
+  nonexistent Employee is caught via the `P2003`-to-`400` mapping, not a
+  raw `500`.
+
+## 14. Database Impact
+
+- **Tables affected**: `Interview` (insert), `AuditLog` (insert), inside
+  one `prisma.$transaction`.
+- **Pre-checks (outside the transaction)**: `Application.findById`
+  (`404` gate) — `interviewerId`'s existence is checked only by the
+  database constraint inside the transaction, not a separate pre-check.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/applications/:id/interviews
+    ↓
+authMiddleware
+    ↓
+requirePermission('application:update')
+    ↓ (403 if not granted)
+validateMiddleware(createInterviewSchema)
+    ↓ (400 if invalid)
+application.controller.createInterview → application.service.createInterview(applicationId, data, actor)
+    ├─ applicationRepository.findById(applicationId) → not found → 404
+    └─ try { prisma.$transaction:
+         ├─ interviewRepository.create({ ...data, applicationId }, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', entityType: 'Interview', afterData, ... }, tx)
+       } catch (P2003) → 400 "interviewerId: references a record that does not exist"
+    ↓
+201 { interview }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup (Application), one insert (relying on the
+database's FK constraint for `interviewerId` validity rather than a
+separate read), one audit-log insert — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why catch `P2003` here for `interviewerId` instead of a
+  pre-check `Employee.findById` the way JobRequisition checks
+  `departmentId`/`designationId`/`branchId`?** A deliberate lighter-weight
+  choice for this specific field — an interviewer reference has no
+  "must be `ACTIVE`" status requirement the way Department/Designation/
+  Branch/Shift assignments do (there's no `Employee.status` enum to
+  check in the first place), so a plain existence check via the
+  database's own constraint is sufficient and avoids an extra query.
+- **Q: Why is this the domain's own explanation for "no status gate"
+  Interview endpoint, unlike every Offer endpoint?** `docs/domain-
+  recruitment.md` §4 frames Interview as deliberately minimal —
+  scheduling/updating/deleting interview rounds is administrative
+  housekeeping around the pipeline, not itself a pipeline-stage-gated
+  action the way creating an Offer is (which *requires* the `OFFER`
+  stage, endpoint 115).
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/applications/$APPLICATION_ID/interviews \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"interviewerId":"5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a72","scheduledAt":"2026-10-01T14:00:00.000Z"}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `interview.id` as `{{interviewId}}` — used by
+endpoints 113/114. Run this once the Application has moved past
+`APPLIED` for narrative realism, though technically it succeeds at any
+stage.
+
+## 20. Testing Checklist
+
+- ✅ Valid create → `201`, `feedback`/`recommendation` both `null`
+- ✅ Works at every Application status, including terminal ones (no status gate)
+- ✅ Nonexistent `interviewerId` → `400`
+- ✅ Nonexistent Application `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created, `entityType: 'Interview'`
+
+---
+
+---
+
+# 112. `GET /applications/:id/interviews`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           List Interviews
+Description:        Returns every Interview scheduled for an Application, oldest scheduled time first
+Method:             GET
+URL:                /api/v1/applications/:id/interviews
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `application:read` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: reviews the interview history/timeline for one
+  Application in isolation — the same data also appears nested inside
+  `GET /applications/:id` (endpoint 108), but this endpoint serves it
+  standalone.
+- **Sorted `scheduledAt: 'asc'`** — chronological, oldest round first,
+  identical ordering to the `interviews` array embedded in endpoint 108.
+- **Expected callers**: recruiter/HR staff, or an interviewer checking
+  their own upcoming rounds (though no `own` scoping exists — see
+  Interview Notes).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                        |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `application:read` permission   |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description               |
+| ---- | ------------- | -------- | ------------------------------ |
+| `id` | string (UUID) | **Yes**  | The Application's id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+None beyond the path parameter; a nonexistent Application `id` produces
+`404`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "interviews": [
+    {
+      "id": "b7c8d9e0-1f2a-4b3c-4d5e-6f7a8b9c0d1e",
+      "applicationId": "f4a5b6c7-8d9e-4f0a-1b2c-3d4e5f6a7b8c",
+      "interviewerId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a72",
+      "scheduledAt": "2026-10-01T14:00:00.000Z",
+      "feedback": "Strong technical fundamentals",
+      "recommendation": "YES",
+      "createdAt": "2026-09-16T10:00:00.000Z",
+      "updatedAt": "2026-09-16T16:00:00.000Z"
+    }
+  ]
+}
+```
+
+No pagination — the full array for the Application in one response,
+same convention as `GET /candidates/:id/documents` (endpoint 104).
+
+## 9. Error Responses
+
+| Status | Reason                          | Response (`message`)      | When                          |
+| ------ | ---------------------------------- | -------------------------------- | -------------------------------- |
+| `401`  | Missing/invalid/expired access token | Same as every other protected endpoint | `authMiddleware` failure |
+| `403`  | Caller lacks `application:read`    | `"You do not have permission to perform this action"` | Any non-`ADMIN` token |
+| `404`  | No such Application                | `"Application not found"`        | Nonexistent `id`                  |
+
+## 10. Postman Test Cases
+
+| #   | Case                                 | Expected |
+| --- | ------------------------------------------- | -------- |
+| 1   | Application with two scheduled interviews     | `200`, both returned, oldest first |
+| 2   | Application with zero interviews              | `200`, `interviews: []` |
+| 3   | Nonexistent Application `id`                  | `404`    |
+| 4   | As `MANAGER`/`EMPLOYEE` token                 | `403`    |
+| 5   | No token                                      | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                  | Expected |
+| ---------------------------- | -------- |
+| Malformed (non-UUID) Application `id` | `404` |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+None beyond the empty-array case above.
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can list an
+  Application's interviews.
+
+## 14. Database Impact
+
+Read-only — `application.findById` (existence check) followed by
+`interview.findMany({ where: { applicationId }, orderBy: { scheduledAt:
+'asc' } })`, indexed via `Interview_applicationId_idx`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/applications/:id/interviews
+    ↓
+authMiddleware
+    ↓
+requirePermission('application:read')
+    ↓ (403 if not granted)
+application.controller.listInterviews → application.service.listInterviews(applicationId)
+    ├─ applicationRepository.findById(applicationId) → not found → 404
+    └─ interviewRepository.findAllByApplicationId(applicationId)
+    ↓
+200 { interviews }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup plus one indexed `findMany` — no notable
+performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why no `own` scoping so an interviewer can see only their own
+  assigned interviews?** ADR-RC05: no Recruitment aggregate has a
+  natural "own" concept in this pass — every list/read endpoint is
+  gated by the single, unscoped `application:read`/`application:*`
+  permission, ADMIN-only. An interviewer-facing "my interviews" view
+  would be a genuinely new capability, not a variant of this endpoint,
+  and no verified requirement named it.
+
+## 18. cURL Examples
+
+```bash
+curl -s http://localhost:3000/api/v1/applications/$APPLICATION_ID/interviews \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this after `POST /applications/:id/interviews` (endpoint 111) to
+confirm the scheduled interview appears.
+
+## 20. Testing Checklist
+
+- ✅ Returns every interview for the Application, oldest scheduled time first
+- ✅ Empty array for an Application with none
+- ✅ Nonexistent Application `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+
+---
+
+---
+
+# 113. `PATCH /applications/:id/interviews/:interviewId`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Update Interview
+Description:        Adds/updates feedback, recommendation, and/or reschedules an existing Interview
+Method:             PATCH
+URL:                /api/v1/applications/:id/interviews/:interviewId
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `application:update` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: records the outcome of an interview round after it
+  happens — feedback text and a recommendation — and/or reschedules it
+  before it happens.
+- **A true partial update, all three fields optional** — any subset of
+  `feedback`/`recommendation`/`scheduledAt` may be supplied; omitted
+  fields are left unchanged.
+- **No status gate** — same as creation (endpoint 111), this can be
+  called regardless of the parent Application's current stage.
+- **`interviewId` is scoped to `applicationId`** —
+  `interviewRepository.findById(interviewId, applicationId)` uses
+  `findFirst({ where: { id, applicationId } })`; an `interviewId`
+  belonging to a *different* Application produces the same `404` as a
+  nonexistent one.
+- **Expected callers**: the interviewer, or recruiter/HR staff recording
+  feedback on their behalf (no ownership distinction is enforced — see
+  Interview Notes).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `application:update` permission |
+| `Content-Type: application/json`     | **Yes**  |                                                   |
+
+## 4. Path Parameters
+
+| Name          | Type          | Required | Description                                  |
+| --------------- | ------------- | -------- | ------------------------------------------------- |
+| `id`          | string (UUID) | **Yes**  | The Application's id                        |
+| `interviewId` | string (UUID) | **Yes**  | The Interview's id, must belong to `id` |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "feedback": "Strong technical fundamentals",
+  "recommendation": "YES"
+}
+```
+
+| Field              | Type          | Required | Description                                              |
+| -------------------- | ------------- | -------- | -------------------------------------------------------------- |
+| `feedback`          | string        | No       | Trimmed, minimum length 1 if present                             |
+| `recommendation`    | string (enum) | No       | One of `STRONG_YES`, `YES`, `NO`, `STRONG_NO`                    |
+| `scheduledAt`       | string (date) | No       | Coerced to a `Date`; reschedules the interview                    |
+
+## 7. Validation Rules
+
+Enforced by `updateInterviewSchema`:
+
+- `feedback`: `z.string().trim().min(1)`, optional.
+- `recommendation`: `z.enum(['STRONG_YES', 'YES', 'NO', 'STRONG_NO'])`,
+  optional.
+- `scheduledAt`: `z.coerce.date()`, optional.
+- Service-layer check: `interviewRepository.findById(interviewId,
+  applicationId)` → `404` if missing or mismatched.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "interview": {
+    "id": "b7c8d9e0-1f2a-4b3c-4d5e-6f7a8b9c0d1e",
+    "applicationId": "f4a5b6c7-8d9e-4f0a-1b2c-3d4e5f6a7b8c",
+    "interviewerId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a72",
+    "scheduledAt": "2026-10-01T14:00:00.000Z",
+    "feedback": "Strong technical fundamentals",
+    "recommendation": "YES",
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T17:00:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                        | Response (`message`)                                          | When                                              |
+| ------ | -------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------- |
+| `400`  | Validation failed                                    | e.g. `"recommendation: Invalid option: expected one of "STRONG_YES"\|"YES"\|"NO"\|"STRONG_NO""` | Invalid enum value, blank `feedback`                  |
+| `401`  | Missing/invalid/expired access token                  | Same as every other protected endpoint                                | `authMiddleware` failure                              |
+| `403`  | Caller lacks `application:update`                     | `"You do not have permission to perform this action"`                  | Any non-`ADMIN` token                                 |
+| `404`  | Nonexistent Interview, or belongs to a different Application | `"Interview not found"`                                        | Invalid/mismatched `interviewId`                       |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                 | Expected |
+| --- | ------------------------------------------------------------ | -------- |
+| 1   | Update `feedback` + `recommendation` together                   | `200`, both set |
+| 2   | Update `scheduledAt` only (reschedule)                            | `200`, `feedback`/`recommendation` unchanged |
+| 3   | `interviewId` belonging to a different Application                | `404`    |
+| 4   | Invalid `recommendation` value                                    | `400`    |
+| 5   | As `MANAGER`/`EMPLOYEE` token                                     | `403`    |
+| 6   | No token                                                          | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected |
+| ----------------------------------- | -------- |
+| Whitespace-only `feedback`            | `400`    |
+| Tampered/expired JWT                  | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior                                                                                       |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Updating feedback on an interview whose Application is now `REJECTED`/`HIRED` | `200` — no status gate, recording historical interview outcomes remains possible indefinitely               |
+| Empty body `{}`                                                          | `200`, no fields changed — every field on this schema is optional                                           |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can update an
+  interview.
+- **BOLA**: confirm an `interviewId` valid for one Application cannot be
+  updated through a different Application's `:id` in the path — verified
+  by the scoped `findFirst({ id, applicationId })` lookup.
+
+## 14. Database Impact
+
+- **Tables affected**: `Interview` (update), `AuditLog` (insert), inside
+  one `prisma.$transaction`.
+- **Pre-checks**: `Interview.findById(interviewId, applicationId)`
+  (`404` gate, scoped).
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/applications/:id/interviews/:interviewId
+    ↓
+authMiddleware
+    ↓
+requirePermission('application:update')
+    ↓ (403 if not granted)
+validateMiddleware(updateInterviewSchema)
+    ↓ (400 if invalid)
+application.controller.updateInterview → application.service.updateInterview(applicationId, interviewId, data, actor)
+    ├─ interviewRepository.findById(interviewId, applicationId) → not found → 404
+    └─ prisma.$transaction:
+         ├─ interviewRepository.update(interviewId, data, tx)
+         └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'Interview', beforeData, afterData, ... }, tx)
+    ↓
+200 { interview }
+```
+
+## 16. Performance Notes
+
+One scoped lookup, one update, one audit-log insert — no notable
+performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why no ownership check tying this update to the specific
+  `interviewerId` on the row (i.e. only the assigned interviewer can add
+  their own feedback)?** ADR-RC05's blanket ADMIN-only design applies
+  uniformly across the domain — there is no `own` variant of
+  `application:update` the way Performance's `selfAssess:own` exists for
+  the reviewed employee. Any `ADMIN`-permissioned caller can record
+  feedback on any interview, including one they didn't conduct
+  themselves; this is a coarser authority model than Performance's, by
+  deliberate domain-level choice (§5's "Recruiter/HR system role... would
+  be speculative").
+- **Q: Why can `scheduledAt` be changed after the interview already has
+  feedback recorded?** No ordering dependency is enforced between the
+  two — the schema treats them as independent optional fields; nothing
+  in `docs/domain-recruitment.md` §4 names a sequencing rule for
+  Interview's minimal fields.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/applications/$APPLICATION_ID/interviews/$INTERVIEW_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"feedback":"Strong technical fundamentals","recommendation":"YES"}'
+```
+
+## 19. Postman Collection Notes
+
+Run this after `POST /applications/:id/interviews` (endpoint 111) using
+the saved `{{interviewId}}`, then confirm via `GET
+/applications/:id/interviews` (endpoint 112) that the feedback appears.
+
+## 20. Testing Checklist
+
+- ✅ Partial update of any subset of fields → `200`, others unchanged
+- ✅ Works regardless of parent Application status
+- ✅ Cross-application `interviewId` → `404`, not a leak
+- ✅ Invalid `recommendation` → `400`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 114. `DELETE /applications/:id/interviews/:interviewId`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Delete Interview
+Description:        Removes an Interview record scheduled in error
+Method:             DELETE
+URL:                /api/v1/applications/:id/interviews/:interviewId
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `application:update` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: removes a duplicate or mistakenly-scheduled
+  interview round.
+- **A genuine hard delete, no reference-count guard** — unlike
+  Candidate/JobRequisition's own deletes, `Interview` has no child
+  records of its own referencing it, so there is nothing to check before
+  deleting; it simply removes the row.
+- **`interviewId` is scoped to `applicationId`**, same cross-Application
+  protection as the update endpoint (113).
+- **Expected callers**: recruiter/HR staff correcting a scheduling
+  mistake.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `application:update` permission |
+
+## 4. Path Parameters
+
+| Name          | Type          | Required | Description                                  |
+| --------------- | ------------- | -------- | ------------------------------------------------- |
+| `id`          | string (UUID) | **Yes**  | The Application's id                        |
+| `interviewId` | string (UUID) | **Yes**  | The Interview's id, must belong to `id` |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- Service-layer check: `interviewRepository.findById(interviewId,
+  applicationId)` → `404` if missing or belonging to a different
+  Application.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "message": "Interview deleted successfully"
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                        | Response (`message`)                     | When                                              |
+| ------ | -------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token                  | Same as every other protected endpoint           | `authMiddleware` failure                              |
+| `403`  | Caller lacks `application:update`                     | `"You do not have permission to perform this action"` | Any non-`ADMIN` token                          |
+| `404`  | Nonexistent Interview, or belongs to a different Application | `"Interview not found"`                    | Invalid/mismatched `interviewId`                       |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                | Expected |
+| --- | ------------------------------------------------------------ | -------- |
+| 1   | Delete an existing interview belonging to the Application       | `200`    |
+| 2   | `interviewId` belonging to a different Application               | `404`    |
+| 3   | Nonexistent `interviewId`                                        | `404`    |
+| 4   | As `MANAGER`/`EMPLOYEE` token                                    | `403`    |
+| 5   | No token                                                         | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                  | Expected |
+| ---------------------------- | -------- |
+| Deleting the same interview twice | `200` then `404` |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                              | Expected Behavior                                                       |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| Deleting an interview that already has `feedback`/`recommendation` recorded | `200` — no special protection for a "completed" interview; deletion is unconditional |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can delete an
+  interview.
+- **BOLA**: confirm cross-Application scoping via `findFirst({ id,
+  applicationId })`.
+
+## 14. Database Impact
+
+- **Tables affected**: `Interview` (delete), `AuditLog` (insert), inside
+  one `prisma.$transaction`.
+- **Pre-checks**: `Interview.findById(interviewId, applicationId)`
+  (`404` gate, scoped).
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/applications/:id/interviews/:interviewId
+    ↓
+authMiddleware
+    ↓
+requirePermission('application:update')
+    ↓ (403 if not granted)
+application.controller.deleteInterview → application.service.deleteInterview(applicationId, interviewId, actor)
+    ├─ interviewRepository.findById(interviewId, applicationId) → not found → 404
+    └─ prisma.$transaction:
+         ├─ interviewRepository.remove(interviewId, tx)
+         └─ auditLogRepository.create({ action: 'DELETE', entityType: 'Interview', beforeData, afterData: null, ... }, tx)
+    ↓
+200 { message: 'Interview deleted successfully' }
+```
+
+## 16. Performance Notes
+
+One scoped lookup, one delete, one audit-log insert — no notable
+performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why no reference-count guard, unlike Candidate/JobRequisition's
+  deletes?** Nothing in the schema references `Interview.id` as a
+  foreign key from any other table — it's a genuine leaf record, so
+  there's no analogous "blocked while referenced" scenario to defend
+  against.
+- **Q: Is deleting an interview with recorded feedback a real, intended
+  capability, or an oversight?** Genuinely unconditional by design — the
+  domain doc names no retention requirement for individual interview
+  rounds the way it explicitly flags one for Candidate PII (ADR-RC04);
+  this endpoint's simplicity reflects Interview's own "kept minimal"
+  design goal (§4).
+
+## 18. cURL Examples
+
+```bash
+curl -i -X DELETE http://localhost:3000/api/v1/applications/$APPLICATION_ID/interviews/$INTERVIEW_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this against an interview created solely for this test to avoid
+disrupting an interview history another test in the collection depends
+on.
+
+## 20. Testing Checklist
+
+- ✅ Valid delete → `200`, row removed
+- ✅ Cross-application `interviewId` → `404`, not a leak
+- ✅ Nonexistent `interviewId` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created, `entityType: 'Interview'`, `afterData: null`
+
+---
+
+---
+
+# 115. `POST /applications/:id/offers`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Create Offer
+Description:        Proposes compensation/start-date terms to a Candidate for an Application currently in the OFFER stage
+Method:             POST
+URL:                /api/v1/applications/:id/offers
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `application:update` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: records the compensation/start-date terms proposed
+  to a candidate — `docs/domain-recruitment.md` §2: "compensation and
+  start-date terms proposed to a Candidate for a specific Application."
+- **Requires the Application to already be in the `OFFER` stage** —
+  `application.status !== 'OFFER'` → `400`
+  `"This application must be in the Offer stage before an Offer can be
+  created (§4)"`. Reach `OFFER` first via `PATCH .../status` (endpoint
+  109).
+- **Only one `PENDING` Offer may exist per Application at a time** — a
+  **partial unique database index**, `Offer_one_pending_per_application`
+  (`ON "Offer"("applicationId") WHERE "status" = 'PENDING'`), the same
+  mechanism as Employee's own partial-unique `userId` index and
+  Payroll's duplicate-period guard. A second create attempt while one is
+  already `PENDING` throws Postgres error `P2002`, caught and translated
+  to a `409`.
+- **`salary` is free-entry, no Grade/Band validation** —
+  `docs/domain-recruitment.md` §5: "no Grade/Band domain exists to
+  validate against"; any positive number under the sanity ceiling is
+  accepted.
+- **Expected callers**: `ADMIN`/hiring manager, extending an offer.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `application:update` permission |
+| `Content-Type: application/json`     | **Yes**  |                                                   |
+
+## 4. Path Parameters
+
+| Name | Type          | Required | Description               |
+| ---- | ------------- | -------- | ------------------------------ |
+| `id` | string (UUID) | **Yes**  | The Application's id, must be `OFFER` stage |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "salary": 95000,
+  "startDate": "2026-11-01"
+}
+```
+
+| Field        | Type          | Required | Description                              |
+| -------------- | ------------- | -------- | --------------------------------------------- |
+| `salary`     | number        | **Yes**  | Positive, capped at 100,000,000                 |
+| `startDate`  | string (date) | **Yes**  | Coerced to a `Date`; no future/past constraint    |
+
+## 7. Validation Rules
+
+Enforced by `createOfferSchema`:
+
+- `salary`: `z.number().positive('Salary must be a positive number').max(100_000_000)`,
+  required. `0`/negative produces `"salary: Salary must be a positive
+  number"`; over the cap produces `"salary: Too big: expected number to
+  be <=100000000"` (no custom message on the `.max()`, unlike Employee's
+  own `salary` field, which has a custom "unreasonably high" message —
+  this one uses Zod's default).
+- `startDate`: `z.coerce.date()`, required. Missing entirely produces the
+  same `z.coerce.date()`-quirk message as Interview's `scheduledAt`
+  (§7 of endpoint 111).
+- Service-layer order of checks:
+  1. `applicationRepository.findById(applicationId)` → `404` if missing.
+  2. `application.status !== 'OFFER'` → `400`.
+  3. Create, catching `P2002` → `409` if a `PENDING` offer already
+     exists.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "offer": {
+    "id": "c8d9e0f1-2a3b-4c4d-5e6f-7a8b9c0d1e2f",
+    "applicationId": "f4a5b6c7-8d9e-4f0a-1b2c-3d4e5f6a7b8c",
+    "salary": "95000",
+    "startDate": "2026-11-01T00:00:00.000Z",
+    "status": "PENDING",
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T10:00:00.000Z"
+  }
+}
+```
+
+`salary` is `Decimal`, serializes as a JSON string — the same
+`Employee.salary` convention.
+
+## 9. Error Responses
+
+| Status | Reason                                       | Response (`message`)                                                              | When                                              |
+| ------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| `400`  | Validation failed — non-positive `salary`         | `"salary: Salary must be a positive number"`                                                | `0` or negative                                       |
+| `400`  | Validation failed — `salary` over the cap          | `"salary: Too big: expected number to be <=100000000"`                                       | Over 100,000,000                                       |
+| `400`  | Application not in `OFFER` stage                   | `"This application must be in the Offer stage before an Offer can be created (§4)"`         | e.g. still `INTERVIEW`, or already `HIRED`             |
+| `401`  | Missing/invalid/expired access token               | Same as every other protected endpoint                                                      | `authMiddleware` failure                               |
+| `403`  | Caller lacks `application:update`                  | `"You do not have permission to perform this action"`                                        | Any non-`ADMIN` token                                  |
+| `404`  | No such Application                                | `"Application not found"`                                                                    | Nonexistent `id`                                        |
+| `409`  | A `PENDING` offer already exists on this Application | `"This application already has a Pending offer - decline, expire, or accept it before creating a new one"` | The partial unique index rejects the second insert     |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                | Expected |
+| --- | ------------------------------------------------------------ | -------- |
+| 1   | Application at `OFFER` stage, valid body                        | `201`, `status: "PENDING"` |
+| 2   | Same Application, second create attempt while the first is still `PENDING` | `409` |
+| 3   | Create after the prior offer was `DECLINED`/`EXPIRED`             | `201` — a new `PENDING` offer is allowed once none is currently pending |
+| 4   | Application not yet at `OFFER` stage                              | `400`    |
+| 5   | `salary: 0`                                                        | `400`    |
+| 6   | `salary: 200000000` (over the cap)                                 | `400`    |
+| 7   | Nonexistent Application `id`                                       | `404`    |
+| 8   | As `MANAGER`/`EMPLOYEE` token                                      | `403`    |
+| 9   | No token                                                           | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected |
+| ----------------------------------- | -------- |
+| Malformed `startDate`                 | `400`    |
+| Tampered/expired JWT                  | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                              | Expected Behavior                                                                                                         |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Two concurrent create requests for the same Application, both racing while none is yet `PENDING` | Exactly one succeeds (`201`); the other's insert violates the partial unique index → `409` — atomic at the database level, not an application-level lock |
+| `startDate` set in the past                                                     | `201` — no constraint; free-entry, consistent with `salary`'s own lack of Grade/Band validation                                 |
+| A `salary` with fractional cents (e.g. `95000.5`)                              | `201` — `Decimal` stores it precisely; Zod's `.number()` accepts any finite positive value, no integer requirement              |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can create an offer.
+- **Business-logic bypass**: confirm the `OFFER`-stage precondition
+  cannot be bypassed, and that the one-`PENDING`-offer invariant holds
+  even under a race (the primary reason it's a database-level partial
+  unique index and not merely an application-level pre-check).
+
+## 14. Database Impact
+
+- **Tables affected**: `Offer` (insert), `AuditLog` (insert), inside one
+  `prisma.$transaction`. Backed by the partial unique index
+  `Offer_one_pending_per_application` for the one-`PENDING`-per-
+  Application invariant, and `Offer_applicationId_idx` generally.
+- **Pre-checks (outside the transaction)**: `Application.findById`.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/applications/:id/offers
+    ↓
+authMiddleware
+    ↓
+requirePermission('application:update')
+    ↓ (403 if not granted)
+validateMiddleware(createOfferSchema)
+    ↓ (400 if invalid)
+application.controller.createOffer → application.service.createOffer(applicationId, data, actor)
+    ├─ applicationRepository.findById(applicationId) → not found → 404
+    ├─ application.status !== 'OFFER' → 400
+    └─ try { prisma.$transaction:
+         ├─ offerRepository.create({ ...data, applicationId }, tx)
+         └─ auditLogRepository.create({ action: 'CREATE', entityType: 'Offer', afterData, ... }, tx)
+       } catch (P2002) → 409 "This application already has a Pending offer..."
+    ↓
+201 { offer }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup, one insert guarded by a partial unique index,
+one audit-log insert — no notable performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why a partial unique index instead of a service-layer
+  "check-then-create" for the one-`PENDING`-offer rule?** The same
+  defense-in-depth reasoning every create-with-uniqueness endpoint in
+  this codebase uses (e.g. PerformanceReview's `(employeeId,
+  reviewCycleId)`) — a plain read-then-write has a race window between
+  the check and the insert; the database constraint is the actual source
+  of truth, with the pre-check (here, just the `OFFER`-stage check) only
+  handling the cases the index itself can't express.
+- **Q: Why can multiple `DECLINED`/`EXPIRED` offers accumulate on one
+  Application over time?** The partial index only constrains `PENDING`
+  rows (`WHERE status = 'PENDING'`) — once an offer leaves that status,
+  a fresh one can be created freely, preserving the full negotiation
+  history (e.g. an initial offer declined, followed by a revised one)
+  rather than forcing a single mutable offer row.
+- **Q: Why does `createOfferSchema` not accept a `status`?** Every Offer
+  is always created `PENDING` — the only way to reach any other status
+  is via the dedicated accept/decline/expire endpoints (116-118), the
+  same "no client-set terminal/interim status at creation" pattern
+  Application's own `status` field follows.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/applications/$APPLICATION_ID/offers \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"salary":95000,"startDate":"2026-11-01"}'
+```
+
+## 19. Postman Collection Notes
+
+Move the Application to `OFFER` stage (endpoint 109) before this call —
+attempting it any earlier correctly `400`s. Save the returned `offer.id`
+as `{{offerId}}` — used by endpoints 116-118.
+
+## 20. Testing Checklist
+
+- ✅ Valid create at `OFFER` stage → `201`, `status: "PENDING"`
+- ✅ Second create while one is `PENDING` → `409`
+- ✅ Create allowed again after the prior offer leaves `PENDING`
+- ✅ Non-`OFFER`-stage Application → `400`
+- ✅ `salary <= 0` / over the cap → `400`
+- ✅ Nonexistent Application `id` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created, `entityType: 'Offer'`
+
+---
+
+---
+
+# 116. `PATCH /applications/:id/offers/:offerId/accept`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Accept Offer
+Description:        Transitions a PENDING Offer to ACCEPTED — the precondition for Hire (endpoint 110)
+Method:             PATCH
+URL:                /api/v1/applications/:id/offers/:offerId/accept
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `application:update` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: records that the candidate has accepted the
+  proposed terms — the only route by which an Offer becomes eligible to
+  be hired against (endpoint 110 requires exactly this).
+- **Only a currently-`PENDING` offer can be accepted** — any other
+  current status (`ACCEPTED`, `DECLINED`, `EXPIRED`) → `409`. There is
+  no re-acceptance or un-acceptance path.
+- **Shares its implementation with decline/expire (117/118)** — all
+  three call the same internal `transitionOffer(offerId, targetStatus,
+  actor)`, differing only in the target status string. The `id`
+  (Application) path segment is present in the route for URL
+  consistency with the rest of this sub-resource, but the service
+  function itself resolves the Offer directly by `offerId` alone —
+  **`id` is not actually consulted** by `acceptOffer`.
+- **Expected callers**: recruiter/HR staff, recording the candidate's
+  verbal/written acceptance.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `application:update` permission |
+
+## 4. Path Parameters
+
+| Name       | Type          | Required | Description                                                                 |
+| ------------ | ------------- | -------- | --------------------------------------------------------------------------------- |
+| `id`       | string (UUID) | **Yes**  | The Application's id — present for URL consistency, not read by the service |
+| `offerId`  | string (UUID) | **Yes**  | The Offer's id, must currently be `PENDING`                      |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- Service-layer order of checks (`transitionOffer`):
+  1. `offerRepository.findById(offerId)` → `404` if missing.
+  2. `offer.status !== 'PENDING'` → `409`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "offer": {
+    "id": "c8d9e0f1-2a3b-4c4d-5e6f-7a8b9c0d1e2f",
+    "applicationId": "f4a5b6c7-8d9e-4f0a-1b2c-3d4e5f6a7b8c",
+    "salary": "95000",
+    "startDate": "2026-11-01T00:00:00.000Z",
+    "status": "ACCEPTED",
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T18:00:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                            | Response (`message`)                                     | When                                              |
+| ------ | ------------------------------------ | ------------------------------------------------------------------ | ---------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token    | Same as every other protected endpoint                             | `authMiddleware` failure                              |
+| `403`  | Caller lacks `application:update`       | `"You do not have permission to perform this action"`               | Any non-`ADMIN` token                                 |
+| `404`  | No such Offer                           | `"Offer not found"`                                                 | Nonexistent `offerId`                                  |
+| `409`  | Offer isn't currently `PENDING`         | `"Cannot transition an offer from <status> to ACCEPTED"`            | Already `ACCEPTED`/`DECLINED`/`EXPIRED`                |
+
+## 10. Postman Test Cases
+
+| #   | Case                                | Expected |
+| --- | ------------------------------------------- | -------- |
+| 1   | `PENDING → ACCEPTED`                          | `200`    |
+| 2   | Already `ACCEPTED`, accept again               | `409`    |
+| 3   | `DECLINED`/`EXPIRED`, attempt accept           | `409`    |
+| 4   | Nonexistent `offerId`                          | `404`    |
+| 5   | As `MANAGER`/`EMPLOYEE` token                  | `403`    |
+| 6   | No token                                       | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                  | Expected |
+| ---------------------------- | -------- |
+| A valid `offerId` paired with an unrelated/wrong Application `id` in the path | `200` still succeeds — `id` is not consulted (§2), a documented, deliberate quirk, not a bug |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                    | Expected Behavior                                                                                 |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| Accepting an Offer whose parent Application has since moved past `OFFER` (e.g. someone `PATCH`ed it to `REJECTED` in the meantime) | `200` still succeeds — `transitionOffer` checks only the Offer's own status, never the parent Application's current stage |
+| Accepting an Offer, then attempting to create a second `PENDING` Offer on the same Application | `201` — the partial unique index only blocks a second **`PENDING`** row; an `ACCEPTED` offer doesn't count against it (endpoint 115) |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can accept an offer.
+- **Business-logic bypass**: confirm a non-`PENDING` offer can never be
+  re-accepted through this endpoint.
+
+## 14. Database Impact
+
+- **Tables affected**: `Offer` (update), `AuditLog` (insert), inside one
+  `prisma.$transaction`.
+- **Pre-checks**: `Offer.findById(offerId)` (`404` gate).
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/applications/:id/offers/:offerId/accept
+    ↓
+authMiddleware
+    ↓
+requirePermission('application:update')
+    ↓ (403 if not granted)
+application.controller.acceptOffer → application.service.acceptOffer(offerId, actor)
+    └─ transitionOffer(offerId, 'ACCEPTED', actor)
+         ├─ offerRepository.findById(offerId) → not found → 404
+         ├─ offer.status !== 'PENDING' → 409
+         └─ prisma.$transaction:
+              ├─ offerRepository.update(offerId, { status: 'ACCEPTED' }, tx)
+              └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'Offer', beforeData, afterData, ... }, tx)
+    ↓
+200 { offer }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup, one update, one audit-log insert — no notable
+performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Why does the route include `:id` (the Application) at all if
+  `acceptOffer` never reads it?** URL consistency with the rest of this
+  Application-scoped sub-resource family
+  (`/applications/:id/offers/:offerId/...`) — `Offer.applicationId`
+  already uniquely determines the parent, so re-verifying `:id` against
+  it would be redundant, not a missing safety check; `offerId` alone is
+  globally unique and sufficient.
+- **Q: What is the actual precondition Hire (endpoint 110) checks —
+  "any `ACCEPTED` offer" or "the most recent one"?** `application.offers.find(o
+  => o.status === 'ACCEPTED')` — the *first* match in array order (offers
+  are fetched newest-created-first), not explicitly "most recent." In
+  practice only one `ACCEPTED` offer should ever exist per Application
+  in a normal flow (the partial-unique index only prevents duplicate
+  `PENDING` rows, not duplicate `ACCEPTED` ones, but nothing in this
+  service ever creates a second Offer once one is already `ACCEPTED`
+  without first leaving `OFFER` stage and returning — a narrow,
+  unenforced edge no verified requirement identified).
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/applications/$APPLICATION_ID/offers/$OFFER_ID/accept \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this before `POST /applications/:id/hire` (endpoint 110) — hiring
+requires exactly this transition to have already happened.
+
+## 20. Testing Checklist
+
+- ✅ `PENDING → ACCEPTED` → `200`
+- ✅ Re-accepting an already-`ACCEPTED`/`DECLINED`/`EXPIRED` offer → `409`
+- ✅ Nonexistent `offerId` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+
+---
+
+---
+
+# 117. `PATCH /applications/:id/offers/:offerId/decline`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Decline Offer
+Description:        Transitions a PENDING Offer to DECLINED
+Method:             PATCH
+URL:                /api/v1/applications/:id/offers/:offerId/decline
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `application:update` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: records that the candidate turned down the
+  proposed terms, freeing the Application to receive a revised Offer
+  (endpoint 115) — the partial-unique-index guard only blocks a *second
+  `PENDING`* offer, so declining the current one reopens that door.
+- **Structurally identical to accept (116)**, sharing the same
+  `transitionOffer` helper with `targetStatus: 'DECLINED'` — only a
+  currently-`PENDING` offer can be declined; same `:id`-unused quirk.
+- **Expected callers**: recruiter/HR staff, recording the candidate's
+  decision.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `application:update` permission |
+
+## 4. Path Parameters
+
+| Name       | Type          | Required | Description                                                                 |
+| ------------ | ------------- | -------- | --------------------------------------------------------------------------------- |
+| `id`       | string (UUID) | **Yes**  | The Application's id — present for URL consistency, not read by the service |
+| `offerId`  | string (UUID) | **Yes**  | The Offer's id, must currently be `PENDING`                      |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same as endpoint 116, target status `DECLINED` instead of `ACCEPTED`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "offer": {
+    "id": "c8d9e0f1-2a3b-4c4d-5e6f-7a8b9c0d1e2f",
+    "applicationId": "f4a5b6c7-8d9e-4f0a-1b2c-3d4e5f6a7b8c",
+    "salary": "95000",
+    "startDate": "2026-11-01T00:00:00.000Z",
+    "status": "DECLINED",
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T18:00:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                            | Response (`message`)                                     | When                                              |
+| ------ | ------------------------------------ | ------------------------------------------------------------------ | ---------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token    | Same as every other protected endpoint                             | `authMiddleware` failure                              |
+| `403`  | Caller lacks `application:update`       | `"You do not have permission to perform this action"`               | Any non-`ADMIN` token                                 |
+| `404`  | No such Offer                           | `"Offer not found"`                                                 | Nonexistent `offerId`                                  |
+| `409`  | Offer isn't currently `PENDING`         | `"Cannot transition an offer from <status> to DECLINED"`            | Already `ACCEPTED`/`DECLINED`/`EXPIRED`                |
+
+## 10. Postman Test Cases
+
+| #   | Case                                | Expected |
+| --- | ------------------------------------------- | -------- |
+| 1   | `PENDING → DECLINED`                          | `200`    |
+| 2   | Already `DECLINED`, decline again              | `409`    |
+| 3   | `ACCEPTED`/`EXPIRED`, attempt decline          | `409`    |
+| 4   | Nonexistent `offerId`                          | `404`    |
+| 5   | As `MANAGER`/`EMPLOYEE` token                  | `403`    |
+| 6   | No token                                       | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                  | Expected |
+| ---------------------------- | -------- |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                      | Expected Behavior                                                                             |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Declining an offer, then immediately creating a new `PENDING` offer on the same Application | `201` on the new create — declining frees the partial-unique-index slot (endpoint 115's Interview Notes) |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can decline an offer.
+
+## 14. Database Impact
+
+- **Tables affected**: `Offer` (update), `AuditLog` (insert), inside one
+  `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/applications/:id/offers/:offerId/decline
+    ↓
+authMiddleware
+    ↓
+requirePermission('application:update')
+    ↓ (403 if not granted)
+application.controller.declineOffer → application.service.declineOffer(offerId, actor)
+    └─ transitionOffer(offerId, 'DECLINED', actor)
+         ├─ offerRepository.findById(offerId) → not found → 404
+         ├─ offer.status !== 'PENDING' → 409
+         └─ prisma.$transaction:
+              ├─ offerRepository.update(offerId, { status: 'DECLINED' }, tx)
+              └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'Offer', beforeData, afterData, ... }, tx)
+    ↓
+200 { offer }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup, one update, one audit-log insert — no notable
+performance concerns.
+
+## 17. Interview Notes
+
+- **Q: What's the practical difference between `DECLINED` and
+  `EXPIRED` (endpoint 118) from a reporting standpoint?** `DECLINED`
+  means the candidate actively turned it down; `EXPIRED` means the offer
+  window lapsed with no response — both free the Application to receive
+  a new `PENDING` offer identically, but they preserve a materially
+  different signal in the historical record for later pipeline-
+  conversion reporting (named as a future consumer in
+  `docs/domain-recruitment.md` §2, not designed here).
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/applications/$APPLICATION_ID/offers/$OFFER_ID/decline \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this against a fresh `PENDING` offer created specifically for this
+test, distinct from the one accepted in endpoint 116's own test run, to
+avoid a `409` from an already-transitioned offer.
+
+## 20. Testing Checklist
+
+- ✅ `PENDING → DECLINED` → `200`
+- ✅ Re-declining an already-transitioned offer → `409`
+- ✅ Nonexistent `offerId` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created
+- ✅ A new `PENDING` offer can be created afterward (frees the partial-unique-index slot)
+
+---
+
+---
+
+# 118. `PATCH /applications/:id/offers/:offerId/expire`
+
+## 1. Endpoint Information
+
+```
+Feature:            Recruitment Domain (2026-09-16, feature/25-recruitment-domain)
+Endpoint:           Expire Offer
+Description:        Transitions a PENDING Offer to EXPIRED
+Method:             PATCH
+URL:                /api/v1/applications/:id/offers/:offerId/expire
+API Version:        v1
+Module:             modules/recruitment
+Authentication:     Yes (Bearer access token)
+Authorization:      `application:update` permission required (ADMIN only, as seeded)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: marks an offer whose response window lapsed with no
+  candidate decision — an explicit, recruiter-triggered action, not an
+  automatic time-based transition (no scheduled job exists anywhere in
+  this project to expire offers on its own; see Interview Notes).
+- **Structurally identical to accept/decline (116/117)**, sharing
+  `transitionOffer` with `targetStatus: 'EXPIRED'` — only a currently-
+  `PENDING` offer can be expired; same `:id`-unused quirk.
+- **Expected callers**: recruiter/HR staff, closing out a stale offer to
+  free the Application for a revised one.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                          |
+| -------------------------------------- | -------- | ------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to the `application:update` permission |
+
+## 4. Path Parameters
+
+| Name       | Type          | Required | Description                                                                 |
+| ------------ | ------------- | -------- | --------------------------------------------------------------------------------- |
+| `id`       | string (UUID) | **Yes**  | The Application's id — present for URL consistency, not read by the service |
+| `offerId`  | string (UUID) | **Yes**  | The Offer's id, must currently be `PENDING`                      |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Same as endpoints 116/117, target status `EXPIRED`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "offer": {
+    "id": "c8d9e0f1-2a3b-4c4d-5e6f-7a8b9c0d1e2f",
+    "applicationId": "f4a5b6c7-8d9e-4f0a-1b2c-3d4e5f6a7b8c",
+    "salary": "95000",
+    "startDate": "2026-11-01T00:00:00.000Z",
+    "status": "EXPIRED",
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T18:00:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                            | Response (`message`)                                     | When                                              |
+| ------ | ------------------------------------ | ------------------------------------------------------------------ | ---------------------------------------------------- |
+| `401`  | Missing/invalid/expired access token    | Same as every other protected endpoint                             | `authMiddleware` failure                              |
+| `403`  | Caller lacks `application:update`       | `"You do not have permission to perform this action"`               | Any non-`ADMIN` token                                 |
+| `404`  | No such Offer                           | `"Offer not found"`                                                 | Nonexistent `offerId`                                  |
+| `409`  | Offer isn't currently `PENDING`         | `"Cannot transition an offer from <status> to EXPIRED"`             | Already `ACCEPTED`/`DECLINED`/`EXPIRED`                |
+
+## 10. Postman Test Cases
+
+| #   | Case                                | Expected |
+| --- | ------------------------------------------- | -------- |
+| 1   | `PENDING → EXPIRED`                           | `200`    |
+| 2   | Already `EXPIRED`, expire again                | `409`    |
+| 3   | `ACCEPTED`/`DECLINED`, attempt expire          | `409`    |
+| 4   | Nonexistent `offerId`                          | `404`    |
+| 5   | As `MANAGER`/`EMPLOYEE` token                  | `403`    |
+| 6   | No token                                       | `401`    |
+
+## 11. Negative Testing
+
+| Scenario                  | Expected |
+| ---------------------------- | -------- |
+| Tampered/expired JWT          | `401`    |
+
+## 12. Edge Cases
+
+| Scenario                                                | Expected Behavior                                                                   |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Expiring an offer whose `startDate` hasn't actually passed yet | `200` — nothing checks `startDate` against "now"; this is a manual, recruiter-judgment action, not a date-driven one |
+
+## 13. Security Testing
+
+- **Authorization**: confirm no role but `ADMIN` can expire an offer.
+
+## 14. Database Impact
+
+- **Tables affected**: `Offer` (update), `AuditLog` (insert), inside one
+  `prisma.$transaction`.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/applications/:id/offers/:offerId/expire
+    ↓
+authMiddleware
+    ↓
+requirePermission('application:update')
+    ↓ (403 if not granted)
+application.controller.expireOffer → application.service.expireOffer(offerId, actor)
+    └─ transitionOffer(offerId, 'EXPIRED', actor)
+         ├─ offerRepository.findById(offerId) → not found → 404
+         ├─ offer.status !== 'PENDING' → 409
+         └─ prisma.$transaction:
+              ├─ offerRepository.update(offerId, { status: 'EXPIRED' }, tx)
+              └─ auditLogRepository.create({ action: 'UPDATE', entityType: 'Offer', beforeData, afterData, ... }, tx)
+    ↓
+200 { offer }
+```
+
+## 16. Performance Notes
+
+One primary-key lookup, one update, one audit-log insert — no notable
+performance concerns.
+
+## 17. Interview Notes
+
+- **Q: Is there a background job that auto-expires stale `PENDING`
+  offers past their `startDate`?** No — verified by inspection of the
+  entire recruitment module and the project's job/scheduler
+  infrastructure: none exists. Expiry is exclusively this manual,
+  recruiter-triggered endpoint; `docs/domain-recruitment.md` names no
+  automatic time-based expiry requirement, consistent with the domain's
+  general preference for the simplest rule that satisfies a verified
+  need.
+- **Q: Why give `EXPIRED` its own endpoint instead of folding it into
+  `decline` with a reason field?** Symmetry with `accept`/`decline` as
+  three co-equal terminal outcomes of a `PENDING` offer, matching
+  `docs/domain-recruitment.md` §2's own lifecycle line (`PENDING →
+  ACCEPTED | DECLINED | EXPIRED`) — each is a first-class status value
+  on the `OfferStatus` enum, not encoded as a sub-reason of another.
+
+## 18. cURL Examples
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/v1/applications/$APPLICATION_ID/offers/$OFFER_ID/expire \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run this against a third, freshly-created `PENDING` offer (distinct from
+the ones used in endpoints 116/117's own test runs) to exercise all
+three terminal transitions independently within one collection.
+
+## 20. Testing Checklist
+
+- ✅ `PENDING → EXPIRED` → `200`
+- ✅ Re-expiring an already-transitioned offer → `409`
+- ✅ No automatic/scheduled expiry exists (verified by code inspection)
+- ✅ Nonexistent `offerId` → `404`
+- ✅ `403` as `MANAGER`/`EMPLOYEE`, `401` with no token
+- ✅ `AuditLog` row created

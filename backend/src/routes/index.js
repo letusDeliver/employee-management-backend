@@ -19,6 +19,9 @@ import payrollRunRouter from '../modules/payroll/payrollRun.routes.js';
 import payslipRouter from '../modules/payroll/payslip.routes.js';
 import reviewCycleRouter from '../modules/reviewCycles/reviewCycle.routes.js';
 import performanceReviewRouter from '../modules/performance/performanceReview.routes.js';
+import jobRequisitionRouter from '../modules/recruitment/jobRequisition.routes.js';
+import candidateRouter from '../modules/recruitment/candidate.routes.js';
+import applicationRouter from '../modules/recruitment/application.routes.js';
 
 const router = Router();
 
@@ -38,6 +41,9 @@ router.use('/payroll-runs', payrollRunRouter);
 router.use('/payslips', payslipRouter);
 router.use('/review-cycles', reviewCycleRouter);
 router.use('/performance-reviews', performanceReviewRouter);
+router.use('/job-requisitions', jobRequisitionRouter);
+router.use('/candidates', candidateRouter);
+router.use('/applications', applicationRouter);
 
 router.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });

@@ -7,27 +7,28 @@ datasource db {
 }
 
 model User {
-  id                   String             @id @default(uuid())
-  email                String             @unique
-  password             String
-  name                 String
-  profileImageUrl      String?
-  profileImagePublicId String?
+  id                         String              @id @default(uuid())
+  email                      String              @unique
+  password                   String
+  name                       String
+  profileImageUrl            String?
+  profileImagePublicId       String?
   // Set to "now" on every /auth/logout call for this user (see auth.service.js's
   // `logout`). authMiddleware rejects any access token whose `iat` claim predates
   // this timestamp - the fix for a stateless-JWT gap where a logged-out browser tab
   // could keep using its still-unexpired, already-issued access token for up to
   // JWT_ACCESS_EXPIRES_IN after logout. Null means "no restriction" (never logged out
   // since this column was added).
-  tokensValidAfter     DateTime?
-  createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
-  refreshTokens        RefreshToken[]
-  userRoles            UserRole[]
-  employees            Employee[]
-  auditLogs            AuditLog[]
-  uploadedDocuments    EmployeeDocument[]
-  reviewAddenda        ReviewAddendum[]
+  tokensValidAfter           DateTime?
+  createdAt                  DateTime            @default(now())
+  updatedAt                  DateTime            @updatedAt
+  refreshTokens              RefreshToken[]
+  userRoles                  UserRole[]
+  employees                  Employee[]
+  auditLogs                  AuditLog[]
+  uploadedDocuments          EmployeeDocument[]
+  reviewAddenda              ReviewAddendum[]
+  uploadedCandidateDocuments CandidateDocument[] @relation("CandidateDocumentUploader")
 }
 
 model RefreshToken {
@@ -84,23 +85,23 @@ model RolePermission {
 }
 
 model Employee {
-  id            String             @id @default(uuid())
-  userId        String?
-  user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  id                           String              @id @default(uuid())
+  userId                       String?
+  user                         User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
   // Governed master data, not free text (docs/domain-department.md, ADR-D01/
   // D07) - mandatory, unlike branchId, since the schema's original
   // `department` String column (removed by migration
   // add_department_contract, after prisma/backfill-department.js ran) was
   // itself always required.
-  departmentId  String
-  department    Department         @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  departmentId                 String
+  department                   Department          @relation(fields: [departmentId], references: [id], onDelete: Restrict)
   // Governed master data, not free text (docs/domain-designation.md,
   // ADR-DS01/DS07) - mandatory, same reasoning as departmentId above: the
   // schema's original `jobTitle` String column (removed by migration
   // add_designation_contract, after prisma/backfill-designation.js ran) was
   // itself always required.
-  designationId String
-  designation   Designation        @relation(fields: [designationId], references: [id], onDelete: Restrict)
+  designationId                String
+  designation                  Designation         @relation(fields: [designationId], references: [id], onDelete: Restrict)
   // Closed, code-defined enum, not a managed aggregate like Branch/
   // Department/Designation above (docs/domain-employment-type.md, ADR-ET01)
   // - unlike those three, no free-text precursor column ever existed here;
@@ -108,36 +109,38 @@ model Employee {
   // "unknown" state. Deliberately no @default here - every future create
   // must specify it explicitly; existing rows were one-time backfilled to
   // FULL_TIME by migration add_employment_type (see that migration's SQL).
-  employmentType EmploymentType
-  salary        Decimal
-  dateOfJoining DateTime
-  managerId     String?
-  manager       Employee?          @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: SetNull)
-  reports       Employee[]         @relation("EmployeeManager")
-  branchId      String?
+  employmentType               EmploymentType
+  salary                       Decimal
+  dateOfJoining                DateTime
+  managerId                    String?
+  manager                      Employee?           @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: SetNull)
+  reports                      Employee[]          @relation("EmployeeManager")
+  branchId                     String?
   // Restrict, not SetNull (unlike userId/managerId above): domain-branch.md's
   // Decision 1 makes "never hard-deleted while referenced" a hard invariant,
   // not a preference - branch.service.js also enforces this at the app layer
   // before attempting a delete, so this is a defense-in-depth backstop, not
   // the only guard.
-  branch        Branch?            @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  branch                       Branch?             @relation(fields: [branchId], references: [id], onDelete: Restrict)
   // Nullable (docs/domain-shift.md ADR-SH02) - mirrors branchId's optional
   // pattern, not departmentId/designationId's mandatory one: not every
   // employee necessarily operates under a fixed-hours expectation. Restrict,
   // not SetNull, for the same "never hard-deleted while referenced" reason
   // as branchId/departmentId/designationId above.
-  shiftId       String?
-  shift         Shift?             @relation(fields: [shiftId], references: [id], onDelete: Restrict)
-  deletedAt     DateTime?
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  documents     EmployeeDocument[]
-  attendanceRecords AttendanceRecord[]
-  leaveRequests LeaveRequest[]
-  leaveBalances LeaveBalance[]
-  payslips      Payslip[]
+  shiftId                      String?
+  shift                        Shift?              @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  deletedAt                    DateTime?
+  createdAt                    DateTime            @default(now())
+  updatedAt                    DateTime            @updatedAt
+  documents                    EmployeeDocument[]
+  attendanceRecords            AttendanceRecord[]
+  leaveRequests                LeaveRequest[]
+  leaveBalances                LeaveBalance[]
+  payslips                     Payslip[]
   performanceReviewsAsSubject  PerformanceReview[] @relation("PerformanceReviewSubject")
   performanceReviewsAsReviewer PerformanceReview[] @relation("PerformanceReviewReviewer")
+  interviewsConducted          Interview[]
+  hiredViaApplication          Application?
 
   // No @unique on userId: Prisma's schema DSL can't express a *partial*
   // unique constraint (scoped to non-deleted rows), so the real
@@ -164,10 +167,10 @@ enum BranchStatus {
 }
 
 model Branch {
-  id        String       @id @default(uuid())
-  name      String       @unique
-  code      String?      @unique
-  status    BranchStatus @default(ACTIVE)
+  id                String           @id @default(uuid())
+  name              String           @unique
+  code              String?          @unique
+  status            BranchStatus     @default(ACTIVE)
   // Optional (docs/domain-holiday-calendar.md, ADR-HC03) - fulfills the item
   // explicitly deferred in this domain's own Deferred Decisions table
   // ("timezone/statutory/holiday-calendar fields"), added additively without
@@ -176,9 +179,10 @@ model Branch {
   // itself this time, not just to what Branch is assigned to.
   holidayCalendarId String?
   holidayCalendar   HolidayCalendar? @relation(fields: [holidayCalendarId], references: [id], onDelete: Restrict)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-  employees Employee[]
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  employees         Employee[]
+  jobRequisitions   JobRequisition[]
 
   @@index([holidayCalendarId])
 }
@@ -191,13 +195,14 @@ enum DepartmentStatus {
 }
 
 model Department {
-  id        String           @id @default(uuid())
-  name      String           @unique
-  code      String?          @unique
-  status    DepartmentStatus @default(ACTIVE)
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
-  employees Employee[]
+  id              String           @id @default(uuid())
+  name            String           @unique
+  code            String?          @unique
+  status          DepartmentStatus @default(ACTIVE)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  employees       Employee[]
+  jobRequisitions JobRequisition[]
 }
 
 // See docs/domain-designation.md for the full business-architecture sign-off.
@@ -209,13 +214,14 @@ enum DesignationStatus {
 }
 
 model Designation {
-  id        String            @id @default(uuid())
-  name      String            @unique
-  code      String?           @unique
-  status    DesignationStatus @default(ACTIVE)
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
-  employees Employee[]
+  id              String            @id @default(uuid())
+  name            String            @unique
+  code            String?           @unique
+  status          DesignationStatus @default(ACTIVE)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  employees       Employee[]
+  jobRequisitions JobRequisition[]
 }
 
 // See docs/domain-employment-type.md for the full business-architecture
@@ -493,11 +499,11 @@ model PayrollRun {
 // even in the (essentially theoretical, given ADR-006's soft-delete
 // convention) case of a hard-deleted Employee row.
 model Payslip {
-  id                  String     @id @default(uuid())
+  id                  String            @id @default(uuid())
   payrollRunId        String
-  payrollRun          PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  payrollRun          PayrollRun        @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
   employeeId          String
-  employee            Employee   @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee            Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   // Denormalized from the parent run so a Payslip is a complete,
   // self-contained record - an employee reading their own Payslip via
   // `payslip:read:own` never needs `payrollRun:read` to know what period
@@ -521,9 +527,9 @@ model Payslip {
   grossPay            Decimal
   totalDeductions     Decimal
   netPay              Decimal
-  generatedAt         DateTime   @default(now())
-  createdAt           DateTime   @default(now())
-  updatedAt           DateTime   @updatedAt
+  generatedAt         DateTime          @default(now())
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
   lineItems           PayslipLineItem[]
 
   @@unique([employeeId, payrollRunId])
@@ -564,13 +570,13 @@ enum ReviewCycleStatus {
 }
 
 model ReviewCycle {
-  id        String            @id @default(uuid())
-  name      String            @unique
+  id        String              @id @default(uuid())
+  name      String              @unique
   startDate DateTime
   endDate   DateTime
-  status    ReviewCycleStatus @default(OPEN)
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
+  status    ReviewCycleStatus   @default(OPEN)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
   reviews   PerformanceReview[]
 }
 
@@ -655,6 +661,175 @@ model ReviewAddendum {
   createdAt           DateTime          @default(now())
 
   @@index([performanceReviewId])
+}
+
+// See docs/domain-recruitment.md for the full business-architecture
+// sign-off. JobRequisition mirrors the same four axes an Employee
+// ultimately carries (ADR-RC01, §3) - departmentId/designationId
+// mandatory, branchId optional, exactly matching Employee's own
+// nullability for each, and reuses the existing EmploymentType enum
+// rather than inventing a Recruitment-specific one.
+enum JobRequisitionStatus {
+  OPEN
+  ON_HOLD
+  CLOSED
+  CANCELLED
+}
+
+model JobRequisition {
+  id                String               @id @default(uuid())
+  departmentId      String
+  department        Department           @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  designationId     String
+  designation       Designation          @relation(fields: [designationId], references: [id], onDelete: Restrict)
+  branchId          String?
+  branch            Branch?              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  employmentType    EmploymentType
+  numberOfOpenings  Int
+  // Decrements on each successful Hire (§4's mandatory invariant); the
+  // requisition auto-transitions to CLOSED when this reaches zero. Starts
+  // equal to numberOfOpenings at creation.
+  remainingOpenings Int
+  status            JobRequisitionStatus @default(OPEN)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  applications      Application[]
+
+  @@index([departmentId])
+  @@index([designationId])
+  @@index([branchId])
+}
+
+// Not a User (ADR-RC02) - no system login prior to hire, no verified
+// requirement for a candidate self-service portal. No uniqueness
+// constraint on email, unlike User.email - a recruiter, not a schema
+// constraint, is responsible for not creating an accidental duplicate
+// (no verified requirement for fuzzy-dedup logic).
+model Candidate {
+  id           String              @id @default(uuid())
+  name         String
+  email        String
+  phone        String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  documents    CandidateDocument[]
+  applications Application[]
+}
+
+// Mirrors EmployeeDocument's exact shape (§3: "reuses the same generic
+// pattern already established by EmployeeDocument") rather than forcing
+// polymorphism onto that already-accepted model - a separate table with
+// an identical field shape, FK'd to Candidate instead of Employee.
+model CandidateDocument {
+  id           String    @id @default(uuid())
+  candidateId  String
+  candidate    Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  url          String
+  publicId     String
+  resourceType String
+  fileName     String
+  mimeType     String
+  size         Int
+  uploadedBy   String?
+  uploader     User?     @relation("CandidateDocumentUploader", fields: [uploadedBy], references: [id], onDelete: SetNull)
+  createdAt    DateTime  @default(now())
+
+  @@index([candidateId])
+}
+
+// The join between Candidate and JobRequisition (§3), carrying its own
+// workflow status independent of both. APPLIED->SCREENING->INTERVIEW->OFFER
+// is strictly sequential (no skipping, consistent with every other guarded
+// workflow in this project); REJECTED/WITHDRAWN are reachable from any
+// non-terminal stage. HIRED is deliberately not settable through the
+// generic status transition - it is only ever reached via the dedicated
+// Hire action (application.service.js), so the onboarding side-effect
+// always fires (implementation decision, not stated verbatim in the
+// domain doc).
+enum ApplicationStatus {
+  APPLIED
+  SCREENING
+  INTERVIEW
+  OFFER
+  HIRED
+  REJECTED
+  WITHDRAWN
+}
+
+model Application {
+  id               String            @id @default(uuid())
+  candidateId      String
+  candidate        Candidate         @relation(fields: [candidateId], references: [id], onDelete: Restrict)
+  jobRequisitionId String
+  jobRequisition   JobRequisition    @relation(fields: [jobRequisitionId], references: [id], onDelete: Restrict)
+  status           ApplicationStatus @default(APPLIED)
+  hiredEmployeeId  String?           @unique
+  hiredEmployee    Employee?         @relation(fields: [hiredEmployeeId], references: [id], onDelete: SetNull)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  interviews       Interview[]
+  offers           Offer[]
+
+  @@index([candidateId])
+  @@index([jobRequisitionId])
+}
+
+// Kept minimal (§4's Recommended Practices) - scheduled time, interviewer,
+// feedback text, recommendation. No interview-panel management, structured
+// scorecards, or multi-round calibration workflow. A child of Application,
+// not Candidate directly - an Application can carry multiple Interview rows
+// (one per round), same one-to-many shape as ReviewAddendum under
+// PerformanceReview.
+enum InterviewRecommendation {
+  STRONG_YES
+  YES
+  NO
+  STRONG_NO
+}
+
+model Interview {
+  id             String                   @id @default(uuid())
+  applicationId  String
+  application    Application              @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  // Restrict, not SetNull - a personnel record with retention value, same
+  // reasoning as PerformanceReview.reviewerId (docs/domain-performance.md).
+  interviewerId  String
+  interviewer    Employee                 @relation(fields: [interviewerId], references: [id], onDelete: Restrict)
+  scheduledAt    DateTime
+  feedback       String?
+  recommendation InterviewRecommendation?
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+
+  @@index([applicationId])
+  @@index([interviewerId])
+}
+
+// Compensation and start-date terms proposed to a Candidate for a specific
+// Application, not the Candidate directly (§3 - a candidate could have
+// multiple applications over time). Only one PENDING Offer may exist per
+// Application at a time (§4's mandatory invariant) - enforced by a partial
+// unique index (see this migration's raw SQL), the same mechanism as
+// PayrollRun's duplicate-period guard. Salary is free-entry, no Grade/Band
+// validation (§5 - no Grade/Band domain exists project-wide).
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+model Offer {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  salary        Decimal
+  startDate     DateTime
+  status        OfferStatus @default(PENDING)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([applicationId])
 }
 
 model EmployeeDocument {

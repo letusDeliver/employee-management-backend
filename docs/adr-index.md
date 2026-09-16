@@ -10,7 +10,8 @@ Covers: All 15 signed-off domains
 Every ADR produced across every domain sign-off, in dependency order. Full reasoning lives in each domain's own document — this index is for at-a-glance lookup, not a replacement for reading the source.
 
 ## Identity & Employee Lifecycle
-Full ADR set lives in [[domain-identity-employee-lifecycle]]; the two most load-bearing for later domains:
+Full ADR set lives in [[domain-identity-employee-lifecycle]]; the most load-bearing for later domains:
+- **ADR-004** — Employee Lifecycle Service. Accepted; **onboarding half Implemented (2026-09-16)**, built during Recruitment's domain pass as `employeeOnboarding.service.js` since Recruitment's Hire Orchestration Service needed a real target. Scoped to onboarding only — the §5 "one service or two" question (onboarding+offboarding together, or separate) remains open; offboarding stays exactly where ADR-006 already put it.
 - **ADR-006** — Offboarding Revokes Access by Default. **Accepted; Implemented (2026-09-13)**, scoped to session/token revocation — `softDeleteEmployee` now stamps `User.tokensValidAfter` and revokes all of the linked user's refresh tokens, transactionally. Does not prevent a fresh re-login (see ADR-007). Relied upon by Exit Management's ADR-EM02, whose dependency is now satisfied.
 - **ADR-007** — Deferred: User Account Status. No `isActive`/status field exists on `User`; `login()` has no status check. Still deferred — no verified requirement forces this yet; ADR-006's implementation deliberately did not resurrect it.
 
@@ -122,10 +123,11 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the two most load-
 ## Recruitment — [[domain-recruitment]]
 | ADR | Summary | Status |
 |---|---|---|
-| RC01 | Requisition-anchored pipeline | Accepted |
-| RC02 | Candidate is not a `User` | Accepted |
-| RC03 | Single Hire Orchestration Service boundary into unmodified Identity onboarding | Accepted |
-| RC04 | Candidate PII retention policy | **Deferred — Open (compliance/legal)** |
+| RC01 | Requisition-anchored pipeline | Accepted; Implemented (2026-09-16) — guarded `JobRequisition`/`Application` state machines, atomic openings decrement/auto-close, partial-unique-index-enforced one-Pending-Offer-per-Application |
+| RC02 | Candidate is not a `User` | Accepted; Implemented (2026-09-16) — no email uniqueness constraint, real hard-delete gated on zero Application references |
+| RC03 | Single Hire Orchestration Service boundary into unmodified Identity onboarding | Accepted; Implemented (2026-09-16) — built `employeeOnboarding.service.js` as the real target (Identity's own ADR-004 onboarding half), since it didn't exist yet; see [[domain-identity-employee-lifecycle]] ADR-004 |
+| RC04 | Candidate PII retention policy | **Deferred — Open (compliance/legal)**, still unresolved as of implementation |
+| RC05 | Permission scoping | Accepted; Implemented (2026-09-16) — `ADMIN`-only across every aggregate, no dedicated Recruiter role introduced |
 
 ## Training — [[domain-training]]
 | ADR | Summary | Status |

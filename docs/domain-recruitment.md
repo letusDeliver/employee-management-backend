@@ -1,6 +1,6 @@
 ---
 Domain: Recruitment
-Status: FINAL — with an open compliance question on candidate data retention
+Status: Implemented (2026-09-16) — with an open compliance question on candidate data retention (ADR-RC04)
 Date: 2026-07-28
 Depends on: docs/domain-identity-employee-lifecycle.md, docs/domain-department.md, docs/domain-designation.md, docs/domain-branch.md, docs/domain-employment-type.md
 ---
@@ -76,8 +76,8 @@ Recruitment manages the **pre-employment pipeline** — open positions, candidat
 
 ## 8. Open Questions
 
-1. **Candidate data retention for rejected/withdrawn applications** — many jurisdictions have data-protection requirements (e.g., GDPR-style "right to erasure," retention-period limits) governing how long rejected-candidate PII may be kept. This is explicitly **not resolved** in this document — it requires legal/compliance input, the same category of deliberate scope-cut already made for Payroll's tax logic (§7 of [[domain-payroll]]).
-2. Permission scoping (recruiter vs. hiring manager vs. admin capabilities) — same unresolved pattern as prior domains.
+1. **Candidate data retention for rejected/withdrawn applications** — many jurisdictions have data-protection requirements (e.g., GDPR-style "right to erasure," retention-period limits) governing how long rejected-candidate PII may be kept. This is explicitly **not resolved** in this document — it requires legal/compliance input, the same category of deliberate scope-cut already made for Payroll's tax logic (§7 of [[domain-payroll]]). **Still open as of implementation (2026-09-16)** — Candidate's `DELETE` endpoint is a real hard delete but only when zero Applications reference it, which does not by itself answer the retention question for a candidate who did go through a pipeline; that remains genuinely deferred to legal/compliance input, not resolved unilaterally by this implementation.
+2. ~~Permission scoping (recruiter vs. hiring manager vs. admin capabilities) — same unresolved pattern as prior domains.~~ **Resolved (2026-09-16)** — ADMIN-only across every aggregate; see ADR-RC05.
 
 ## 9. Deferred Decisions
 
@@ -115,28 +115,37 @@ This most directly reinforces (rather than alters) the already-finalized **Ident
 ## Architecture Decision Records
 
 **ADR-RC01 — Requisition-Anchored Pipeline**
-Status: Accepted
+Status: Accepted; **Implemented** (2026-09-16)
 Summary: JobRequisition → Candidate → Application → Interview/Offer → Hire.
+Implementation notes: `JobRequisition.status` (`OPEN→ON_HOLD→CLOSED|CANCELLED`) and `Application.status` (`APPLIED→SCREENING→INTERVIEW→OFFER→HIRED|REJECTED|WITHDRAWN`) are both guarded state machines - Application's forward stages are strictly sequential (no skipping), `REJECTED`/`WITHDRAWN` reachable from any non-terminal stage, and `HIRED` is deliberately unreachable through the generic status endpoint (only `POST /applications/:id/hire`, so the onboarding side-effect always fires). `JobRequisition.remainingOpenings` decrements via a single guarded `UPDATE ... WHERE status='OPEN' AND remainingOpenings>0`, atomic at the DB level, auto-closing the requisition at zero - the mandatory invariant read conjunctively ("still OPEN *and* has openings"), not either/or. Only one `PENDING` Offer per Application is enforced by a partial unique index (`WHERE status='PENDING'`), the same mechanism as Employee's own `userId` uniqueness and Payroll's duplicate-period guard.
 
 **ADR-RC02 — Candidate is Not a User**
-Status: Accepted
+Status: Accepted; **Implemented** (2026-09-16)
 Summary: No system login for candidates prior to hire; no verified requirement for a self-service portal.
+Implementation notes: `Candidate` has no uniqueness constraint on email (a recruiter, not the schema, is responsible for not creating an accidental duplicate) and a real hard-delete endpoint, unlike Employee's soft-delete - gated on zero Application references, the same zero-reference convenience-delete convention as Shift/ReviewCycle/LeaveType. `CandidateDocument` mirrors `EmployeeDocument`'s exact shape (§3) rather than forcing polymorphism onto that already-accepted model.
 
 **ADR-RC03 — Single Hire Orchestration Service Boundary**
-Status: Accepted
+Status: Accepted; **Implemented** (2026-09-16)
 Summary: One coordinating service invokes Identity's unmodified onboarding process; no other component in Recruitment creates Employee/User records.
 Consequences: Identity's already-accepted onboarding ADRs remain untouched — this is confirmed as an extension, not a redesign.
+Implementation notes: Recon surfaced that the "existing" Identity onboarding process ADR-RC03 assumed (search-by-email → reuse-or-create User → link, `docs/domain-identity-employee-lifecycle.md` §2) did not actually exist in code - that document itself recorded it as "a new module, not yet built" (ADR-004). Built here, narrowly scoped to onboarding only, as `backend/src/modules/employeeOnboarding/employeeOnboarding.service.js`'s `onboardEmployee` - this is the real target `applicationService.hireApplication` calls, keeping the single-boundary property this ADR requires. Every invariant from Identity's §3 is honored: search-by-email before create, access provisioning optional and explicit (`provisionAccess` defaults to `false`), and the whole cross-aggregate write (openings decrement, User reuse/creation, Employee creation, Application's `HIRED` transition) runs inside one transaction so a partial failure can never leave an inconsistent state. No invite-email mechanism exists project-wide, so a genuinely new hire's initial credential is an admin-supplied password at hire time (`initialPassword`, required only when no existing User matches the candidate's email) - the minimal mechanism consistent with Identity's own "administrator-driven data entry" assumption. `employee.service.js`'s `createEmployee` gained an additive optional trailing `tx` parameter to participate in this outer transaction; every existing caller is unaffected. See also the corresponding update to `docs/domain-identity-employee-lifecycle.md`'s ADR-004.
 
 **ADR-RC04 — Candidate PII Retention Policy Deferred**
 Status: Deferred — Open (compliance)
 Summary: Requires legal/compliance input before real-world deployment.
+Implementation notes (2026-09-16): Still genuinely open. Candidate's hard-delete endpoint is a zero-reference convenience delete, not a retention-policy engine - it does not resolve what should happen to a candidate's PII once they've gone through a real pipeline (the actual scenario the compliance question is about). Not resolved unilaterally by this implementation, per this document's own instruction that it requires legal/compliance expertise.
+
+**ADR-RC05 — Permission Scoping: ADMIN-Only**
+Status: Accepted; Implemented (2026-09-16)
+Summary: Every Recruitment aggregate (`JobRequisition`, `Candidate`, `Application`/`Interview`/`Offer`, including the Hire action) is gated `ADMIN`-only, mirroring the Branch/Department/Designation/ReviewCycle "ADMIN-only mutations" default rather than an own/any split.
+Reasoning: unlike Leave/Payroll/Performance, no Recruitment aggregate has a natural "own" concept - no Employee is ever the subject of a JobRequisition/Candidate/Application the way they are of a LeaveRequest or PerformanceReview (a Candidate isn't even a `User`, per ADR-RC02). Introducing a dedicated Recruiter/HR system role for this pass would be speculative - no verified requirement demands one, and the domain doc's own §2 "who performs" language already treats ADMIN/hiring-manager/recruiter interchangeably without naming a concrete distinction. 12 new permission keys, `application:hire` deliberately kept distinct from `application:update` since it triggers real Employee/User creation, a materially bigger consequence than a status PATCH.
 
 ## Final Sign-off
 
-**Implementation readiness:** Conditionally ready. Structurally complete; the PII-retention open question (ADR-RC04) should be resolved with legal/compliance input before handling real candidate data in production, though it does not block the architecture itself.
+**Implementation readiness:** Implemented (2026-09-16). Structurally complete and live-verified end-to-end (JobRequisition → Candidate → Application → Interview → Offer → Hire, including the new-User and reuse-existing-User onboarding paths, openings auto-close, and permission enforcement). The PII-retention open question (ADR-RC04) remains genuinely unresolved and requires legal/compliance input before handling real candidate data in production, though it does not block the architecture itself, consistent with this document's own original assessment.
 
-**Confidence score: 85%**
+**Confidence score: 92%**
 
-**Remaining blockers:** Resolve candidate PII retention policy with legal/compliance input; confirm permission scoping.
+**Remaining blockers:** Resolve candidate PII retention policy with legal/compliance input (ADR-RC04) - the only remaining item, and explicitly not an engineering decision.
 
 **Recommended next domain:** Training — a lower-stakes domain that can proceed independently of Recruitment's open compliance question.

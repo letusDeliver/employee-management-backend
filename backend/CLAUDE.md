@@ -1863,3 +1863,113 @@ and `/performance-reviews` (delegated to a background agent, then
 verified). `backend/README.md` updated to match.
 
 Deliberately **backend-only**, same as every prior domain.)_
+
+_(Recruitment Domain — 2026-09-16, on branch `feature/25-recruitment-domain`
+(based on `feature/24-performance-domain`). Eleventh domain from the
+HRMS/ERP Business Architecture Review (`docs/domain-recruitment.md`), and
+by far the largest yet: five coordinated aggregates (`JobRequisition`,
+`Candidate`, `Application`, `Interview`, `Offer`) plus a real cross-domain
+infrastructure gap closed along the way.
+
+**Critical recon finding, not invented by this domain:** `docs/domain-
+recruitment.md`'s own ADR-RC03 assumed Recruitment could invoke "Identity's
+existing, unmodified employee-creation process" for the Hire step. That
+process - as Identity's own sign-off describes it (§2's Onboarding diagram:
+search-by-email → reuse-or-create User → link) - did not exist in code.
+`docs/domain-identity-employee-lifecycle.md` itself recorded this as "a new
+module, not yet built" (ADR-004). Recruitment's Hire Orchestration Service
+had no real target to call. Built it: new module
+`src/modules/employeeOnboarding/employeeOnboarding.service.js`, narrowly
+scoped to onboarding only (the "one service or two, covering onboarding
+*and* offboarding" question, ADR-004 §5, stays genuinely open - offboarding
+was not touched, it stays exactly where ADR-006 already put it in
+`employee.service.js`). Every invariant from Identity's §3 is honored:
+search-by-email first, access provisioning optional and explicit
+(`provisionAccess` defaults to `false`, matching the asymmetric-defaults
+principle), and the User reuse/creation plus Employee creation run inside
+one transaction so a partial failure can never leave a half-linked state.
+No invite-email mechanism exists anywhere in this project (still verified
+true), so a genuinely new hire's initial credential is an admin-supplied
+`initialPassword` at hire time - required only when no existing User
+matches the candidate's email, never when reusing one (the Rehire Strategy
+path). `employeeService.createEmployee` gained an additive optional
+trailing `tx` parameter so it can participate in a caller-supplied
+transaction; every existing caller is unaffected. Both
+`docs/domain-identity-employee-lifecycle.md` (ADR-004) and
+`docs/domain-recruitment.md` (ADR-RC03) were updated to record this as a
+real implementation, not a redesign of either domain's already-accepted
+decisions.
+
+**Schema:** `JobRequisition` mirrors Employee's own four axes
+(department/designation mandatory, branch optional, reusing the existing
+`EmploymentType` enum rather than inventing one) with a guarded
+`OPEN→ON_HOLD→CLOSED|CANCELLED` state machine - `CLOSED` is deliberately
+unreachable through the manual status endpoint, set only by the system
+when `remainingOpenings` hits zero via a single atomic guarded `UPDATE`
+(`WHERE status='OPEN' AND remainingOpenings>0`), not a read-then-write a
+race could slip between. `Candidate` is explicitly not a `User` (ADR-RC02,
+already-accepted) - no email uniqueness constraint (a recruiter, not the
+schema, prevents accidental duplicates) and a real *hard* delete, unlike
+Employee's soft-delete, gated on zero Application references - this does
+not resolve the still-genuinely-open Candidate PII-retention question
+(ADR-RC04), which remains deferred to legal/compliance input, not decided
+unilaterally here. `Application` carries a guarded state machine too:
+`APPLIED→SCREENING→INTERVIEW→OFFER` strictly sequential (no skipping),
+`REJECTED`/`WITHDRAWN` reachable from any non-terminal stage, `HIRED`
+deliberately unreachable except through the dedicated hire action so its
+onboarding side-effect always fires. `Offer`'s one-Pending-per-Application
+invariant is enforced by a partial unique index (`WHERE status='PENDING'`)
+- the same mechanism as Employee's own `userId` uniqueness and Payroll's
+duplicate-period guard, not a service-layer-only check.
+
+**Judgment call, flagged:** `hireApplication` derives the new Employee's
+`dateOfJoining` from the Accepted Offer's own `startDate`, never a second
+caller-supplied value that could disagree with what the candidate actually
+accepted.
+
+**Judgment call, flagged:** permission scoping (new ADR-RC05) resolved
+`ADMIN`-only across every aggregate, not an own/any split - unlike Leave/
+Payroll/Performance, no Recruitment aggregate has a natural "own" concept
+(Candidate isn't even a `User`). Inventing a dedicated Recruiter/HR role
+was rejected as speculative - no verified requirement demands one. 12 new
+permission keys (66→78 total); `application:hire` deliberately kept
+distinct from `application:update` since it triggers real Employee/User
+creation, a materially bigger consequence than a status PATCH.
+
+New module `src/modules/recruitment/` (`jobRequisition.*`, `candidate.*`,
+`candidateDocument.*` mirroring `employeeDocument.*`'s exact Cloudinary
+shape, and `application.*` hosting Application/Interview/Offer/Hire
+together, the same multi-aggregate-per-file shape Payroll used for
+PayrollRun/Payslip) plus the new `employeeOnboarding/` module. 27
+endpoints across 17 paths - the largest single domain in this review by a
+wide margin, matching the doc's own five-aggregate scope.
+
+New `jobRequisition.service.test.js` (5 tests), `candidate.service.test.js`
+(4 tests), and `application.service.test.js` (7 tests, including the full
+hire flow: no-access-provisioning creating an unlinked Employee, openings
+decrement and auto-close, a second hire correctly blocked once exhausted,
+the new-User-creation path with role assignment verified, and the
+reuse-existing-User rehire path). 104 tests total across all eleven
+domains pass together, confirmed stable across three consecutive runs.
+
+Verified live end-to-end against the running server: the full pipeline
+(requisition → candidate → application → status transitions, including the
+skip-a-stage 409 guard → interview scheduling and feedback → offer
+creation, the duplicate-Pending 409 guard, acceptance → hire), confirming
+the requisition auto-closed at zero openings, and - the strongest possible
+verification - the newly onboarded hire successfully logging in via the
+real `/auth/login` endpoint with the admin-supplied initial password,
+proving the onboarding path works through the actual auth system, not just
+directly against the database. Permission enforcement confirmed (403 for
+a non-ADMIN role). Audit log entries confirmed for every mutation across
+all five entity types. All scratch data cleaned up afterward.
+
+`docs/domain-recruitment.md` (ADR-RC01-05, confidence 85%→92%),
+`docs/domain-identity-employee-lifecycle.md` (ADR-004 onboarding half
+marked Implemented, confidence 87%→90%), `docs/adr-index.md`,
+`docs/deferred-decisions-register.md` updated. `handbook/API_ENDPOINTS.md`
+gained new endpoint docs for `/job-requisitions`, `/candidates`, and
+`/applications` (delegated to a background agent, then verified).
+`backend/README.md` updated to match.
+
+Deliberately **backend-only**, same as every prior domain.)_

@@ -203,6 +203,32 @@ All routes are mounted under `/api/v1`.
 | `PATCH`  | `/performance-reviews/:id/acknowledge`  | Access token, `performanceReview:acknowledge:own` | The reviewed employee acknowledges a Submitted review — Submitted → Acknowledged, no admin/manager override exists                                                                                              |
 | `DELETE` | `/performance-reviews/:id`              | Access token, `performanceReview:manage:reports` or `:manage:any` | Delete a Draft Performance Review — mirrors PayrollRun's Draft-only-delete convenience                                                                                                                          |
 | `POST`   | `/performance-reviews/:id/addenda`      | Access token (any read/manage permission that grants access to this review) | Append a comment — the mechanism for adding commentary once a review is Acknowledged, without editing its frozen content                                                                          |
+| `POST`   | `/job-requisitions`                    | Access token, `jobRequisition:create` (ADMIN only) | Create a Job Requisition — Department/Designation mandatory, Branch optional, mirroring Employee's own axes                                                                                                      |
+| `GET`    | `/job-requisitions`                    | Access token, `jobRequisition:read` (ADMIN only) | List Job Requisitions — paginated, filterable, sortable                                                                                                                                                           |
+| `GET`    | `/job-requisitions/:id`                | Access token, `jobRequisition:read` (ADMIN only) | Get one Job Requisition                                                                                                                                                                                           |
+| `PATCH`  | `/job-requisitions/:id/status`         | Access token, `jobRequisition:update` (ADMIN only) | Transition status — `OPEN`↔`ON_HOLD`, either to `CANCELLED`; `CLOSED` is rejected here, set only automatically when openings are exhausted                                                                      |
+| `DELETE` | `/job-requisitions/:id`                | Access token, `jobRequisition:delete` (ADMIN only) | Hard-delete a Job Requisition — only when zero Application records reference it                                                                                                                                  |
+| `POST`   | `/candidates`                          | Access token, `candidate:create` (ADMIN only) | Create a Candidate — not a `User`, no system login, no email-uniqueness constraint                                                                                                                               |
+| `GET`    | `/candidates`                          | Access token, `candidate:read` (ADMIN only) | List Candidates — paginated, searchable (name/email/phone), sortable                                                                                                                                              |
+| `GET`    | `/candidates/:id`                      | Access token, `candidate:read` (ADMIN only) | Get one Candidate                                                                                                                                                                                                 |
+| `PATCH`  | `/candidates/:id`                      | Access token, `candidate:update` (ADMIN only) | Update a Candidate                                                                                                                                                                                                |
+| `DELETE` | `/candidates/:id`                      | Access token, `candidate:delete` (ADMIN only) | Hard-delete a Candidate — only when zero Application records reference it; does not resolve the still-open PII-retention question for a candidate who went through a pipeline                                  |
+| `POST`   | `/candidates/:id/documents`            | Access token, `candidate:update` (ADMIN only) | Upload a Candidate document (e.g. resume) — mirrors `POST /employees/:id/documents` exactly                                                                                                                      |
+| `GET`    | `/candidates/:id/documents`            | Access token, `candidate:read` (ADMIN only) | List a Candidate's documents                                                                                                                                                                                      |
+| `DELETE` | `/candidates/:id/documents/:documentId` | Access token, `candidate:update` (ADMIN only) | Delete a Candidate document                                                                                                                                                                                      |
+| `POST`   | `/applications`                        | Access token, `application:create` (ADMIN only) | Create an Application — links a Candidate to a JobRequisition, starts `APPLIED`; rejected if the requisition isn't `OPEN`/`ON_HOLD`                                                                              |
+| `GET`    | `/applications`                        | Access token, `application:read` (ADMIN only) | List Applications — paginated, filterable, sortable                                                                                                                                                               |
+| `GET`    | `/applications/:id`                    | Access token, `application:read` (ADMIN only) | Get one Application, including its Candidate, JobRequisition, Interviews, and Offers                                                                                                                             |
+| `PATCH`  | `/applications/:id/status`             | Access token, `application:update` (ADMIN only) | Transition status — `APPLIED→SCREENING→INTERVIEW→OFFER` strictly sequential; `REJECTED`/`WITHDRAWN` from any non-terminal stage; `HIRED` is not settable here                                                   |
+| `POST`   | `/applications/:id/hire`               | Access token, `application:hire` (ADMIN only) | The Hire Orchestration Service boundary — requires an `OFFER`-stage application with an Accepted offer; invokes Identity's onboarding process, creating an Employee (and optionally a User)                     |
+| `POST`   | `/applications/:id/interviews`         | Access token, `application:update` (ADMIN only) | Schedule an Interview — interviewer and time only; feedback/recommendation added later                                                                                                                           |
+| `GET`    | `/applications/:id/interviews`         | Access token, `application:read` (ADMIN only) | List an Application's Interviews                                                                                                                                                                                  |
+| `PATCH`  | `/applications/:id/interviews/:interviewId` | Access token, `application:update` (ADMIN only) | Update an Interview's feedback/recommendation, or reschedule it                                                                                                                                              |
+| `DELETE` | `/applications/:id/interviews/:interviewId` | Access token, `application:update` (ADMIN only) | Delete an Interview                                                                                                                                                                                           |
+| `POST`   | `/applications/:id/offers`             | Access token, `application:update` (ADMIN only) | Create an Offer — only while the Application is in the `OFFER` stage; only one Pending offer per Application at a time                                                                                           |
+| `PATCH`  | `/applications/:id/offers/:offerId/accept` | Access token, `application:update` (ADMIN only) | Accept a Pending offer                                                                                                                                                                                        |
+| `PATCH`  | `/applications/:id/offers/:offerId/decline` | Access token, `application:update` (ADMIN only) | Decline a Pending offer                                                                                                                                                                                      |
+| `PATCH`  | `/applications/:id/offers/:offerId/expire` | Access token, `application:update` (ADMIN only) | Mark a Pending offer Expired — manual, no scheduled/automatic expiry exists project-wide                                                                                                                     |
 
 `POST`/`PATCH /employees` also accept an optional `branchId`, validated
 against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
@@ -302,6 +328,34 @@ and the reviewed employee's own actions (`read:own`, `acknowledge:own`,
 `selfAssess:own`). Adding an addendum needs no dedicated permission —
 gated by whichever read/manage permission already grants access to that
 specific review.
+
+**New domain (2026-09-16):** Recruitment (`docs/domain-recruitment.md`) —
+the largest domain in this review, five coordinated aggregates
+(`JobRequisition`, `Candidate`, `Application`, `Interview`, `Offer`)
+covering the pre-employment pipeline that ultimately produces the Employee
+records every other domain assumes already exist. `JobRequisition` mirrors
+Employee's own department/designation/branch axes and auto-closes once
+`remainingOpenings` reaches zero. `Candidate` is explicitly not a `User` —
+no system login, no email-uniqueness constraint, and (unlike Employee) a
+real hard-delete when unreferenced. `Application` carries a guarded state
+machine (`APPLIED → SCREENING → INTERVIEW → OFFER → HIRED | REJECTED |
+WITHDRAWN`) where forward stages are strictly sequential and `HIRED` is
+reachable only through the dedicated Hire action, never the generic status
+endpoint. `Offer` allows only one `PENDING` offer per Application at a
+time, enforced by a partial unique index. The **Hire** step is the single
+orchestration boundary into Identity: recon found that the onboarding
+process this domain's own design assumed already existed
+(`docs/domain-identity-employee-lifecycle.md` §2 — search-by-email, then
+reuse-or-create a `User`, then link) had never actually been built, so it
+was built here as a new, narrowly-scoped `employeeOnboarding.service.js`
+module, reused as Identity's own real onboarding implementation, not a
+Recruitment-specific shortcut. Access provisioning defaults to `false`
+(no login) per Identity's own asymmetric-defaults principle; an admin
+supplies an `initialPassword` only when a genuinely new hire needs one (no
+invite-email mechanism exists anywhere in this project). Permission
+scoping (`ADR-RC05`) is `ADMIN`-only across every aggregate — unlike Leave/
+Payroll/Performance, nothing here has a natural "own" scope, since a
+Candidate isn't a system identity at all.
 
 **Breaking change (2026-09-13):** Employee's free-text `department`
 (`String`) field was removed and replaced by a **mandatory**
