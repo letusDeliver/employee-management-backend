@@ -243,6 +243,17 @@ All routes are mounted under `/api/v1`.
 | `GET`    | `/enrollments/:id/documents`           | Access token, any enrollment read/manage permission | List an Enrollment's documents                                                                                                                                                                                    |
 | `DELETE` | `/enrollments/:id/documents/:documentId` | Access token, any enrollment read/manage permission | Delete an Enrollment document                                                                                                                                                                              |
 | `GET`    | `/training-compliance`                 | Access token, `enrollment:read:own` or `:read:any` | Computed (not stored) compliance status — single program (`trainingProgramId` query param) or a bulk report across every mandatory program                                                                      |
+| `POST`   | `/assets`                              | Access token, `asset:create` (ADMIN only) | Register an Asset — created `AVAILABLE`; tag unique case-insensitively |
+| `GET`    | `/assets`                              | Access token, `asset:read` (ADMIN only) | List Assets — paginated, searchable (tag/type/description), filterable (type/status), sortable |
+| `GET`    | `/assets/:id`                          | Access token, `asset:read` (ADMIN only) | Get one Asset |
+| `PATCH`  | `/assets/:id`                          | Access token, `asset:update` (ADMIN only) | Update an Asset — direct status changes limited to `AVAILABLE`↔`UNDER_REPAIR` and either → `RETIRED`; `ASSIGNED` only via assign/return |
+| `DELETE` | `/assets/:id`                          | Access token, `asset:delete` (ADMIN only) | Hard-delete an Asset — only when it was never assigned; otherwise retire it |
+| `POST`   | `/assets/:id/assign`                   | Access token, `assetAssignment:create` (ADMIN only) | Assign an `AVAILABLE` Asset to an Employee — becomes `ASSIGNED`; optional back-dated `assignedAt` |
+| `POST`   | `/assets/:id/return`                   | Access token, `assetAssignment:return` (ADMIN only) | Record a return — `condition: GOOD` → `AVAILABLE`, `DAMAGED` → `UNDER_REPAIR` |
+| `GET`    | `/assets/:id/current-holder`           | Access token, `assetAssignment:read:any` (ADMIN only) | Current holder of an Asset (`null` when not assigned) |
+| `GET`    | `/assets/:id/assignments`              | Access token, `assetAssignment:read:any` (ADMIN only) | Full custody history of an Asset |
+| `GET`    | `/asset-assignments`                   | Access token, `assetAssignment:read:own` or `:read:any` | List assignments — filter by `employeeId`/`assetId`/`active`; a `:read:own`-only caller is auto-scoped to their own employee record |
+| `GET`    | `/asset-assignments/:id`               | Access token, `assetAssignment:read:own` or `:read:any` | Get one assignment (`:own` callers only their own) |
 
 `POST`/`PATCH /employees` also accept an optional `branchId`, validated
 against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
@@ -393,6 +404,25 @@ indefinitely once completed once), in both a single-program and a bulk
 across-every-mandatory-program shape. Deliberately **no `MANAGER`
 reports-visibility** — unlike Leave/Performance, the domain doc's own "who
 performs" text never mentions managers, only `ADMIN`/HR and self-enrollment.
+
+**New domain (2026-09-22):** Asset Management (`docs/domain-asset-management.md`)
+— two aggregates, `Asset` (the physical item: tag, type, description, status
+`AVAILABLE`/`ASSIGNED`/`UNDER_REPAIR`/`RETIRED`) and `AssetAssignment` (an
+**append-only custody ledger**, never deleted — history is built now, unlike
+Branch/Department/Designation, because "who had this and when" is this
+domain's whole purpose). At most one active (`returnedAt IS NULL`)
+assignment per asset is enforced three ways: the service's positive-allowlist
+check (only `AVAILABLE` is assignable), a compare-and-set on `Asset.status`,
+and a hand-added partial unique index in the migration SQL. An asset with any
+assignment history cannot be hard-deleted — retire it. Returning an asset
+takes a required `condition` (`GOOD` → `AVAILABLE`, `DAMAGED` →
+`UNDER_REPAIR`); assign and return each write the ledger change, the asset
+status change and two audit rows in one transaction. Mutations are flat
+`ADMIN`-only (no IT role exists); the exception is
+`assetAssignment:read:own`, so any employee can see the assets they hold.
+`assetAssignmentService.getCurrentHolder` / `getActiveAssignmentsForEmployee`
+are the two reusable queries the future Exit Management domain will consume.
+No financial/depreciation fields (deferred, ADR-AM04).
 
 **Breaking change (2026-09-13):** Employee's free-text `department`
 (`String`) field was removed and replaced by a **mandatory**

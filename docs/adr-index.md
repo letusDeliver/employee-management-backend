@@ -140,10 +140,12 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the most load-bear
 ## Asset Management — [[domain-asset-management]]
 | ADR | Summary | Status |
 |---|---|---|
-| AM01 | AssetAssignment as an append-only custody ledger (history built now, unlike Branch/Department/Designation) | Accepted |
-| AM02 | At most one active assignment per asset | Accepted |
-| AM03 | Positive allowlist assignability | Accepted |
+| AM01 | AssetAssignment as an append-only custody ledger (history built now, unlike Branch/Department/Designation) | Accepted; Implemented (2026-09-22) — never deleted, only closed via a guarded `returnedAt` update |
+| AM02 | At most one active assignment per asset | Accepted; Implemented (2026-09-22) — service check + compare-and-set on `Asset.status` + hand-added partial unique index `WHERE "returnedAt" IS NULL` |
+| AM03 | Positive allowlist assignability | Accepted; Implemented (2026-09-22) — `assertAssetAssignable`, only `AVAILABLE` |
 | AM04 | No financial/depreciation tracking | Deferred |
+| AM05 | Permission scoping | Accepted; Implemented (2026-09-22) — flat `ADMIN`-only for `Asset` and assign/return; `assetAssignment:read:own`/`:any` split for custody reads; no `MANAGER` reports-visibility |
+| AM06 | Return condition (`GOOD`/`DAMAGED`) and direct status transitions | Accepted; Implemented (2026-09-22) — `GOOD`→`AVAILABLE`, `DAMAGED`→`UNDER_REPAIR`; `ASSIGNED` only via assign/return, `RETIRED` terminal |
 
 ## Exit Management — [[domain-exit-management]]
 | ADR | Summary | Status |

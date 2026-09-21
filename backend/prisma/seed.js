@@ -626,6 +626,62 @@ const PERMISSIONS = [
     scope: 'own',
     description: "Withdraw the caller's own enrollment",
   },
+  {
+    key: 'asset:create',
+    resource: 'asset',
+    action: 'create',
+    scope: null,
+    description: 'Register an asset',
+  },
+  {
+    key: 'asset:read',
+    resource: 'asset',
+    action: 'read',
+    scope: null,
+    description: 'Read assets',
+  },
+  {
+    key: 'asset:update',
+    resource: 'asset',
+    action: 'update',
+    scope: null,
+    description: 'Update an asset, including UNDER_REPAIR/RETIRED status changes',
+  },
+  {
+    key: 'asset:delete',
+    resource: 'asset',
+    action: 'delete',
+    scope: null,
+    description: 'Delete an asset that has never been assigned',
+  },
+  {
+    key: 'assetAssignment:create',
+    resource: 'assetAssignment',
+    action: 'create',
+    scope: null,
+    description: 'Assign an available asset to an employee',
+  },
+  {
+    key: 'assetAssignment:return',
+    resource: 'assetAssignment',
+    action: 'return',
+    scope: null,
+    description: 'Record the return of an assigned asset',
+  },
+  {
+    key: 'assetAssignment:read:own',
+    resource: 'assetAssignment',
+    action: 'read',
+    scope: 'own',
+    description: "Read the caller's own asset assignments only",
+  },
+  {
+    key: 'assetAssignment:read:any',
+    resource: 'assetAssignment',
+    action: 'read',
+    scope: 'any',
+    description: 'Read any asset assignment, current holder and custody history',
+  },
 ];
 
 const ROLE_PERMISSIONS = {
@@ -714,6 +770,14 @@ const ROLE_PERMISSIONS = {
     'enrollment:read:any',
     'enrollment:manage:any',
     'enrollment:withdraw:own',
+    'asset:create',
+    'asset:read',
+    'asset:update',
+    'asset:delete',
+    'assetAssignment:create',
+    'assetAssignment:return',
+    'assetAssignment:read:own',
+    'assetAssignment:read:any',
   ],
   MANAGER: [
     'employee:create',
@@ -750,6 +814,7 @@ const ROLE_PERMISSIONS = {
     'enrollment:create:own',
     'enrollment:read:own',
     'enrollment:withdraw:own',
+    'assetAssignment:read:own',
   ],
   EMPLOYEE: [
     'employee:read:own',
@@ -774,6 +839,7 @@ const ROLE_PERMISSIONS = {
     'enrollment:create:own',
     'enrollment:read:own',
     'enrollment:withdraw:own',
+    'assetAssignment:read:own',
   ],
 };
 
@@ -812,7 +878,7 @@ const seedRolesAndGrants = async () => {
 const main = async () => {
   await seedPermissions();
   await seedRolesAndGrants();
-  console.log('Seed complete: 3 system roles, 88 permissions, role-permission grants.');
+  console.log('Seed complete: 3 system roles, 96 permissions, role-permission grants.');
 };
 
 main()

@@ -73,7 +73,7 @@ Asset Management tracks **company-owned physical assets (laptops, phones, equipm
 
 ## 8. Open Questions
 
-1. Permission scoping (IT role vs. general `ADMIN`) — same unresolved pattern as prior domains.
+1. ~~Permission scoping (IT role vs. general `ADMIN`) — same unresolved pattern as prior domains.~~ **Resolved (2026-09-22)** — flat `ADMIN`-only, plus `assetAssignment:read:own` for self-service visibility (ADR-AM05).
 2. Whether asset-request (employee-initiated) workflow is ever needed — explicitly deferred, not decided either way.
 
 ## 9. Deferred Decisions
@@ -111,26 +111,37 @@ This most directly constrains the future **Exit Management** domain, which must 
 ## Architecture Decision Records
 
 **ADR-AM01 — AssetAssignment as an Append-Only Custody Ledger**
-Status: Accepted
+Status: Accepted; **Implemented** (2026-09-22)
 Summary: Full history is built now, justified as inherent to the domain's purpose rather than deferred, in explicit contrast to Branch/Department/Designation's deferred history.
+Implementation notes: `AssetAssignment` rows are never deleted, and the only update the ledger ever receives is closing an assignment (`returnedAt`/`returnedBy`/`returnCondition`/`returnNotes`, via a `returnedAt IS NULL`-guarded `updateMany` so a concurrent double-return closes it exactly once). Both FKs are `onDelete: Restrict`. Reads include the `Asset` row so an employee reading their own holdings sees the tag/type. `assetAssignmentService.getCurrentHolder` and `getActiveAssignmentsForEmployee` are the two reusable queries §5/§12 name for Exit Management.
 
 **ADR-AM02 — At Most One Active Assignment Per Asset**
-Status: Accepted
+Status: Accepted; **Implemented** (2026-09-22)
+Implementation notes: enforced in three layers — the service's `assertAssetAssignable`, a compare-and-set on `Asset.status` (`AVAILABLE`→`ASSIGNED` via `updateMany`, count 0 means another request won), and a hand-added partial unique index `AssetAssignment_assetId_active_key ON "AssetAssignment"("assetId") WHERE "returnedAt" IS NULL` (Prisma's schema DSL cannot express it; same mechanism as `Employee.userId`), with a `P2002` catch as the backstop. A test fires two concurrent assigns of one asset and asserts exactly one succeeds.
 
 **ADR-AM03 — Positive Allowlist Assignability (status === AVAILABLE)**
-Status: Accepted
+Status: Accepted; **Implemented** (2026-09-22)
 Summary: Consistent with every prior domain's assignability rule.
+Implementation notes: exported `assetService.assertAssetAssignable(assetId)` throws `BadRequestError` for a nonexistent asset or any status other than `AVAILABLE` (the message names the actual status). The assign endpoint returns 404 for a nonexistent asset in the path first, since a path parameter is not a body reference.
 
 **ADR-AM04 — No Financial/Depreciation Tracking**
 Status: Deferred
 Summary: Explicitly out of scope; a Finance-domain concern if ever required.
 
+**ADR-AM05 — Permission Scoping**
+Status: Accepted; **Implemented** (2026-09-22)
+Summary: Open Question #1 resolved. There is no IT role in this project's role model and no aggregate has a natural "own" concept for mutations, so `Asset` and assign/return actions are flat `ADMIN`-only (`asset:create|read|update|delete`, `assetAssignment:create|return`) — the same resolution as Branch/Department/Recruitment. The one exception is reading custody: `assetAssignment:read:own` (ADMIN, MANAGER, EMPLOYEE) lets a person see their own held assets, and `assetAssignment:read:any` (ADMIN) covers everything, including per-asset current-holder and history. `GET /asset-assignments` auto-scopes a caller lacking `:read:any` to their own employee record (the pattern Leave/Performance/Training established) rather than refusing. Deliberately no `MANAGER` reports-visibility — the doc never mentions managers. 8 new permissions (88 → 96 total).
+
+**ADR-AM06 — Return Condition and Direct Status Transitions**
+Status: Accepted; **Implemented** (2026-09-22)
+Summary: Judgment calls on shapes the doc left open. §2 says where a returned asset goes is "a judgment call made at return time, not automatic", so the return request carries a required `condition` (`GOOD` → `AVAILABLE`, `DAMAGED` → `UNDER_REPAIR`) and optional notes, both recorded on the ledger row. Direct `PATCH` status changes are limited to `AVAILABLE`↔`UNDER_REPAIR` and either → `RETIRED`; `ASSIGNED` is entered only by assigning and left only by returning (an assigned asset cannot be retired without recording its return), and `RETIRED` is terminal. `assignedAt` defaults to now but may be back-dated (never future) for equipment handed over before it was recorded. Assign and return each write the ledger change, the asset status change and two `AuditLog` rows in one transaction.
+
 ## Final Sign-off
 
-**Implementation readiness:** Ready. No structural blockers.
+**Implementation readiness:** Implemented (2026-09-22). Structurally complete and live-verified end-to-end (asset registration, assignment, the double-assignment and non-`AVAILABLE` rejections, `ADMIN`-only permission denials for an employee, the employee's own auto-scoped assignment list, status-change and delete guards, return with `DAMAGED` → `UNDER_REPAIR`, retirement, full custody history, and `AuditLog` rows for every mutation).
 
-**Confidence score: 89%**
+**Confidence score: 94%**
 
-**Remaining blockers:** None structural. Confirm permission scoping before implementation.
+**Remaining blockers:** None. Exit Management must still honor the forward dependency named in §2/§5 by reading `getActiveAssignmentsForEmployee` during offboarding — that is Exit Management's own sign-off to confirm, not a blocker here.
 
 **Recommended next domain:** Exit Management — the final domain in the approved dependency order, and the one that must explicitly reconcile its scope against Identity's already-finalized offboarding process and consume this domain's active-assignment query.

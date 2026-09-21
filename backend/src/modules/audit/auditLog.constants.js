@@ -32,4 +32,6 @@ export const AUDIT_ENTITY_TYPES = Object.freeze({
   TRAINING_PROGRAM: 'TrainingProgram',
   ENROLLMENT: 'Enrollment',
   ENROLLMENT_DOCUMENT: 'EnrollmentDocument',
+  ASSET: 'Asset',
+  ASSET_ASSIGNMENT: 'AssetAssignment',
 });

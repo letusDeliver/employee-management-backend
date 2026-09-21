@@ -30,6 +30,8 @@ model User {
   reviewAddenda               ReviewAddendum[]
   uploadedCandidateDocuments  CandidateDocument[]  @relation("CandidateDocumentUploader")
   uploadedEnrollmentDocuments EnrollmentDocument[] @relation("EnrollmentDocumentUploader")
+  assignedAssets              AssetAssignment[]    @relation("AssetAssigner")
+  returnedAssets              AssetAssignment[]    @relation("AssetReturner")
 }
 
 model RefreshToken {
@@ -143,6 +145,7 @@ model Employee {
   interviewsConducted          Interview[]
   hiredViaApplication          Application?
   enrollments                  Enrollment[]
+  assetAssignments             AssetAssignment[]
 
   // No @unique on userId: Prisma's schema DSL can't express a *partial*
   // unique constraint (scoped to non-deleted rows), so the real
@@ -918,6 +921,62 @@ model EnrollmentDocument {
   createdAt    DateTime   @default(now())
 
   @@index([enrollmentId])
+}
+
+// Asset Management (docs/domain-asset-management.md). Asset is minimal
+// (tag/type/description/status) - no financial fields (ADR-AM04, deferred).
+// AVAILABLE->ASSIGNED happens only via assignment, ASSIGNED->AVAILABLE|
+// UNDER_REPAIR only via return; RETIRED is terminal.
+enum AssetStatus {
+  AVAILABLE
+  ASSIGNED
+  UNDER_REPAIR
+  RETIRED
+}
+
+model Asset {
+  id          String            @id @default(uuid())
+  assetTag    String            @unique
+  type        String
+  description String?
+  status      AssetStatus       @default(AVAILABLE)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  assignments AssetAssignment[]
+
+  @@index([status])
+}
+
+enum AssetReturnCondition {
+  GOOD
+  DAMAGED
+}
+
+// Append-only custody ledger (ADR-AM01) - rows are never deleted, and the
+// only update ever made is setting returnedAt/returnedBy/returnCondition/
+// returnNotes on return. Restrict on both FKs: custody history outlives
+// nothing. "At most one active (returnedAt IS NULL) assignment per Asset"
+// (ADR-AM02) is enforced by a hand-added partial unique index in the
+// migration SQL, which Prisma's schema DSL cannot express.
+model AssetAssignment {
+  id              String                @id @default(uuid())
+  assetId         String
+  asset           Asset                 @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  employeeId      String
+  employee        Employee              @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  assignedAt      DateTime              @default(now())
+  returnedAt      DateTime?
+  returnCondition AssetReturnCondition?
+  returnNotes     String?
+  assignedBy      String?
+  assigner        User?                 @relation("AssetAssigner", fields: [assignedBy], references: [id], onDelete: SetNull)
+  returnedBy      String?
+  returner        User?                 @relation("AssetReturner", fields: [returnedBy], references: [id], onDelete: SetNull)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@index([assetId])
+  @@index([employeeId])
 }
 
 model EmployeeDocument {

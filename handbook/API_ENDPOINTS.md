@@ -29171,3 +29171,2175 @@ programs to confirm the array covers both.
 - ✅ `400` for missing/malformed `employeeId`
 - ✅ `404` for a nonexistent `trainingProgramId` in the single-program branch
 - ✅ `401` with no token
+
+---
+
+---
+
+# 133. `POST /assets`
+
+## 1. Endpoint Information
+
+```
+Feature:            Asset Management Domain (2026-09-22, feature/27-asset-management-domain)
+Endpoint:           Register Asset
+Description:        Registers a new company asset (laptop, phone, access card, etc.) in the register, always starting as AVAILABLE
+Method:             POST
+URL:                /api/v1/assets
+API Version:        v1
+Module:             modules/assets
+Authentication:     Yes (Bearer access token)
+Authorization:      `asset:create`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: `docs/domain-asset-management.md` §2's "Asset
+  creation" step - `ADMIN`/IT registers a new physical asset before it
+  can ever be handed to an employee.
+- **Status is never client-supplied**: `createAssetSchema` has no
+  `status` field (Zod strips unknown keys, so a `status` in the body is
+  silently ignored, not rejected); the database default `AVAILABLE`
+  applies. `ASSIGNED` is reachable only through `POST /assets/:id/assign`
+  (endpoint 138).
+- **`assetTag` is unique case-insensitively** - checked in the service
+  via `findByAssetTag` (`mode: 'insensitive'`) before the insert, with the
+  `Asset_assetTag_key` unique index (case-**sensitive** at the DB level)
+  plus a `P2002` catch as the concurrency backstop.
+- **Atomic with audit**: the `Asset` insert and its `AuditLog` row
+  (`action: CREATE`, `entityType: 'Asset'`, `beforeData: null`) commit in
+  one transaction.
+- **Expected callers**: `ADMIN`/IT only (`asset:create` is granted only to
+  `ADMIN` in `prisma/seed.js`).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                  |
+| -------------------------------------- | -------- | ---------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `asset:create`           |
+| `Content-Type: application/json`      | **Yes**  |                                          |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "assetTag": "LAP-0042",
+  "type": "Laptop",
+  "description": "MacBook Pro 14 inch M3, 16GB"
+}
+```
+
+| Field         | Type   | Required | Notes                                                    |
+| ------------- | ------ | -------- | ---------------------------------------------------------- |
+| `assetTag`    | string | **Yes**  | Trimmed, min length 1. Tag or serial number, unique case-insensitively |
+| `type`        | string | **Yes**  | Trimmed, min length 1. Free text (`"Laptop"`, `"Phone"`, ...), not an enum |
+| `description` | string | No       | Trimmed, min length 1 when present (an empty string is rejected; `null` is **not** accepted on create) |
+
+## 7. Validation Rules
+
+- `assetTag`, `type`: required, trimmed, non-empty - `400` with
+  `"assetTag: Asset tag is required"` / `"type: Asset type is required"`
+  for an empty string (a missing field produces Zod's generic
+  `"assetTag: Invalid input: expected string, received undefined"`-style
+  message).
+- `description`: optional; when present must be a non-empty trimmed
+  string.
+- **Uniqueness**: `assetTag` compared case-insensitively - `LAP-0042` and
+  `lap-0042` are the same tag. `409` on a match.
+- Unknown keys (including `status`, `id`) are silently stripped.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "asset": {
+    "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "assetTag": "LAP-0042",
+    "type": "Laptop",
+    "description": "MacBook Pro 14 inch M3, 16GB",
+    "status": "AVAILABLE",
+    "createdAt": "2026-09-22T09:00:00.000Z",
+    "updatedAt": "2026-09-22T09:00:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                | Response (`message`)                              | When                                             |
+| ------ | ------------------------------------- | -------------------------------------------------- | ------------------------------------------------- |
+| `400`  | Validation failed                     | e.g. `"assetTag: Asset tag is required"`          | Missing/empty `assetTag` or `type`, empty `description` |
+| `401`  | Missing/invalid/expired access token  | Same as every other protected endpoint            | `authMiddleware` failure                           |
+| `403`  | Caller lacks `asset:create`           | `"You do not have permission to perform this action"` | `EMPLOYEE`/`MANAGER`                          |
+| `409`  | Duplicate tag                         | `"An asset with this tag already exists"`         | Case-insensitive match found, or the `P2002` race backstop fires |
+
+## 10. Postman Test Cases
+
+| #   | Case                                             | Expected |
+| --- | ------------------------------------------------- | -------- |
+| 1   | `ADMIN` registers an asset with all three fields  | `201`, `status: "AVAILABLE"` |
+| 2   | `ADMIN` registers with `description` omitted      | `201`, `description: null` |
+| 3   | Same `assetTag` again                             | `409` |
+| 4   | Same `assetTag` in different case                 | `409` |
+| 5   | Missing `assetTag`                                | `400` |
+| 6   | Empty-string `type`                               | `400` |
+| 7   | `MANAGER` / `EMPLOYEE` attempts to register       | `403` |
+| 8   | No token                                          | `401` |
+
+## 11. Negative Testing
+
+| Scenario                                          | Expected                                              |
+| -------------------------------------------------- | ------------------------------------------------------- |
+| `status: "ASSIGNED"` in the body                   | `201`, `status` is still `"AVAILABLE"` - the field is silently stripped |
+| `description: null`                                | `400` - not accepted on create (only on `PATCH`)        |
+| Whitespace-only `assetTag`                         | `400` - trimmed to empty                                |
+| Tampered/expired JWT                               | `401`                                                   |
+
+## 12. Edge Cases
+
+| Scenario                                                    | Expected Behavior |
+| ------------------------------------------------------------- | ------------------- |
+| Leading/trailing whitespace around `assetTag`                 | Trimmed before storage and before the duplicate check |
+| Two concurrent creates with the exact same tag                | One wins; the loser hits `Asset_assetTag_key` (`P2002`) and returns the same `409` |
+| Two concurrent creates differing only in case                 | The DB index is case-sensitive, so the `P2002` backstop does **not** catch this; both can succeed if the service-level check races (minor gap, same convention as prior domains) |
+
+## 13. Security Testing
+
+- Confirm `MANAGER` and `EMPLOYEE` both get `403` (only `ADMIN` holds
+  `asset:create` in `prisma/seed.js`).
+- Confirm mass-assignment protection: `status`, `id`, `createdAt` in the
+  body are ignored.
+
+## 14. Database Impact
+
+One `Asset.findFirst` (case-insensitive tag lookup), then a transaction
+containing one `Asset` insert and one `AuditLog` insert.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/assets
+    ↓
+authMiddleware
+    ↓
+requirePermission('asset:create')       → 403
+    ↓
+validateMiddleware(createAssetSchema)   → 400
+    ↓
+asset.controller.create
+    → asset.service.createAsset(data, actor)
+        ├─ findByAssetTag (case-insensitive) → 409
+        └─ $transaction { Asset.create; AuditLog.create(CREATE) }
+             └─ P2002 → 409 "An asset with this tag already exists"
+    ↓
+201 { asset }
+```
+
+## 16. Performance Notes
+
+Two indexed round trips plus a two-statement transaction; negligible.
+
+## 17. Interview Notes
+
+- **Q: Why can't a client set `status` on create?** The state machine
+  (ADR-AM03) makes `ASSIGNED` reachable only through the assignment
+  transaction; letting a client seed any other status would bypass it.
+  The schema simply has no `status` field.
+- **Q: Why is `type` free text and not an enum?** The domain doc
+  deliberately keeps the register minimal (ADR-AM04: no procurement or
+  financial modelling); new categories need no migration.
+
+## 18. cURL Examples
+
+```bash
+curl -s -X POST http://localhost:3000/api/v1/assets \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"assetTag":"LAP-0042","type":"Laptop","description":"MacBook Pro 14 inch M3, 16GB"}'
+```
+
+## 19. Postman Collection Notes
+
+Save the returned `asset.id` to a collection variable (`assetId`); every
+later Asset Management request (endpoints 135-141) reuses it.
+
+## 20. Testing Checklist
+
+- ✅ `201` with `status: "AVAILABLE"` regardless of body
+- ✅ `409 "An asset with this tag already exists"` for exact and case-variant duplicates
+- ✅ `400` for missing/empty `assetTag`/`type`
+- ✅ `403` for `MANAGER`/`EMPLOYEE`
+- ✅ `401` with no token
+- ✅ `AuditLog` row created, `entityType: 'Asset'`, `action: 'CREATE'`, `beforeData: null`
+
+---
+
+---
+
+# 134. `GET /assets`
+
+## 1. Endpoint Information
+
+```
+Feature:            Asset Management Domain (2026-09-22, feature/27-asset-management-domain)
+Endpoint:           List Assets
+Description:        Paginated, filterable, sortable list of the asset register
+Method:             GET
+URL:                /api/v1/assets
+API Version:        v1
+Module:             modules/assets
+Authentication:     Yes (Bearer access token)
+Authorization:      `asset:read`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: lets `ADMIN`/IT browse the register and find, for
+  example, all `AVAILABLE` laptops to assign.
+- **Filters**: `search` (case-insensitive substring across `assetTag`,
+  `type`, `description`), `type` (case-insensitive **exact** match),
+  `status` (exact enum). Filters combine with AND; the three `search`
+  fields combine with OR.
+- **Deterministic pagination**: `orderBy` is `[{ [sortBy]: order }, { id:
+  'asc' }]` - the `id` tiebreaker keeps pages stable.
+- **Reads `req.validatedQuery`** (the parsed/coerced query), correctly.
+- **Expected callers**: `ADMIN`/IT. Only `ADMIN` holds `asset:read`.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                        |
+| -------------------------------------- | -------- | ------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `asset:read`  |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name     | Type    | Default     | Description                                                              |
+| -------- | ------- | ----------- | -------------------------------------------------------------------------- |
+| `page`   | integer | `1`         | Min 1                                                                      |
+| `limit`  | integer | `10`        | Min 1, max 100                                                             |
+| `search` | string  | -           | Matches `assetTag`, `type` or `description` (case-insensitive contains). Empty string is treated as absent; not trimmed |
+| `type`   | string  | -           | Case-insensitive exact match on `type`; trimmed, min length 1              |
+| `status` | enum    | -           | `AVAILABLE`, `ASSIGNED`, `UNDER_REPAIR`, `RETIRED`                         |
+| `sortBy` | enum    | `createdAt` | `assetTag`, `type`, `status`, `createdAt`                                  |
+| `order`  | enum    | `desc`      | `asc`, `desc`                                                              |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- All query values validated by `listAssetsQuerySchema`; violations
+  return `400` with a `path: message` string (e.g. `"limit: Too big:
+  expected number to be <=100"`, `"status: Invalid option: ..."`).
+- `page`/`limit` are coerced from strings.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "assets": [
+    {
+      "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "assetTag": "LAP-0042",
+      "type": "Laptop",
+      "description": "MacBook Pro 14 inch M3, 16GB",
+      "status": "AVAILABLE",
+      "createdAt": "2026-09-22T09:00:00.000Z",
+      "updatedAt": "2026-09-22T09:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+An empty result is `{ "assets": [], "pagination": { ..., "total": 0, "totalPages": 0 } }`.
+
+## 9. Error Responses
+
+| Status | Reason                               | Response (`message`)                                  | When                                  |
+| ------ | ------------------------------------- | ------------------------------------------------------ | -------------------------------------- |
+| `400`  | Invalid query parameter               | e.g. `"status: Invalid option: ..."`                  | Bad enum / out-of-range `page`/`limit` |
+| `401`  | Missing/invalid/expired access token  | Same as every other protected endpoint                | `authMiddleware` failure               |
+| `403`  | Caller lacks `asset:read`             | `"You do not have permission to perform this action"` | `EMPLOYEE`/`MANAGER`                   |
+
+## 10. Postman Test Cases
+
+| #   | Case                                        | Expected |
+| --- | -------------------------------------------- | -------- |
+| 1   | `ADMIN`, no params                           | `200`, first 10 assets, newest first |
+| 2   | `?status=AVAILABLE`                          | `200`, only `AVAILABLE` |
+| 3   | `?type=laptop` (lower-case)                  | `200`, matches `Laptop` (case-insensitive exact) |
+| 4   | `?search=macbook`                            | `200`, matches by description/tag/type |
+| 5   | `?sortBy=assetTag&order=asc`                 | `200`, ascending by tag |
+| 6   | `?limit=101`                                 | `400` |
+| 7   | `?status=BROKEN`                             | `400` |
+| 8   | `EMPLOYEE` / `MANAGER`                       | `403` |
+| 9   | No token                                     | `401` |
+
+## 11. Negative Testing
+
+| Scenario                     | Expected |
+| ----------------------------- | ---------- |
+| `page=0`                      | `400`      |
+| `sortBy=description`          | `400` - not a sortable field |
+| `type=` (empty)               | `400` - min length 1 (unlike `search=`, which is tolerated) |
+| Tampered/expired JWT          | `401`      |
+
+## 12. Edge Cases
+
+| Scenario                              | Expected Behavior |
+| --------------------------------------- | ------------------- |
+| `search=` (empty string)                | Treated as no search filter |
+| `search=%20` (a space)                  | Not trimmed - matches literally, effectively any tag/type/description containing a space |
+| `type=Lap`                              | No match - `type` is an exact (not substring) match; use `search` for substrings |
+| `page` beyond the last page             | `200` with empty `assets` and correct `total`/`totalPages` |
+| `search` and `type` together            | `search` OR-group AND `type` |
+
+## 13. Security Testing
+
+- Confirm only `ADMIN` can call this endpoint (per `prisma/seed.js`
+  `EMPLOYEE`/`MANAGER` hold no `asset:read`); employees see only their own
+  holdings through `GET /asset-assignments` (endpoint 142).
+- `search` is passed to Prisma `contains`, parameterized - no injection.
+
+## 14. Database Impact
+
+Read-only: one `Asset.findMany` and one `Asset.count`, run in parallel.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/assets
+    ↓
+authMiddleware
+    ↓
+requirePermission('asset:read')                        → 403
+    ↓
+validateMiddleware(listAssetsQuerySchema, 'query')     → 400 (result on req.validatedQuery)
+    ↓
+asset.controller.list
+    → asset.service.listAssets(req.validatedQuery)
+        └─ Promise.all([findAll, count])
+    ↓
+200 { assets, pagination }
+```
+
+## 16. Performance Notes
+
+`Asset.status` is indexed (`Asset_status_idx`). `search` uses
+`contains` with `mode: 'insensitive'` (`ILIKE '%x%'`), a sequential scan
+- fine for a company-scale asset register, a candidate for a trigram
+index only if the table grows large.
+
+## 17. Interview Notes
+
+- **Q: Why does `type` filter exact but `search` substring?** `type` is a
+  categorical dropdown-style filter; `search` is the free-text box. Both
+  are case-insensitive.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/assets?status=AVAILABLE&type=Laptop&page=1&limit=10" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run after a couple of create requests so the pagination object has
+non-trivial values; add a test asserting `pagination.total >=
+assets.length`.
+
+## 20. Testing Checklist
+
+- ✅ Each filter (`search`, `type`, `status`) individually and combined
+- ✅ Sorting by all four fields, both directions
+- ✅ Pagination metadata correct, including past-the-end page
+- ✅ `400` for bad enums / `limit>100` / `page<1`
+- ✅ `403` for `EMPLOYEE`/`MANAGER`, `401` with no token
+
+---
+
+---
+
+# 135. `GET /assets/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Asset Management Domain (2026-09-22, feature/27-asset-management-domain)
+Endpoint:           Get Asset By ID
+Description:        Returns one asset record
+Method:             GET
+URL:                /api/v1/assets/:id
+API Version:        v1
+Module:             modules/assets
+Authentication:     Yes (Bearer access token)
+Authorization:      `asset:read`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: fetch a single register entry (e.g. before editing
+  or assigning it).
+- **Returns the asset only** - it does not embed the current holder; use
+  `GET /assets/:id/current-holder` (endpoint 140) for that.
+- **`:id` is not validated as a UUID** by a Zod schema on this route; a
+  malformed id simply finds no row and returns `404`.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                       |
+| -------------------------------------- | -------- | ----------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `asset:read` |
+
+## 4. Path Parameters
+
+| Name | Type   | Description  |
+| ---- | ------ | -------------- |
+| `id` | string | Asset id       |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+None beyond authentication/authorization; existence is checked in the
+service.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "asset": {
+    "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "assetTag": "LAP-0042",
+    "type": "Laptop",
+    "description": "MacBook Pro 14 inch M3, 16GB",
+    "status": "AVAILABLE",
+    "createdAt": "2026-09-22T09:00:00.000Z",
+    "updatedAt": "2026-09-22T09:00:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                       | Response (`message`)                                  | When                       |
+| ------ | ----------------------------- | ------------------------------------------------------ | ---------------------------- |
+| `401`  | Missing/invalid token         | Same as every other protected endpoint                | `authMiddleware` failure     |
+| `403`  | Caller lacks `asset:read`     | `"You do not have permission to perform this action"` | `EMPLOYEE`/`MANAGER`         |
+| `404`  | No such asset                 | `"Asset not found"`                                   | Unknown (or malformed) `id`  |
+
+## 10. Postman Test Cases
+
+| #   | Case                       | Expected |
+| --- | --------------------------- | -------- |
+| 1   | `ADMIN`, existing id        | `200`, `{ asset }` |
+| 2   | `ADMIN`, unknown UUID       | `404` |
+| 3   | `ADMIN`, `id=not-a-uuid`    | `404` (not `400`) |
+| 4   | `EMPLOYEE`                  | `403` |
+| 5   | No token                    | `401` |
+
+## 11. Negative Testing
+
+| Scenario                 | Expected |
+| ------------------------- | ---------- |
+| Non-UUID `id`             | `404 "Asset not found"` |
+| Tampered/expired JWT      | `401` |
+
+## 12. Edge Cases
+
+| Scenario                     | Expected Behavior |
+| ----------------------------- | ------------------- |
+| `RETIRED` asset               | Still readable - the register is never hidden |
+| Asset currently `ASSIGNED`    | Returned normally with `status: "ASSIGNED"` |
+
+## 13. Security Testing
+
+- Confirm `EMPLOYEE`/`MANAGER` get `403` (asset register is `ADMIN`-only).
+
+## 14. Database Impact
+
+Read-only: one `Asset.findUnique`.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/assets/:id
+    ↓
+authMiddleware → requirePermission('asset:read')   → 403
+    ↓
+asset.controller.getById → asset.service.getAssetById(id)
+    └─ not found → 404 "Asset not found"
+    ↓
+200 { asset }
+```
+
+## 16. Performance Notes
+
+Primary-key lookup.
+
+## 17. Interview Notes
+
+- **Q: Why no UUID validation on `:id`?** Consistent with earlier
+  domains' by-id routes: a malformed id can never match a row, so `404`
+  is the correct and safe outcome.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/assets/$ASSET_ID" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Use the `assetId` variable saved by endpoint 133.
+
+## 20. Testing Checklist
+
+- ✅ `200 { asset }` for an existing id
+- ✅ `404 "Asset not found"` for unknown/malformed ids
+- ✅ `403` for `EMPLOYEE`/`MANAGER`, `401` with no token
+
+---
+
+---
+
+# 136. `PATCH /assets/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Asset Management Domain (2026-09-22, feature/27-asset-management-domain)
+Endpoint:           Update Asset
+Description:        Edits asset details and performs the direct (non-assignment) status transitions
+Method:             PATCH
+URL:                /api/v1/assets/:id
+API Version:        v1
+Module:             modules/assets
+Authentication:     Yes (Bearer access token)
+Authorization:      `asset:update`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: correct a tag/type/description, send an asset to
+  repair, return it to service, or retire it.
+- **Direct state machine** (`DIRECT_TRANSITIONS` in `asset.service.js`):
+
+  | From           | Allowed direct target      |
+  | -------------- | ---------------------------- |
+  | `AVAILABLE`    | `UNDER_REPAIR`, `RETIRED`    |
+  | `UNDER_REPAIR` | `AVAILABLE`, `RETIRED`       |
+  | `ASSIGNED`     | none (record a return first) |
+  | `RETIRED`      | none - terminal              |
+
+  A same-status value (e.g. `AVAILABLE` -> `AVAILABLE`) is a no-op and is
+  always accepted. `ASSIGNED` is **never** a valid `status` value in the
+  body (`z.enum(['AVAILABLE','UNDER_REPAIR','RETIRED'])` -> `400`); it is
+  entered only by `POST /assets/:id/assign` and left only by
+  `POST /assets/:id/return`.
+- **Non-status fields may be edited in any state** - including
+  `ASSIGNED` and `RETIRED` (only `status` is guarded).
+- **Atomic with audit**: the update and its `AuditLog` row (`UPDATE`,
+  before/after snapshots) commit in one transaction.
+- **`description` may be set to `null`** to clear it (only `PATCH` accepts
+  `null`).
+- **Expected callers**: `ADMIN`/IT.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                          |
+| -------------------------------------- | -------- | -------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `asset:update`  |
+| `Content-Type: application/json`      | **Yes**  |                                 |
+
+## 4. Path Parameters
+
+| Name | Type   | Description |
+| ---- | ------ | ------------- |
+| `id` | string | Asset id      |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+All fields optional (a partial update):
+
+```json
+{
+  "assetTag": "LAP-0042",
+  "type": "Laptop",
+  "description": null,
+  "status": "UNDER_REPAIR"
+}
+```
+
+| Field         | Type           | Notes                                                      |
+| ------------- | -------------- | ------------------------------------------------------------ |
+| `assetTag`    | string         | Trimmed, min 1; unique case-insensitively                    |
+| `type`        | string         | Trimmed, min 1                                                |
+| `description` | string \| null | Trimmed, min 1 when a string; `null` clears it                |
+| `status`      | enum           | `AVAILABLE`, `UNDER_REPAIR`, `RETIRED` (never `ASSIGNED`)     |
+
+## 7. Validation Rules
+
+- Field rules as above; `status: "ASSIGNED"` or any other value -> `400`.
+- **Tag uniqueness**: if `assetTag` is supplied, `findByAssetTag`
+  (case-insensitive) must not return a *different* asset - otherwise
+  `409`. Re-submitting the asset's own tag (even in different case) is
+  allowed.
+- **Transition check** (only when `status` is supplied and differs from
+  the current status): current `ASSIGNED` -> `409`; current status whose
+  allowlist doesn't include the target (e.g. `RETIRED` -> anything) ->
+  `409`.
+- An empty body `{}` is accepted and returns `200` (with an `AuditLog`
+  row whose before/after are equal).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "asset": {
+    "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "assetTag": "LAP-0042",
+    "type": "Laptop",
+    "description": null,
+    "status": "UNDER_REPAIR",
+    "createdAt": "2026-09-22T09:00:00.000Z",
+    "updatedAt": "2026-09-22T10:30:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                               | Response (`message`)                                                                         | When |
+| ------ | ------------------------------------- | ------------------------------------------------------------------------------------------- | ---- |
+| `400`  | Validation failed                     | e.g. `"status: Invalid option: expected one of \"AVAILABLE\"\|\"UNDER_REPAIR\"\|\"RETIRED\""` | Bad body, `status: "ASSIGNED"` |
+| `401`  | Missing/invalid token                 | Same as every other protected endpoint                                                      | `authMiddleware` failure |
+| `403`  | Caller lacks `asset:update`           | `"You do not have permission to perform this action"`                                        | `EMPLOYEE`/`MANAGER` |
+| `404`  | No such asset                         | `"Asset not found"`                                                                          | Unknown `id` |
+| `409`  | Duplicate tag                         | `"An asset with this tag already exists"`                                                    | Tag collides with another asset (or `P2002`) |
+| `409`  | Status change while assigned          | `"This asset is currently assigned - record its return before changing its status"`          | Current status `ASSIGNED`, different target |
+| `409`  | Disallowed transition                 | `"Cannot change asset status from RETIRED to AVAILABLE"` (template: `` `Cannot change asset status from ${from} to ${to}` ``) | e.g. `RETIRED` -> anything |
+| `409`  | Concurrent modification               | `"This asset was modified concurrently - reload it and retry"`                               | The compare-and-set on `status` matched 0 rows (another request changed the status first) |
+
+## 10. Postman Test Cases
+
+| #   | Case                                             | Expected |
+| --- | ------------------------------------------------- | -------- |
+| 1   | `AVAILABLE` -> `UNDER_REPAIR`                     | `200` |
+| 2   | `UNDER_REPAIR` -> `AVAILABLE`                     | `200` |
+| 3   | `AVAILABLE` -> `RETIRED`                          | `200` |
+| 4   | `RETIRED` -> `AVAILABLE`                          | `409 "Cannot change asset status from RETIRED to AVAILABLE"` |
+| 5   | `ASSIGNED` asset, `status: "RETIRED"`             | `409 "This asset is currently assigned - record its return before changing its status"` |
+| 6   | `status: "ASSIGNED"`                              | `400` |
+| 7   | `assetTag` colliding with another asset           | `409` |
+| 8   | `assetTag` in different case of own tag           | `200` |
+| 9   | `description: null`                               | `200`, cleared |
+| 10  | `ASSIGNED` asset, only `description` edited       | `200` |
+| 11  | `EMPLOYEE`/`MANAGER`                              | `403` |
+| 12  | Unknown id / no token                             | `404` / `401` |
+
+## 11. Negative Testing
+
+| Scenario                                    | Expected |
+| -------------------------------------------- | ---------- |
+| `status: "assigned"` (lower-case)             | `400` |
+| `assetTag: ""`                                | `400` |
+| `description: ""`                             | `400` (use `null` to clear) |
+| `RETIRED` asset, `status: "RETIRED"`          | `200` no-op (same status is not a transition) |
+| Tampered/expired JWT                          | `401` |
+
+## 12. Edge Cases
+
+| Scenario                                                     | Expected Behavior |
+| ------------------------------------------------------------- | ------------------- |
+| Same-status `status` value                                    | Accepted as a no-op; `updatedAt` still advances and an `AuditLog` row is still written |
+| Edit `assetTag` of a `RETIRED` asset                          | Allowed - only `status` is guarded |
+| `PATCH` status racing a concurrent `assign` | Status changes are a **compare-and-set** inside the transaction (`updateMany where { id, status: <status validated above> }`). If an assign/return moved the asset in between, zero rows change and the caller gets `409 "This asset was modified concurrently - reload it and retry"`; the asset can never be silently overwritten while an active assignment row exists. *(Found by the handbook verification pass; fixed 2026-09-22.)* |
+
+## 13. Security Testing
+
+- Confirm `MANAGER`/`EMPLOYEE` get `403`.
+- Confirm mass-assignment: `id`, `createdAt` in the body are stripped.
+- Confirm `status: "ASSIGNED"` cannot be injected to bypass the
+  assignment ledger (rejected by the Zod enum).
+
+## 14. Database Impact
+
+`Asset.findUnique`, optionally `Asset.findFirst` (tag check), then a
+transaction: a compare-and-set status change (only when the status is changing), one `Asset.update` for the remaining fields, and one `AuditLog` insert.
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/assets/:id
+    ↓
+authMiddleware → requirePermission('asset:update') → validateMiddleware(updateAssetSchema)
+    ↓
+asset.controller.update
+    → asset.service.updateAsset(id, data, actor)
+        ├─ findById → 404
+        ├─ assetTag? findByAssetTag, different id → 409
+        ├─ status differs?  ASSIGNED → 409 ; not in DIRECT_TRANSITIONS → 409
+        └─ $transaction { transitionStatus (CAS, if status changes); Asset.update; AuditLog.create(UPDATE) }  (P2002 → 409)
+    ↓
+200 { asset }
+```
+
+## 16. Performance Notes
+
+Two-to-three indexed lookups plus a small transaction.
+
+## 17. Interview Notes
+
+- **Q: Why can't `PATCH` set `ASSIGNED`, and why can't an `ASSIGNED`
+  asset change status?** ADR-AM02/AM03 - the asset's `ASSIGNED` status and
+  its single active ledger row must move together, and only the
+  assignment/return transactions do that. Allowing `PATCH` to touch either
+  end would desynchronize them.
+- **Q: Why is `RETIRED` terminal?** A retired asset has left service;
+  resurrecting it would blur the custody history. Register a new asset
+  instead.
+
+## 18. cURL Examples
+
+```bash
+curl -s -X PATCH "http://localhost:3000/api/v1/assets/$ASSET_ID" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"UNDER_REPAIR"}'
+```
+
+## 19. Postman Collection Notes
+
+Walk the whole machine in one run: `AVAILABLE` -> `UNDER_REPAIR` ->
+`AVAILABLE` -> `RETIRED`, then assert the `409` on `RETIRED` ->
+`AVAILABLE`. Run the `ASSIGNED` guard after endpoint 138.
+
+## 20. Testing Checklist
+
+- ✅ All four allowed direct transitions succeed
+- ✅ `RETIRED` terminal (`409`) and `ASSIGNED` guarded (`409`), with the exact messages above
+- ✅ `status: "ASSIGNED"` rejected `400`
+- ✅ Tag uniqueness (case-insensitive), own-tag resubmission allowed
+- ✅ `description: null` clears
+- ✅ `403`/`401`/`404` paths
+- ✅ `AuditLog` row created, `entityType: 'Asset'`, `action: 'UPDATE'`, before/after populated
+
+---
+
+---
+
+# 137. `DELETE /assets/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Asset Management Domain (2026-09-22, feature/27-asset-management-domain)
+Endpoint:           Delete Asset
+Description:        Hard-deletes an asset that has never been assigned
+Method:             DELETE
+URL:                /api/v1/assets/:id
+API Version:        v1
+Module:             modules/assets
+Authentication:     Yes (Bearer access token)
+Authorization:      `asset:delete`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: remove an asset registered by mistake.
+- **Hard invariant - no hard-delete once history exists**: the service
+  counts **every** `AssetAssignment` row for the asset (returned or not);
+  any count > 0 returns `409` and points to retiring instead. The
+  `AssetAssignment_assetId_fkey` `ON DELETE RESTRICT` backs this at the
+  database level (ADR-AM01).
+- **Atomic with audit**: the `DELETE` and its `AuditLog` row (`DELETE`,
+  `beforeData` = the asset, `afterData: null`) commit in one transaction.
+- **Expected callers**: `ADMIN` only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                         |
+| -------------------------------------- | -------- | ------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `asset:delete` |
+
+## 4. Path Parameters
+
+| Name | Type   | Description |
+| ---- | ------ | ------------- |
+| `id` | string | Asset id      |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- Asset must exist (`404`).
+- Asset must have **zero** assignment rows, of any age or state (`409`).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{ "message": "Asset deleted successfully" }
+```
+
+## 9. Error Responses
+
+| Status | Reason                            | Response (`message`)                                                              | When |
+| ------ | ---------------------------------- | -------------------------------------------------------------------------------- | ---- |
+| `401`  | Missing/invalid token              | Same as every other protected endpoint                                            | `authMiddleware` failure |
+| `403`  | Caller lacks `asset:delete`        | `"You do not have permission to perform this action"`                              | `EMPLOYEE`/`MANAGER` |
+| `404`  | No such asset                      | `"Asset not found"`                                                                | Unknown `id` |
+| `409`  | Assignment history exists          | `"This asset has assignment history and cannot be deleted - retire it instead"`    | Any `AssetAssignment` row, including returned ones (also when one is inserted concurrently and the FK `P2003` fires) |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                   | Expected |
+| --- | ------------------------------------------------------- | -------- |
+| 1   | `ADMIN` deletes a never-assigned asset                  | `200`, message above; follow-up `GET` -> `404` |
+| 2   | `ADMIN` deletes a currently `ASSIGNED` asset            | `409` |
+| 3   | `ADMIN` deletes an asset assigned once and since returned | `409` (history is permanent) |
+| 4   | Unknown id                                              | `404` |
+| 5   | `EMPLOYEE`/`MANAGER`                                    | `403` |
+| 6   | No token                                                | `401` |
+
+## 11. Negative Testing
+
+| Scenario                     | Expected |
+| ----------------------------- | ---------- |
+| Double delete                 | Second call `404` |
+| Delete a `RETIRED` asset with history | `409` - retiring does not make it deletable |
+| Tampered/expired JWT          | `401` |
+
+## 12. Edge Cases
+
+| Scenario                                                        | Expected Behavior |
+| ---------------------------------------------------------------- | ------------------- |
+| Never-assigned `UNDER_REPAIR`/`RETIRED` asset                    | Deletable |
+| Assign racing the delete (assignment inserted between the count and the delete) | The FK `RESTRICT` blocks the delete (Prisma `P2003`), which the service catches and maps to the same `409 "This asset has assignment history and cannot be deleted - retire it instead"` rather than a `500`. *(Found by the handbook verification pass; fixed 2026-09-22.)* |
+
+## 13. Security Testing
+
+- Confirm only `ADMIN` can delete; confirm the `409` protects the
+  custody ledger from being orphaned or erased via this route.
+
+## 14. Database Impact
+
+`Asset.findUnique`, `AssetAssignment.count`, then a transaction with one
+`Asset` delete and one `AuditLog` insert.
+
+## 15. Request Lifecycle
+
+```
+DELETE /api/v1/assets/:id
+    ↓
+authMiddleware → requirePermission('asset:delete')
+    ↓
+asset.controller.remove → asset.service.deleteAsset(id, actor)
+    ├─ findById → 404
+    ├─ countAssignmentsForAsset > 0 → 409
+    └─ $transaction { Asset.delete; AuditLog.create(DELETE) }
+    ↓
+200 { message: 'Asset deleted successfully' }
+```
+
+## 16. Performance Notes
+
+Indexed count on `AssetAssignment_assetId_idx`.
+
+## 17. Interview Notes
+
+- **Q: Why refuse deletion after a *returned* assignment?** The ledger
+  is the record of who held what and when; deleting the asset would either
+  destroy it (cascade) or orphan it. ADR-AM01 makes history permanent, so
+  the escape hatch is `RETIRED`, not delete.
+
+## 18. cURL Examples
+
+```bash
+curl -s -X DELETE "http://localhost:3000/api/v1/assets/$ASSET_ID" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Create a throwaway asset just for the success case; use an already-
+assigned asset from endpoint 138 for the `409`.
+
+## 20. Testing Checklist
+
+- ✅ Never-assigned asset deletes, `200`, row gone
+- ✅ `409` (exact message) for assigned and for previously-assigned assets
+- ✅ `404` for unknown id, `403` for non-`ADMIN`, `401` with no token
+- ✅ `AuditLog` row created, `entityType: 'Asset'`, `action: 'DELETE'`, `afterData: null`
+
+---
+
+---
+
+# 138. `POST /assets/:id/assign`
+
+## 1. Endpoint Information
+
+```
+Feature:            Asset Management Domain (2026-09-22, feature/27-asset-management-domain)
+Endpoint:           Assign Asset To Employee
+Description:        Hands an AVAILABLE asset to an employee, creating the ledger row and moving the asset to ASSIGNED in one transaction
+Method:             POST
+URL:                /api/v1/assets/:id/assign
+API Version:        v1
+Module:             modules/assets
+Authentication:     Yes (Bearer access token)
+Authorization:      `assetAssignment:create`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the custody hand-over (`docs/domain-asset-management.md`
+  §2 "Assignment").
+- **Positive allowlist (ADR-AM03)**: only `status === 'AVAILABLE'` assets
+  are assignable. `ASSIGNED`, `UNDER_REPAIR` and `RETIRED` are all refused.
+- **One transaction, four writes**: (1) compare-and-set
+  `Asset.status` `AVAILABLE` -> `ASSIGNED` (`updateMany where {id, status:
+  'AVAILABLE'}`), (2) `AssetAssignment` insert with `assignedBy` = the
+  caller's user id, (3) `AuditLog` `CREATE` for `AssetAssignment`, (4)
+  `AuditLog` `UPDATE` for `Asset` (before = old snapshot, after = same with
+  `status: 'ASSIGNED'`).
+- **Two independent double-assignment guards (ADR-AM02)**: the
+  compare-and-set (`0` rows changed -> `409`) and the hand-added partial
+  unique index `AssetAssignment_assetId_active_key` (`UNIQUE ("assetId")
+  WHERE "returnedAt" IS NULL`) as a `P2002` backstop -> the same `409`.
+- **Optional back-dating**: `assignedAt` may record equipment handed over
+  before it was registered; defaults to now; never in the future.
+- **Check order**: asset exists (`404`) -> asset assignable (`400`) ->
+  employee exists (`400`) -> transaction.
+- **Expected callers**: `ADMIN`/IT.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                    |
+| -------------------------------------- | -------- | ------------------------------------------ |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `assetAssignment:create`  |
+| `Content-Type: application/json`      | **Yes**  |                                           |
+
+## 4. Path Parameters
+
+| Name | Type   | Description |
+| ---- | ------ | ------------- |
+| `id` | string | Asset id      |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "employeeId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+  "assignedAt": "2026-09-15T09:05:00.000Z"
+}
+```
+
+| Field        | Type            | Required | Notes                                              |
+| ------------ | --------------- | -------- | ---------------------------------------------------- |
+| `employeeId` | string (UUID)   | **Yes**  | Must reference an existing `Employee`                |
+| `assignedAt` | date (ISO 8601) | No       | Coerced to a `Date`; must not be in the future. Defaults to now |
+
+## 7. Validation Rules
+
+- `employeeId`: required UUID (`400`).
+- `assignedAt`: coerced with `z.coerce.date()`; a value later than "now"
+  -> `400` `"assignedAt: assignedAt cannot be in the future"`; an
+  unparseable value -> `400`.
+- Asset must exist (`404`), be `AVAILABLE` (`400`), and the employee
+  must exist (`400`).
+- **Not checked**: the employee's own status (an inactive/terminated
+  `Employee` row can still be assigned an asset), and whether `assignedAt`
+  precedes the asset's previous `returnedAt`.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "assignment": {
+    "id": "d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f70",
+    "assetId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "employeeId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "assignedAt": "2026-09-15T09:05:00.000Z",
+    "returnedAt": null,
+    "returnCondition": null,
+    "returnNotes": null,
+    "assignedBy": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+    "returnedBy": null,
+    "createdAt": "2026-09-22T09:10:00.000Z",
+    "updatedAt": "2026-09-22T09:10:00.000Z",
+    "asset": {
+      "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "assetTag": "LAP-0042",
+      "type": "Laptop",
+      "description": "MacBook Pro 14 inch M3, 16GB",
+      "status": "ASSIGNED",
+      "createdAt": "2026-09-22T09:00:00.000Z",
+      "updatedAt": "2026-09-22T09:10:00.000Z"
+    }
+  }
+}
+```
+
+The embedded `asset` reflects the post-transition state (`ASSIGNED`).
+
+## 9. Error Responses
+
+| Status | Reason                                | Response (`message`)                                                                                        | When |
+| ------ | -------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---- |
+| `400`  | Validation failed                      | e.g. `"employeeId: Invalid UUID"`, `"assignedAt: assignedAt cannot be in the future"`                        | Bad body |
+| `400`  | Asset not assignable                   | `"assetId: this asset is ASSIGNED and cannot be assigned - only AVAILABLE assets can be assigned"` (template: `` `assetId: this asset is ${status} and cannot be assigned - only AVAILABLE assets can be assigned` ``) | Status `ASSIGNED`/`UNDER_REPAIR`/`RETIRED` |
+| `400`  | Employee not found                     | `"employeeId: references a record that does not exist"`                                                      | Unknown `employeeId` |
+| `401`  | Missing/invalid token                  | Same as every other protected endpoint                                                                      | `authMiddleware` failure |
+| `403`  | Caller lacks `assetAssignment:create`  | `"You do not have permission to perform this action"`                                                        | `EMPLOYEE`/`MANAGER` |
+| `404`  | No such asset                          | `"Asset not found"`                                                                                          | Unknown asset `id` |
+| `409`  | Lost the race / active row exists      | `"This asset already has an active assignment"`                                                              | Compare-and-set changed 0 rows, or `P2002` on the partial unique index |
+
+Note: assigning an already-`ASSIGNED` asset in the ordinary (non-racing)
+case returns **`400`** (the allowlist check), not `409`; the `409`
+appears only when two requests race past that check.
+
+## 10. Postman Test Cases
+
+| #   | Case                                              | Expected |
+| --- | -------------------------------------------------- | -------- |
+| 1   | `ADMIN` assigns an `AVAILABLE` asset              | `201`, `asset.status: "ASSIGNED"` |
+| 2   | Same asset assigned again                         | `400` (`... this asset is ASSIGNED ...`) |
+| 3   | `UNDER_REPAIR` asset                              | `400` |
+| 4   | `RETIRED` asset                                   | `400` |
+| 5   | Unknown `employeeId` (valid UUID)                 | `400` |
+| 6   | Non-UUID `employeeId`                             | `400` |
+| 7   | Back-dated `assignedAt`                           | `201`, `assignedAt` as supplied |
+| 8   | Future `assignedAt`                               | `400` |
+| 9   | Unknown asset id                                  | `404` |
+| 10  | `EMPLOYEE`/`MANAGER`                              | `403` |
+| 11  | Two parallel assigns of one asset                 | One `201`, the other `409 "This asset already has an active assignment"` (or `400` if it loses after the winner commits) |
+| 12  | No token                                          | `401` |
+
+## 11. Negative Testing
+
+| Scenario                                   | Expected |
+| ------------------------------------------- | ---------- |
+| Missing `employeeId`                         | `400` |
+| `assignedAt: "garbage"`                      | `400` |
+| Assign an asset then `PATCH` its status      | `409` (see endpoint 136) |
+| Tampered/expired JWT                         | `401` |
+
+## 12. Edge Cases
+
+| Scenario                                            | Expected Behavior |
+| ---------------------------------------------------- | ------------------- |
+| `assignedAt` omitted                                 | Database default `now()` applies |
+| Employee already holds other assets                  | Allowed - the one-active limit is per **asset**, not per employee |
+| Asset returned then re-assigned to a different employee | Allowed - a fresh ledger row; the old row stays closed and untouched |
+| Concurrent assigns                                   | Exactly one succeeds - CAS + partial unique index; the transaction rolls back the loser entirely (no orphan ledger row, no audit rows) |
+| Asset `AuditLog` `afterData`                          | Built as `{ ...asset, status: 'ASSIGNED' }` from the pre-read snapshot, so its `updatedAt` is the old value (cosmetic) |
+
+## 13. Security Testing
+
+- Confirm only `ADMIN` holds `assetAssignment:create`.
+- Confirm `assignedBy` is taken from the JWT (`req.user.id`), never from
+  the body.
+- Confirm the partial unique index exists in the database
+  (`AssetAssignment_assetId_active_key`) - it is not visible in
+  `schema.prisma`.
+
+## 14. Database Impact
+
+Reads: `Asset.findUnique` (twice - existence, then assignability),
+`Employee.findUnique`. Transaction: `Asset.updateMany` (CAS),
+`AssetAssignment.insert`, two `AuditLog` inserts.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/assets/:id/assign
+    ↓
+authMiddleware → requirePermission('assetAssignment:create') → validateMiddleware(assignAssetSchema)
+    ↓
+asset.controller.assign
+    → assetAssignment.service.assignAsset(assetId, data, actor)
+        ├─ assetRepository.findById → 404
+        ├─ assetService.assertAssetAssignable → 400 (status !== AVAILABLE)
+        ├─ employeeRepository.findById → 400
+        └─ $transaction {
+             transitionStatus(AVAILABLE→ASSIGNED)  → 0 rows → 409
+             AssetAssignment.create
+             AuditLog(CREATE, AssetAssignment)
+             AuditLog(UPDATE, Asset)
+           }   (P2002 → 409 "This asset already has an active assignment")
+    ↓
+201 { assignment }
+```
+
+## 16. Performance Notes
+
+Short transaction, all primary-key/indexed access. The CAS makes the
+common path lock-free apart from the row lock held by `updateMany`.
+
+## 17. Interview Notes
+
+- **Q: Why both a compare-and-set and a partial unique index?** Defense
+  in depth (ADR-AM02): the CAS catches the race at the application layer
+  with a clean `409`; the partial unique index is a schema-level guarantee
+  that holds even if a future code path forgets the CAS.
+- **Q: Why a positive allowlist (`=== AVAILABLE`) rather than "not
+  ASSIGNED / not RETIRED"?** ADR-AM03 - new statuses added later are
+  non-assignable by default rather than silently assignable.
+- **Q: Why `400` for a non-assignable asset but `404` for a missing one?**
+  The existence check is separate and first; the allowlist failure
+  reuses the domain's `assertXAssignable` convention from earlier domains
+  which throws `BadRequestError` with an `assetId:`-prefixed message.
+
+## 18. cURL Examples
+
+```bash
+curl -s -X POST "http://localhost:3000/api/v1/assets/$ASSET_ID/assign" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"employeeId\":\"$EMPLOYEE_ID\"}"
+```
+
+## 19. Postman Collection Notes
+
+Save `assignment.id` as `assignmentId` (used by endpoints 143). To test
+the race, fire two identical requests with the Collection Runner's
+parallel iteration or a small script.
+
+## 20. Testing Checklist
+
+- ✅ `201`, asset flips to `ASSIGNED`, ledger row has `returnedAt: null`, `assignedBy` set
+- ✅ `400` for `ASSIGNED`/`UNDER_REPAIR`/`RETIRED` assets (exact template message)
+- ✅ `400` unknown employee; `404` unknown asset
+- ✅ Future `assignedAt` rejected; back-dated accepted
+- ✅ Concurrent double-assign leaves exactly one active row
+- ✅ Two `AuditLog` rows written (`AssetAssignment` CREATE, `Asset` UPDATE)
+- ✅ `403` for `EMPLOYEE`/`MANAGER`, `401` with no token
+
+---
+
+---
+
+# 139. `POST /assets/:id/return`
+
+## 1. Endpoint Information
+
+```
+Feature:            Asset Management Domain (2026-09-22, feature/27-asset-management-domain)
+Endpoint:           Record Asset Return
+Description:        Closes the asset's active assignment and moves the asset to AVAILABLE or UNDER_REPAIR based on the return condition
+Method:             POST
+URL:                /api/v1/assets/:id/return
+API Version:        v1
+Module:             modules/assets
+Authentication:     Yes (Bearer access token)
+Authorization:      `assetAssignment:return`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: records the hand-back of equipment (also the hook
+  Exit Management will use at offboarding).
+- **`condition` is required on purpose**: where a returned asset goes
+  next is a judgment call made at return time.
+  `GOOD` -> asset `AVAILABLE`; `DAMAGED` -> asset `UNDER_REPAIR`.
+- **Append-only ledger (ADR-AM01)**: the assignment row is **updated in
+  place only to record the return** (`returnedAt = now`, `returnedBy`,
+  `returnCondition`, `returnNotes`) - never deleted, and the update is
+  guarded on `returnedAt: null`.
+- **One transaction**: (1) close the ledger row (`updateMany where {id,
+  returnedAt: null}`, `0` -> `409`), (2) compare-and-set `Asset.status`
+  `ASSIGNED` -> next status (`0` -> `409`), (3) `AuditLog` `UPDATE` for
+  the `AssetAssignment` (before = active row, after = closed row), (4)
+  `AuditLog` `UPDATE` for the `Asset`.
+- **`returnedAt` is always server time** - it cannot be back-dated
+  (unlike `assignedAt` on assign).
+- **Expected callers**: `ADMIN`/IT.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                  |
+| -------------------------------------- | -------- | ---------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `assetAssignment:return` |
+| `Content-Type: application/json`      | **Yes**  |                                          |
+
+## 4. Path Parameters
+
+| Name | Type   | Description |
+| ---- | ------ | ------------- |
+| `id` | string | Asset id (not the assignment id) |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "condition": "DAMAGED",
+  "notes": "Cracked screen"
+}
+```
+
+| Field       | Type   | Required | Notes                                          |
+| ----------- | ------ | -------- | ------------------------------------------------ |
+| `condition` | enum   | **Yes**  | `GOOD` or `DAMAGED`                              |
+| `notes`     | string | No       | Trimmed, min length 1 when present; stored as `null` if omitted |
+
+## 7. Validation Rules
+
+- `condition` required, exactly `GOOD` or `DAMAGED` (`400` otherwise).
+- `notes`: if present, non-empty after trimming.
+- Asset must exist (`404`) and have an active assignment (`409`).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "assignment": {
+    "id": "d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f70",
+    "assetId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "employeeId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "assignedAt": "2026-09-15T09:05:00.000Z",
+    "returnedAt": "2026-09-22T11:00:00.000Z",
+    "returnCondition": "DAMAGED",
+    "returnNotes": "Cracked screen",
+    "assignedBy": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+    "returnedBy": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+    "createdAt": "2026-09-22T09:10:00.000Z",
+    "updatedAt": "2026-09-22T11:00:00.000Z",
+    "asset": {
+      "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "assetTag": "LAP-0042",
+      "type": "Laptop",
+      "description": "MacBook Pro 14 inch M3, 16GB",
+      "status": "UNDER_REPAIR",
+      "createdAt": "2026-09-22T09:00:00.000Z",
+      "updatedAt": "2026-09-22T11:00:00.000Z"
+    }
+  }
+}
+```
+
+The response is re-read after commit, so the embedded `asset.status`
+shows the new status.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                    | When |
+| ------ | ------------------------------------ | ------------------------------------------------------ | ---- |
+| `400`  | Validation failed                    | e.g. `"condition: Invalid option: expected one of \"GOOD\"\|\"DAMAGED\""` | Missing/invalid `condition`, empty `notes` |
+| `401`  | Missing/invalid token                | Same as every other protected endpoint                 | `authMiddleware` failure |
+| `403`  | Caller lacks `assetAssignment:return`| `"You do not have permission to perform this action"`  | `EMPLOYEE`/`MANAGER` |
+| `404`  | No such asset                        | `"Asset not found"`                                    | Unknown asset `id` |
+| `409`  | Nothing to return                    | `"This asset is not currently assigned"`               | No active row, or a concurrent return already closed it / CAS lost |
+
+## 10. Postman Test Cases
+
+| #   | Case                                        | Expected |
+| --- | -------------------------------------------- | -------- |
+| 1   | Return an assigned asset, `GOOD`             | `200`, asset `AVAILABLE`, `returnCondition: "GOOD"` |
+| 2   | Return, `DAMAGED` with notes                 | `200`, asset `UNDER_REPAIR` |
+| 3   | Return the same asset again                  | `409 "This asset is not currently assigned"` |
+| 4   | Return an `AVAILABLE` asset that was never assigned | `409` |
+| 5   | Missing `condition`                          | `400` |
+| 6   | `condition: "BROKEN"`                        | `400` |
+| 7   | Unknown asset id                             | `404` |
+| 8   | `EMPLOYEE`/`MANAGER`                         | `403` |
+| 9   | Two parallel returns                         | One `200`, one `409` |
+| 10  | No token                                     | `401` |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected |
+| ---------------------------------- | ---------- |
+| `notes: ""`                        | `400` |
+| Sending `assignmentId` in the body | Ignored (stripped); the active row is located by asset id |
+| Tampered/expired JWT               | `401` |
+
+## 12. Edge Cases
+
+| Scenario                                            | Expected Behavior |
+| ---------------------------------------------------- | ------------------- |
+| `GOOD` return, then immediate re-assign              | Allowed - asset is `AVAILABLE` again and gets a brand-new ledger row |
+| `DAMAGED` return                                     | Asset is `UNDER_REPAIR` and cannot be assigned until `PATCH`ed back to `AVAILABLE` |
+| Concurrent double return                             | Exactly one closes the row; the transaction of the loser rolls back and returns `409` |
+| `returnedBy` user later deleted                      | FK is `ON DELETE SET NULL`, the ledger row survives with `returnedBy: null` |
+
+## 13. Security Testing
+
+- Confirm only `ADMIN` holds `assetAssignment:return`; an employee
+  cannot mark their own equipment returned.
+- Confirm `returnedBy` comes from the JWT, not the body.
+
+## 14. Database Impact
+
+Reads: `Asset.findUnique`, `AssetAssignment.findFirst` (active). Transaction:
+`AssetAssignment.updateMany` (close), `Asset.updateMany` (CAS),
+`AssetAssignment.findUnique`, two `AuditLog` inserts. One final
+`AssetAssignment.findUnique` after commit for the response.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/assets/:id/return
+    ↓
+authMiddleware → requirePermission('assetAssignment:return') → validateMiddleware(returnAssetSchema)
+    ↓
+asset.controller.returnAsset
+    → assetAssignment.service.returnAsset(assetId, data, actor)
+        ├─ assetRepository.findById → 404
+        ├─ findActiveByAssetId → none → 409 "This asset is not currently assigned"
+        └─ $transaction {
+             closeActive(returnedAt: null guard)        → 0 rows → 409
+             transitionStatus(ASSIGNED→nextStatus)      → 0 rows → 409
+             AuditLog(UPDATE, AssetAssignment)
+             AuditLog(UPDATE, Asset)
+           }
+    ↓
+200 { assignment }
+```
+
+## 16. Performance Notes
+
+Same order of cost as assign; all keyed by indexed ids.
+
+## 17. Interview Notes
+
+- **Q: Why is the ledger UPDATEd on return if it's "append-only"?**
+  Append-only means no deletes and no rewriting of history: the *only*
+  mutation is closing an open row once (guarded on `returnedAt: null`),
+  which is what records the return.
+- **Q: Why is `condition` mandatory?** It decides the asset's next state
+  (`AVAILABLE` vs `UNDER_REPAIR`); defaulting it would hide a judgment
+  call the business wants recorded.
+
+## 18. cURL Examples
+
+```bash
+curl -s -X POST "http://localhost:3000/api/v1/assets/$ASSET_ID/return" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"condition":"GOOD"}'
+```
+
+## 19. Postman Collection Notes
+
+Run assign (138) -> return `DAMAGED` -> `GET /assets/:id` (asset
+`UNDER_REPAIR`) -> `PATCH` back to `AVAILABLE` -> assign again, to prove
+the full lifecycle in one collection.
+
+## 20. Testing Checklist
+
+- ✅ `GOOD` -> asset `AVAILABLE`; `DAMAGED` -> asset `UNDER_REPAIR`
+- ✅ Ledger row keeps its history; `returnedAt`/`returnedBy`/`returnCondition`/`returnNotes` set
+- ✅ `409 "This asset is not currently assigned"` on double/never-assigned return
+- ✅ `400` for missing/invalid `condition`
+- ✅ `404`, `403`, `401` paths
+- ✅ Two `AuditLog` rows written (`AssetAssignment` UPDATE, `Asset` UPDATE)
+
+---
+
+---
+
+# 140. `GET /assets/:id/current-holder`
+
+## 1. Endpoint Information
+
+```
+Feature:            Asset Management Domain (2026-09-22, feature/27-asset-management-domain)
+Endpoint:           Get Asset Current Holder
+Description:        Returns the asset's active assignment (who holds it now), or null
+Method:             GET
+URL:                /api/v1/assets/:id/current-holder
+API Version:        v1
+Module:             modules/assets
+Authentication:     Yes (Bearer access token)
+Authorization:      `assetAssignment:read:any`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: one of the two reusable queries named in
+  `docs/domain-asset-management.md` §5/§12 ("current holder of asset X");
+  the companion "all assets held by employee Y" is
+  `getActiveAssignmentsForEmployee` in the service (consumed in-process by
+  the future Exit Management domain) and is available over HTTP as
+  `GET /asset-assignments?employeeId=...&active=true` (endpoint 142).
+- **`200` with `null`, not `404`, when nobody holds it**: the asset must
+  exist (`404` otherwise), but an existing asset with no active
+  assignment returns `{ "assignment": null }`.
+- **Read from the ledger, not from `Asset.status`**: the active row is
+  the one with `returnedAt: null` (at most one, ADR-AM02).
+- **Expected callers**: `ADMIN`/IT only (`:read:any` is not held by
+  `MANAGER`/`EMPLOYEE`).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                     |
+| -------------------------------------- | -------- | ------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `assetAssignment:read:any` |
+
+## 4. Path Parameters
+
+| Name | Type   | Description |
+| ---- | ------ | ------------- |
+| `id` | string | Asset id      |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Asset must exist (`404`). No other validation.
+
+## 8. Successful Response
+
+Held:
+
+```
+200 OK
+
+{
+  "assignment": {
+    "id": "d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f70",
+    "assetId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "employeeId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "assignedAt": "2026-09-15T09:05:00.000Z",
+    "returnedAt": null,
+    "returnCondition": null,
+    "returnNotes": null,
+    "assignedBy": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+    "returnedBy": null,
+    "createdAt": "2026-09-22T09:10:00.000Z",
+    "updatedAt": "2026-09-22T09:10:00.000Z",
+    "asset": { "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", "assetTag": "LAP-0042", "type": "Laptop", "description": "MacBook Pro 14 inch M3, 16GB", "status": "ASSIGNED", "createdAt": "2026-09-22T09:00:00.000Z", "updatedAt": "2026-09-22T09:10:00.000Z" }
+  }
+}
+```
+
+Not held:
+
+```json
+{ "assignment": null }
+```
+
+## 9. Error Responses
+
+| Status | Reason                                   | Response (`message`)                                  | When |
+| ------ | ----------------------------------------- | ------------------------------------------------------ | ---- |
+| `401`  | Missing/invalid token                     | Same as every other protected endpoint                | `authMiddleware` failure |
+| `403`  | Caller lacks `assetAssignment:read:any`   | `"You do not have permission to perform this action"` | `EMPLOYEE`/`MANAGER` (even `:read:own` holders) |
+| `404`  | No such asset                             | `"Asset not found"`                                   | Unknown asset `id` |
+
+## 10. Postman Test Cases
+
+| #   | Case                                    | Expected |
+| --- | ---------------------------------------- | -------- |
+| 1   | Assigned asset, `ADMIN`                  | `200`, `assignment` populated, `returnedAt: null` |
+| 2   | Available / returned asset, `ADMIN`      | `200`, `{ "assignment": null }` |
+| 3   | Unknown asset id                         | `404` |
+| 4   | `EMPLOYEE` (holds only `:read:own`)      | `403` |
+| 5   | No token                                 | `401` |
+
+## 11. Negative Testing
+
+| Scenario                         | Expected |
+| --------------------------------- | ---------- |
+| Non-UUID asset id                 | `404 "Asset not found"` |
+| Tampered/expired JWT              | `401` |
+
+## 12. Edge Cases
+
+| Scenario                              | Expected Behavior |
+| -------------------------------------- | ------------------- |
+| Asset was assigned and returned       | `null` (only *active* rows count) |
+| Employee who currently holds it calls this | Still `403` - `:read:own` does not grant this route; they use `GET /asset-assignments` |
+
+## 13. Security Testing
+
+- Confirm an `EMPLOYEE`/`MANAGER` (who hold `assetAssignment:read:own`)
+  cannot use this route to look up who holds an arbitrary asset - the
+  route requires `:read:any` outright, with no ownership fallback.
+
+## 14. Database Impact
+
+Read-only: `Asset.findUnique`, `AssetAssignment.findFirst` (`returnedAt:
+null`, including the asset).
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/assets/:id/current-holder
+    ↓
+authMiddleware → requirePermission('assetAssignment:read:any') → 403
+    ↓
+asset.controller.getCurrentHolder → assetAssignment.service.getCurrentHolder(id)
+    ├─ asset missing → 404
+    └─ findActiveByAssetId → assignment | null
+    ↓
+200 { assignment }
+```
+
+## 16. Performance Notes
+
+Served by the `assetId` index; the partial unique index guarantees at
+most one row.
+
+## 17. Interview Notes
+
+- **Q: Why `200 null` instead of `404` for an unheld asset?** The
+  resource being asked about (the asset) exists; "nobody holds it" is a
+  valid answer, not a missing resource. Callers can distinguish "no such
+  asset" (`404`) from "unassigned" (`200 null`).
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/assets/$ASSET_ID/current-holder" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Call once while assigned and once after return in the same run to
+demonstrate populated vs `null`.
+
+## 20. Testing Checklist
+
+- ✅ Populated `assignment` while held; `{ "assignment": null }` when not
+- ✅ `404 "Asset not found"` for unknown asset
+- ✅ `403` for `:read:own`-only roles, `401` with no token
+
+---
+
+---
+
+# 141. `GET /assets/:id/assignments`
+
+## 1. Endpoint Information
+
+```
+Feature:            Asset Management Domain (2026-09-22, feature/27-asset-management-domain)
+Endpoint:           List Asset Custody History
+Description:        Returns every assignment row (active and returned) for one asset, newest first
+Method:             GET
+URL:                /api/v1/assets/:id/assignments
+API Version:        v1
+Module:             modules/assets
+Authentication:     Yes (Bearer access token)
+Authorization:      `assetAssignment:read:any`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the full custody history of one asset (ADR-AM01) -
+  who held it, from when to when, and in what condition it came back.
+- **Unpaginated**: returns the whole ledger for the asset, ordered
+  `assignedAt desc, id asc`. Acceptable because a single asset's history
+  is naturally small.
+- **Response key is `assignments`** (a plain array), with no `pagination`
+  object - unlike endpoint 142.
+- **Expected callers**: `ADMIN`/IT.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                     |
+| -------------------------------------- | -------- | ------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `assetAssignment:read:any` |
+
+## 4. Path Parameters
+
+| Name | Type   | Description |
+| ---- | ------ | ------------- |
+| `id` | string | Asset id      |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+Asset must exist (`404`).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "assignments": [
+    {
+      "id": "d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f70",
+      "assetId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "employeeId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+      "assignedAt": "2026-09-15T09:05:00.000Z",
+      "returnedAt": "2026-09-22T11:00:00.000Z",
+      "returnCondition": "GOOD",
+      "returnNotes": null,
+      "assignedBy": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+      "returnedBy": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+      "createdAt": "2026-09-22T09:10:00.000Z",
+      "updatedAt": "2026-09-22T11:00:00.000Z",
+      "asset": { "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", "assetTag": "LAP-0042", "type": "Laptop", "description": "MacBook Pro 14 inch M3, 16GB", "status": "AVAILABLE", "createdAt": "2026-09-22T09:00:00.000Z", "updatedAt": "2026-09-22T11:00:00.000Z" }
+    }
+  ]
+}
+```
+
+An asset that has never been assigned returns `{ "assignments": [] }`.
+
+## 9. Error Responses
+
+| Status | Reason                                   | Response (`message`)                                  | When |
+| ------ | ----------------------------------------- | ------------------------------------------------------ | ---- |
+| `401`  | Missing/invalid token                     | Same as every other protected endpoint                | `authMiddleware` failure |
+| `403`  | Caller lacks `assetAssignment:read:any`   | `"You do not have permission to perform this action"` | `EMPLOYEE`/`MANAGER` |
+| `404`  | No such asset                             | `"Asset not found"`                                   | Unknown asset `id` |
+
+## 10. Postman Test Cases
+
+| #   | Case                                        | Expected |
+| --- | -------------------------------------------- | -------- |
+| 1   | Asset with 2+ assignments, `ADMIN`           | `200`, newest first |
+| 2   | Never-assigned asset                         | `200`, `{ "assignments": [] }` |
+| 3   | Unknown asset id                             | `404` |
+| 4   | `EMPLOYEE`/`MANAGER`                         | `403` |
+| 5   | No token                                     | `401` |
+
+## 11. Negative Testing
+
+| Scenario                 | Expected |
+| ------------------------- | ---------- |
+| Non-UUID asset id         | `404 "Asset not found"` |
+| Query params (`?page=2`)  | Ignored - no query schema on this route |
+| Tampered/expired JWT      | `401` |
+
+## 12. Edge Cases
+
+| Scenario                                      | Expected Behavior |
+| ---------------------------------------------- | ------------------- |
+| Asset currently held                          | First element has `returnedAt: null` |
+| Two rows with identical `assignedAt`           | Ordered by `id` ascending as the tiebreaker |
+
+## 13. Security Testing
+
+- Confirm `:read:own` holders cannot read another asset's full history.
+  An employee's own history is available through `GET /asset-assignments`
+  (auto-scoped), not through this route.
+
+## 14. Database Impact
+
+Read-only: `Asset.findUnique`, `AssetAssignment.findMany` (with `asset`
+included).
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/assets/:id/assignments
+    ↓
+authMiddleware → requirePermission('assetAssignment:read:any') → 403
+    ↓
+asset.controller.listHistory → assetAssignment.service.listAssignmentHistory(id)
+    ├─ asset missing → 404
+    └─ findAllByAssetId
+    ↓
+200 { assignments }
+```
+
+## 16. Performance Notes
+
+Unbounded per asset but bounded in practice by an asset's lifetime
+(single-digit to low-double-digit rows). Uses `AssetAssignment_assetId_idx`.
+
+## 17. Interview Notes
+
+- **Q: Why is this one unpaginated when the two list endpoints are
+  paginated?** It is scoped to a single asset, whose history is naturally
+  small; the cross-asset lists (134, 142) are the unbounded ones.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/assets/$ASSET_ID/assignments" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run after the assign -> return -> assign lifecycle so the history shows
+one closed and one open row.
+
+## 20. Testing Checklist
+
+- ✅ Full history, newest first, includes active and returned rows
+- ✅ `[]` for a never-assigned asset
+- ✅ `404` unknown asset, `403` for non-`ADMIN`, `401` with no token
+
+---
+
+---
+
+# 142. `GET /asset-assignments`
+
+## 1. Endpoint Information
+
+```
+Feature:            Asset Management Domain (2026-09-22, feature/27-asset-management-domain)
+Endpoint:           List Asset Assignments
+Description:        Paginated, filterable list of assignment ledger rows; auto-scoped to the caller's own rows without :read:any
+Method:             GET
+URL:                /api/v1/asset-assignments
+API Version:        v1
+Module:             modules/assets
+Authentication:     Yes (Bearer access token)
+Authorization:      `assetAssignment:read:own` OR `assetAssignment:read:any`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the self-service "what equipment do I hold / have I
+  held" view for every employee, and the cross-asset ledger report for
+  `ADMIN`.
+- **Auto-scoping, not refusal**: a caller **without**
+  `assetAssignment:read:any` has `filters.employeeId` **overwritten** with
+  their own Employee id (looked up by `findByUserId`), regardless of any
+  `employeeId` they supplied - the same self-service list pattern as
+  Leave, Performance and Training. A caller with no linked `Employee`
+  gets an empty page (`{ assignments: [], pagination: { page, limit,
+  total: 0, totalPages: 0 } }`), not an error.
+- **`active` filter**: `true` = still held (`returnedAt IS NULL`), `false`
+  = returned. Implemented as an enum of the strings `'true'`/`'false'`
+  (deliberately not `z.coerce.boolean()`, which would treat `'false'` as
+  `true`).
+- **Mounted at a separate top-level path** `/api/v1/asset-assignments`,
+  not under `/assets`.
+- **Reads `req.validatedQuery`** correctly.
+- **Expected callers**: any authenticated user (own rows);
+  `ADMIN` (everyone's).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                        |
+| -------------------------------------- | -------- | -------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `assetAssignment:read:own` or `:read:any`     |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name         | Type          | Default      | Description                                              |
+| ------------ | ------------- | ------------ | ---------------------------------------------------------- |
+| `page`       | integer       | `1`          | Min 1                                                      |
+| `limit`      | integer       | `10`         | Min 1, max 100                                             |
+| `employeeId` | string (UUID) | -            | Filter by employee (**overridden** for callers lacking `:read:any`) |
+| `assetId`    | string (UUID) | -            | Filter by asset                                            |
+| `active`     | `'true'`\|`'false'` | -      | Currently held / returned only                             |
+| `sortBy`     | enum          | `assignedAt` | `assignedAt`, `returnedAt`, `createdAt`                    |
+| `order`      | enum          | `desc`       | `asc`, `desc`                                              |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- `employeeId`/`assetId` must be UUIDs when supplied (`400`).
+- `active` must be exactly `true` or `false` (`400` otherwise).
+- `limit` 1-100, `page` >= 1, `sortBy`/`order` from the enums above.
+- No existence check on `employeeId`/`assetId` filters - an unknown id
+  just yields an empty page.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "assignments": [
+    {
+      "id": "d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f70",
+      "assetId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "employeeId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+      "assignedAt": "2026-09-15T09:05:00.000Z",
+      "returnedAt": null,
+      "returnCondition": null,
+      "returnNotes": null,
+      "assignedBy": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+      "returnedBy": null,
+      "createdAt": "2026-09-22T09:10:00.000Z",
+      "updatedAt": "2026-09-22T09:10:00.000Z",
+      "asset": { "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", "assetTag": "LAP-0042", "type": "Laptop", "description": "MacBook Pro 14 inch M3, 16GB", "status": "ASSIGNED", "createdAt": "2026-09-22T09:00:00.000Z", "updatedAt": "2026-09-22T09:10:00.000Z" }
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                          | Response (`message`)                                  | When |
+| ------ | ------------------------------------------------ | ------------------------------------------------------ | ---- |
+| `400`  | Invalid query parameter                          | e.g. `"employeeId: Invalid UUID"`, `"active: Invalid option: ..."` | Bad UUID / enum / range |
+| `401`  | Missing/invalid token                            | Same as every other protected endpoint                | `authMiddleware` failure |
+| `403`  | Caller holds neither `:read:own` nor `:read:any` | `"You do not have permission to perform this action"` | Role with no asset-assignment read grant |
+
+(There is no ownership `403` on this endpoint; a caller without `:any` is
+silently scoped, never refused.)
+
+## 10. Postman Test Cases
+
+| #   | Case                                                     | Expected |
+| --- | --------------------------------------------------------- | -------- |
+| 1   | `EMPLOYEE`, no params                                     | `200`, only their own rows |
+| 2   | `EMPLOYEE` supplying another employee's `employeeId`      | `200`, still only **their own** rows (filter overridden) |
+| 3   | `EMPLOYEE` with no linked Employee record                 | `200`, empty page |
+| 4   | `MANAGER`                                                 | `200`, only their own rows (no manager-wide visibility) |
+| 5   | `ADMIN`, no params                                        | `200`, all rows |
+| 6   | `ADMIN`, `?employeeId=...&active=true`                    | `200`, that employee's currently held assets |
+| 7   | `ADMIN`, `?assetId=...`                                   | `200`, that asset's rows |
+| 8   | `?active=false`                                           | `200`, returned rows only |
+| 9   | `?active=yes`                                             | `400` |
+| 10  | No token                                                  | `401` |
+
+## 11. Negative Testing
+
+| Scenario                        | Expected |
+| -------------------------------- | ---------- |
+| `employeeId=not-a-uuid`          | `400` |
+| `limit=0`                        | `400` |
+| `sortBy=assetId`                 | `400` |
+| Tampered/expired JWT             | `401` |
+
+## 12. Edge Cases
+
+| Scenario                                               | Expected Behavior |
+| ------------------------------------------------------- | ------------------- |
+| `employeeId` supplied by a non-`:any` caller            | Silently replaced by the caller's own id - no error, no leak |
+| Caller has both grants                                  | `:any` wins; no scoping |
+| `active=false` and `active=true` counts                 | Together they partition the full set |
+| Page past the end                                       | Empty `assignments`, correct `total` |
+
+## 13. Security Testing
+
+- **BOLA**: as `EMPLOYEE`, pass another employee's `employeeId`; confirm
+  the response contains **only the caller's** rows.
+- Confirm `MANAGER` holds only `assetAssignment:read:own` (per
+  `prisma/seed.js`), so a manager cannot see their reports' equipment via
+  this route.
+
+## 14. Database Impact
+
+Read-only: `Employee.findFirst` by `userId` (non-`:any` callers), then
+`AssetAssignment.findMany` (with `asset`) and `count` in parallel.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/asset-assignments
+    ↓
+authMiddleware
+    ↓
+requirePermission('assetAssignment:read:own', 'assetAssignment:read:any') → 403
+    ↓
+validateMiddleware(listAssetAssignmentsQuerySchema, 'query') → 400
+    ↓
+assetAssignment.controller.list
+    → service.listAssignments(req.validatedQuery, { id, ipAddress, grantedPermissions })
+        ├─ lacks :read:any → findByUserId; none → empty page; else filters.employeeId = own
+        └─ Promise.all([findAll, count])
+    ↓
+200 { assignments, pagination }
+```
+
+## 16. Performance Notes
+
+Filters hit `AssetAssignment_employeeId_idx` / `_assetId_idx`; the
+`asset` include is a single batched relation query.
+
+## 17. Interview Notes
+
+- **Q: Why scope silently instead of `403` when an employee passes
+  someone else's `employeeId`?** The self-service list pattern shared by
+  Leave/Performance/Training - a listing endpoint has no single record to
+  refuse; scoping is safe and gives the caller the view they're entitled
+  to. Contrast with the by-id endpoint (143), which does refuse with `403`.
+
+## 18. cURL Examples
+
+```bash
+# Own holdings (EMPLOYEE/MANAGER)
+curl -s "http://localhost:3000/api/v1/asset-assignments?active=true" \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+```bash
+# ADMIN: everything a specific employee currently holds
+curl -s "http://localhost:3000/api/v1/asset-assignments?employeeId=$EMPLOYEE_ID&active=true" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run once per role token (`ADMIN`, `MANAGER`, `EMPLOYEE`) after assigning
+an asset to the `EMPLOYEE` user, and assert row counts differ as above.
+
+## 20. Testing Checklist
+
+- ✅ `EMPLOYEE`/`MANAGER` see only their own rows; a supplied foreign `employeeId` is overridden
+- ✅ `ADMIN` sees all and can filter by `employeeId`, `assetId`, `active`
+- ✅ No linked Employee -> empty page, not an error
+- ✅ `400` for bad UUIDs/enums/limits
+- ✅ `401` with no token
+
+---
+
+---
+
+# 143. `GET /asset-assignments/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Asset Management Domain (2026-09-22, feature/27-asset-management-domain)
+Endpoint:           Get Asset Assignment By ID
+Description:        Returns one assignment ledger row, with an ownership check for callers lacking :read:any
+Method:             GET
+URL:                /api/v1/asset-assignments/:id
+API Version:        v1
+Module:             modules/assets
+Authentication:     Yes (Bearer access token)
+Authorization:      `assetAssignment:read:own` OR `assetAssignment:read:any` (plus an ownership check for the `:own` case)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: fetch a single custody record, e.g. from a link in
+  a list.
+- **Ownership** (`assertOwnershipOrAny`): `assetAssignment:read:any`
+  passes unconditionally; otherwise the caller's linked Employee (looked
+  up via `findByUserId`) must equal the assignment's `employeeId`, else
+  `403`. A caller with no linked Employee is also refused `403`.
+- **Existence is checked before ownership**, so a caller without `:any`
+  can distinguish a nonexistent id (`404`) from someone else's assignment
+  (`403`). Ids are random UUIDs so this is low-risk, and matches the other
+  domains' by-id endpoints.
+- **Embeds the asset** (`include: { asset: true }`).
+- **Expected callers**: the assignment's own employee, or `ADMIN`.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                    |
+| -------------------------------------- | -------- | ---------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `assetAssignment:read:own` or `:read:any` |
+
+## 4. Path Parameters
+
+| Name | Type   | Description       |
+| ---- | ------ | ------------------- |
+| `id` | string | Assignment id (not the asset id) |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- Assignment must exist (`404`).
+- Ownership rule above (`403`).
+- `:id` is not UUID-validated; a malformed id yields `404`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "assignment": {
+    "id": "d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f70",
+    "assetId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "employeeId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "assignedAt": "2026-09-15T09:05:00.000Z",
+    "returnedAt": null,
+    "returnCondition": null,
+    "returnNotes": null,
+    "assignedBy": "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+    "returnedBy": null,
+    "createdAt": "2026-09-22T09:10:00.000Z",
+    "updatedAt": "2026-09-22T09:10:00.000Z",
+    "asset": { "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", "assetTag": "LAP-0042", "type": "Laptop", "description": "MacBook Pro 14 inch M3, 16GB", "status": "ASSIGNED", "createdAt": "2026-09-22T09:00:00.000Z", "updatedAt": "2026-09-22T09:10:00.000Z" }
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                          | Response (`message`)                                              | When |
+| ------ | ------------------------------------------------ | ---------------------------------------------------------------- | ---- |
+| `401`  | Missing/invalid token                            | Same as every other protected endpoint                            | `authMiddleware` failure |
+| `403`  | Holds neither read permission                    | `"You do not have permission to perform this action"`             | Role lacking both grants |
+| `403`  | `:own`-only caller reading someone else's row    | `"You do not have permission to view this asset assignment"`      | Ownership mismatch, or caller has no linked Employee |
+| `404`  | No such assignment                               | `"Asset assignment not found"`                                    | Unknown/malformed `id` |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                 | Expected |
+| --- | ----------------------------------------------------- | -------- |
+| 1   | `EMPLOYEE` reads their own assignment                 | `200` |
+| 2   | `EMPLOYEE` reads another employee's assignment        | `403 "You do not have permission to view this asset assignment"` |
+| 3   | `MANAGER` reads a report's assignment                 | `403` (no manager-wide scope) |
+| 4   | `ADMIN` reads any assignment                          | `200` |
+| 5   | Unknown id                                            | `404 "Asset assignment not found"` |
+| 6   | No token                                              | `401` |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected |
+| ---------------------------------- | ---------- |
+| Passing an **asset** id as `:id`   | `404` - this route takes an assignment id |
+| Non-UUID id                        | `404` |
+| Tampered/expired JWT               | `401` |
+
+## 12. Edge Cases
+
+| Scenario                                          | Expected Behavior |
+| -------------------------------------------------- | ------------------- |
+| Returned (closed) assignment                        | Still readable by its employee - history is permanent |
+| Employee whose user is later unlinked from Employee | `403` - no linked Employee to match |
+
+## 13. Security Testing
+
+- **BOLA**: as `EMPLOYEE`, request another employee's assignment id;
+  confirm `403`, and that no assignment data appears in the error body.
+- Confirm `MANAGER` gets no elevated access (only `:read:own` in
+  `prisma/seed.js`).
+
+## 14. Database Impact
+
+Read-only: `AssetAssignment.findUnique` (with `asset`), plus
+`Employee.findFirst` by `userId` for non-`:any` callers.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/asset-assignments/:id
+    ↓
+authMiddleware → requirePermission('assetAssignment:read:own', 'assetAssignment:read:any') → 403
+    ↓
+assetAssignment.controller.getById
+    → service.getAssignmentById(id, requester)
+        ├─ findById → 404
+        └─ assertOwnershipOrAny(assignment.employeeId, requester) → 403
+    ↓
+200 { assignment }
+```
+
+## 16. Performance Notes
+
+Primary-key lookup plus, for non-admin callers, one indexed employee
+lookup.
+
+## 17. Interview Notes
+
+- **Q: Why does the list endpoint scope silently but this one `403`s?**
+  A by-id request targets one specific record, so there is a concrete
+  thing to refuse; a list has no such target, so it narrows instead.
+  Same split as Leave/Training.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/asset-assignments/$ASSIGNMENT_ID" \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Use `assignmentId` from endpoint 138; run once with the assigned
+employee's token (`200`) and once with a different employee's (`403`).
+
+## 20. Testing Checklist
+
+- ✅ Own assignment -> `200`; someone else's -> `403` with the exact message above
+- ✅ `ADMIN` reads any
+- ✅ `404 "Asset assignment not found"` for unknown ids
+- ✅ `MANAGER` has no reports-visibility (confirmed via `prisma/seed.js`)
+- ✅ `401` with no token

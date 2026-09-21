@@ -499,6 +499,37 @@ export const TrainingComplianceStatusSchema = z
   })
   .meta({ id: 'TrainingComplianceStatus' });
 
+export const AssetSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b' }),
+    assetTag: z.string().meta({ example: 'LAP-0042' }),
+    type: z.string().meta({ example: 'Laptop' }),
+    description: z.string().nullable().meta({ example: 'MacBook Pro 14 inch M3, 16GB' }),
+    status: z.enum(['AVAILABLE', 'ASSIGNED', 'UNDER_REPAIR', 'RETIRED']).meta({
+      example: 'AVAILABLE',
+    }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-22T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-22T10:00:00.000Z' }),
+  })
+  .meta({ id: 'Asset' });
+
+export const AssetAssignmentSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'f2a3b4c5-d6e7-4f8a-9b0c-1d2e3f4a5b6c' }),
+    assetId: z.uuid().meta({ example: 'e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b' }),
+    employeeId: z.uuid().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    assignedAt: z.iso.datetime().meta({ example: '2026-09-22T10:00:00.000Z' }),
+    returnedAt: z.iso.datetime().nullable().meta({ example: null }),
+    returnCondition: z.enum(['GOOD', 'DAMAGED']).nullable().meta({ example: null }),
+    returnNotes: z.string().nullable().meta({ example: null }),
+    assignedBy: z.uuid().nullable().meta({ example: null }),
+    returnedBy: z.uuid().nullable().meta({ example: null }),
+    asset: AssetSchema.optional(),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-22T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-22T10:00:00.000Z' }),
+  })
+  .meta({ id: 'AssetAssignment' });
+
 export const PaginationMetaSchema = z
   .object({
     page: z.int().meta({ example: 1 }),

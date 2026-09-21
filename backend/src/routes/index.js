@@ -24,6 +24,8 @@ import candidateRouter from '../modules/recruitment/candidate.routes.js';
 import applicationRouter from '../modules/recruitment/application.routes.js';
 import trainingProgramRouter from '../modules/training/trainingProgram.routes.js';
 import enrollmentRouter, { trainingComplianceRouter } from '../modules/training/enrollment.routes.js';
+import assetRouter from '../modules/assets/asset.routes.js';
+import assetAssignmentRouter from '../modules/assets/assetAssignment.routes.js';
 
 const router = Router();
 
@@ -49,6 +51,8 @@ router.use('/applications', applicationRouter);
 router.use('/training-programs', trainingProgramRouter);
 router.use('/enrollments', enrollmentRouter);
 router.use('/training-compliance', trainingComplianceRouter);
+router.use('/assets', assetRouter);
+router.use('/asset-assignments', assetAssignmentRouter);
 
 router.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
