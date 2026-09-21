@@ -9,7 +9,7 @@ const create = async (req, res) => {
 };
 
 const list = async (req, res) => {
-  const result = await trainingProgramService.listTrainingPrograms(req.query);
+  const result = await trainingProgramService.listTrainingPrograms(req.validatedQuery);
   res.status(200).json(result);
 };
 

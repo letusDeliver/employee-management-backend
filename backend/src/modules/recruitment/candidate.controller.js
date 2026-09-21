@@ -9,7 +9,7 @@ const create = async (req, res) => {
 };
 
 const list = async (req, res) => {
-  const result = await candidateService.listCandidates(req.query);
+  const result = await candidateService.listCandidates(req.validatedQuery);
   res.status(200).json(result);
 };
 

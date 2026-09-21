@@ -13,7 +13,7 @@ const create = async (req, res) => {
 };
 
 const list = async (req, res) => {
-  const result = await enrollmentService.listEnrollments(req.query, requesterFrom(req));
+  const result = await enrollmentService.listEnrollments(req.validatedQuery, requesterFrom(req));
   res.status(200).json(result);
 };
 
@@ -65,8 +65,8 @@ const removeDocument = async (req, res) => {
 
 const getCompliance = async (req, res) => {
   const result = await enrollmentService.getTrainingCompliance(
-    req.query.employeeId,
-    req.query.trainingProgramId,
+    req.validatedQuery.employeeId,
+    req.validatedQuery.trainingProgramId,
     requesterFrom(req),
   );
   res.status(200).json({ compliance: result });
