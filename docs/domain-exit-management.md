@@ -78,7 +78,7 @@ Exit Management owns the **pre-separation business process** — notice period, 
 
 1. **Leave encashment policy (ADR-LV06)** — final settlement's unused-leave payout cannot be fully specified until this is resolved; named here as a blocking dependency, not resolved.
 2. Notice-period policy (fixed per case vs. role/jurisdiction-driven) — deferred (§6).
-3. Permission scoping for initiating involuntary termination — narrower than general `ADMIN` in most real organizations (likely restricted to HR/senior management); same unresolved category as prior domains, arguably more sensitive here.
+3. ~~Permission scoping for initiating involuntary termination — narrower than general `ADMIN` in most real organizations (likely restricted to HR/senior management); same unresolved category as prior domains, arguably more sensitive here.~~ **Resolved (2026-09-22)** — `ADMIN`-only, the narrowest scope the role model can express, since no HR role exists (ADR-EM06).
 
 ## 9. Deferred Decisions
 
@@ -113,30 +113,47 @@ This is the final domain in the approved dependency order. Its own constraints:
 ## Architecture Decision Records
 
 **ADR-EM01 — Exit Management as the Structural Mirror of Recruitment**
-Status: Accepted
+Status: Accepted; **Implemented** (2026-09-22)
 Summary: A rich pre/post-process domain surrounding a minimal, unmodified Identity primitive, exactly like Recruitment surrounds onboarding.
+Implementation notes: `ExitCase` and its child `ClearanceItem` live in `src/modules/exit/`; `exitCase.service.js` is the single Exit Orchestration Service and the only caller of Identity's `softDeleteEmployee`. The primitive's behavior is unchanged; it gained only an optional trailing `outerTx` parameter (the same trailing-transaction convention `employeeOnboarding.service.js` uses) so separation can be atomic.
 
 **ADR-EM02 — Separation Trigger Decoupled from Clearance Completion**
-Status: Accepted
+Status: Accepted; **Implemented** (2026-09-22)
 Summary: Identity's offboarding primitive is invoked at `lastWorkingDay` (time-based), not at full clearance completion (administrative), to avoid extending a security-sensitive access window for administrative reasons.
+Implementation notes: `POST /exit-cases/:id/separate` refuses until `lastWorkingDay <= today` (UTC) and never looks at clearance state; clearance completion only ever moves a case from `SEPARATED` to `COMPLETED`, never triggers separation. See ADR-EM07 for how the time-based trigger is realized without a scheduler. The real-world security value depends on Identity's ADR-006, which was documented as implemented but had in fact never reached `main` — it lived only on the unmerged local branch `security/offboarding-access-revocation`; it was cherry-picked into this domain's branch (its own commit) as a prerequisite. Live-verified: after separation the employee's pre-existing access token is rejected on its next request and no refresh token stays valid. The "prevent fresh re-login" half remains Identity's deferred ADR-007, unchanged.
 
 **ADR-EM03 — Post-Separation Reversal Uses Identity's Existing Rehire Flow**
-Status: Accepted
+Status: Accepted; **Implemented** (2026-09-22)
 Summary: No second "undo offboarding" mechanism is built; rehire is the correct, already-designed path.
+Implementation notes: `WITHDRAWN` is reachable only from `INITIATED`; a withdrawal after separation is refused with a message pointing at rehire. An employee may withdraw only their own `RESIGNATION`, and only before the last working day arrives; an `ADMIN` (`exitCase:manage:any`) may withdraw either type while `INITIATED` — a small extension of the doc's voluntary-only wording, flagged, so a mistaken termination case has an escape.
 
 **ADR-EM04 — eligibleForRehire Flag Built Now**
-Status: Accepted
+Status: Accepted; **Implemented** (2026-09-22)
 Summary: Low-cost field with an immediate, already-existing consumer (Identity's rehire flow).
+Implementation notes: `ExitCase.eligibleForRehire` (nullable — undecided until set) and `rehireNote`, settable at separation or afterwards via `PATCH` until the case is `COMPLETED`. Stored as data only: no hiring or rehire code reads it yet, and none was invented.
 
 **ADR-EM05 — Final Settlement Blocked on Leave's ADR-LV06**
 Status: Deferred — Open (blocking dependency, not resolved here)
+Implementation notes (2026-09-22): final settlement is a manual `FINAL_SETTLEMENT` clearance item (`PENDING`/`DONE`/`WAIVED`) — nothing is calculated and nothing is written into Payroll. **Known gap, surfaced by this implementation:** Payroll has no per-employee generation and `processPayrollRun` reads only non-soft-deleted employees, so an employee separated before a month's payroll run is processed silently gets no final partial-month Payslip. Exit Management deliberately does not paper over it (Payroll owns Payslip creation, ADR-PR01/PR02); an additive Payroll change to include employees separated within the period, together with Leave's encashment policy, is the required follow-up.
+
+**ADR-EM06 — Permission Scoping**
+Status: Accepted; **Implemented** (2026-09-22)
+Summary: Open Question #3 resolved. There is no HR role in this project's role model, so the narrowest scope expressible is `ADMIN`. Initiating a `TERMINATION`, initiating for anyone else, editing, separating, sweeping and managing clearance are `ADMIN`-only (`exitCase:create:any`, `exitCase:manage:any`). Employees (and managers, as employees) hold `exitCase:create:own` (their own `RESIGNATION` only — a `TERMINATION` attempt is refused, and any `employeeId` in the body is ignored), `exitCase:read:own` (their own case and checklist; the list auto-scopes as in Leave/Performance/Training/Asset Management) and `exitCase:withdraw:own`. `exitCase:read:any` is `ADMIN`. Deliberately no `MANAGER` reports-visibility — the doc never mentions managers. 6 new permissions (96 → 102). A dedicated HR role would be an additive change if the organization ever defines one.
+
+**ADR-EM07 — Separation Mechanics: Explicit Trigger, Atomicity, Already-Offboarded Employees**
+Status: Accepted; **Implemented** (2026-09-22)
+Summary: Judgment calls on shapes the doc left open. The project has no scheduler or cron infrastructure (Leave notes the same), so the time-based trigger is realized as `POST /exit-cases/:id/separate` (refuses before `lastWorkingDay`) plus `POST /exit-cases/process-due`, a system-wide sweep a future scheduler can call, which separates every due `INITIATED` case in its own transaction and reports `{ processed, separated, failed }` (one failure never blocks the rest). Separation is one transaction: a compare-and-set `INITIATED → SEPARATED` (which is what makes "the primitive runs exactly once" hold under concurrency — a test fires two concurrent separations and asserts one offboarding), an asset-return sync (the held-assets read runs inside the transaction, after the compare-and-set, so an asset handed out a moment ago is not missed), the unmodified `softDeleteEmployee` (soft-delete plus ADR-006 revocation, passed the same transaction), resolution of the `ACCESS_REVOCATION` item, auto-completion if nothing is pending, and the audit row. If the Employee was already offboarded through the direct `DELETE /employees/:id` while the case was open, the primitive is not called a second time (it would 404); the case just records the separation. `lastWorkingDay` is a UTC calendar date compared with today's UTC date; there is no per-branch timezone handling. At most one open (`INITIATED`/`SEPARATED`) case per employee, enforced by a service check and a hand-added partial unique index.
+
+**ADR-EM08 — Clearance Checklist Mechanics**
+Status: Accepted; **Implemented** (2026-09-22)
+Summary: Every case starts with `ASSET_RETURN` (one item per asset the employee currently holds, read through Asset Management's `getActiveAssignmentsForEmployee`, never its ledger), `KNOWLEDGE_TRANSFER`, `FINAL_SETTLEMENT` and `ACCESS_REVOCATION`; assets handed out after initiation get an item at separation. An `ASSET_RETURN` item cannot be marked `DONE` while Asset Management still shows the asset as held by that employee (Exit Management only reads; the return is recorded in Asset Management), but can be `WAIVED` — with a mandatory reason, the escape hatch for a lost laptop (§4). The access item is resolved only by separation. A `SEPARATED` case becomes `COMPLETED` automatically when no item is `PENDING`; a `COMPLETED` or `WITHDRAWN` case accepts no edits or new items. Custom items are always type `OTHER`. Concurrency: every status-guarded write that is not already a compare-and-set (edit, add item, resolve item) row-locks the case (`SELECT ... FOR UPDATE`) and re-validates its status inside the transaction, so a case that closed after the read is refused and two concurrent resolutions of the last two items still complete it. An asset is re-checked at separation: one already `PENDING` or `WAIVED` is left alone (a waived, lost asset is never resurrected), one whose item is `DONE` but which was re-issued to the same employee gets a fresh item. A `COMPLETED` case still accepts `eligibleForRehire`/`rehireNote` edits (ADR-EM04), since a case can complete inside `separate` or the sweep before they were set. The `process-due` sweep returns only operational (user-safe) error text per failed case, masking anything else like the global error handler does. Checklist items are returned in a stable order (by type, asset returns first, access revocation last).
 
 ## Final Sign-off
 
-**Implementation readiness:** Conditionally ready. The process design is structurally complete and correctly reconciled against Identity's existing offboarding scope (per Identity's own §9 requirement); full final-settlement calculation cannot be considered complete until Leave's encashment policy (ADR-LV06) is resolved, and real-world security value depends on Identity's own ADR-006 being implemented.
+**Implementation readiness:** Implemented (2026-09-22), with final-settlement calculation still open. Structurally complete and live-verified end-to-end (employee self-service resignation, the `TERMINATION` refusal for an employee, duplicate-open-case rejection, withdrawal rules, the time-based separation refusing/allowing on `lastWorkingDay`, separation revoking the employee's pre-existing token and refresh tokens, the asset-return check against Asset Management, waive/reopen/auto-complete, the `process-due` sweep, and `AuditLog` rows for every mutation).
 
-**Confidence score: 84%**
+**Confidence score: 89%**
 
-**Remaining blockers:** Resolve Leave's encashment policy (ADR-LV06); confirm Identity's ADR-006 (access revocation on offboarding) is implemented before relying on this domain's security-timing guarantee (ADR-EM02) in production; confirm permission scoping for involuntary termination.
+**Remaining blockers:** Resolve Leave's encashment policy (ADR-LV06) for a complete final-settlement calculation; extend Payroll additively so a separated employee still gets a final partial-month Payslip (see ADR-EM05's known gap); wire a real scheduler to `POST /exit-cases/process-due` (ADR-EM07). ADR-006 is now genuinely on `main`, and its fresh-login half remains Identity's deferred ADR-007.
 
-**Recommended next step:** all thirteen domains in the approved dependency order (Department through Exit Management) are now complete. Per the standing instruction, proceed to the final architecture-index and supporting cross-cutting documents.
+**Recommended next step:** all thirteen domains in the approved dependency order (Department through Exit Management) are now implemented. The open items are cross-domain, not Exit Management's own: Leave's encashment policy (ADR-LV06), Payroll's final-payslip coverage for separated employees, a scheduler for the separation sweep, and Identity's ADR-007.

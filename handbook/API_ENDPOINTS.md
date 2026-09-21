@@ -31343,3 +31343,2114 @@ employee's token (`200`) and once with a different employee's (`403`).
 - ✅ `404 "Asset assignment not found"` for unknown ids
 - ✅ `MANAGER` has no reports-visibility (confirmed via `prisma/seed.js`)
 - ✅ `401` with no token
+
+---
+
+---
+
+# 144. `POST /exit-cases`
+
+## 1. Endpoint Information
+
+```
+Feature:            Exit Management Domain (2026-09-22, feature/28-exit-management-domain)
+Endpoint:           Initiate Exit Case
+Description:        Opens an exit case (RESIGNATION or TERMINATION) for an employee and seeds its default clearance checklist
+Method:             POST
+URL:                /api/v1/exit-cases
+API Version:        v1
+Module:             modules/exit
+Authentication:     Yes (Bearer access token)
+Authorization:      `exitCase:create:own` OR `exitCase:create:any` (route level), then a service-level split between the two
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the entry point of the offboarding lifecycle. It
+  records the intent to leave (or the decision to terminate) with an
+  explicit `lastWorkingDay`; nothing about the employee's access changes
+  yet. Access is revoked later, at separation (endpoints 150 / 146).
+- **Two callers, two behaviours** (`resolveInitiation`):
+  - Caller **has** `exitCase:create:any` (`ADMIN`): `employeeId` is
+    **required** (`400 "employeeId: required when initiating an exit case on
+    behalf of an employee"` if missing); either `type` is accepted.
+    `create:any` is checked first, so a caller holding both grants is
+    treated as `:any`.
+  - Caller has only `exitCase:create:own` (`MANAGER`, `EMPLOYEE`): `type`
+    must be `RESIGNATION` (else `403`), any supplied `employeeId` is
+    **silently ignored**, and the employee is resolved from the caller's own
+    linked Employee record (`findByUserId`). The same "never trust a
+    client-supplied identity for a self-service action" rule as
+    Leave/Enrollment.
+- **State machine**: a new case is always `INITIATED`. Full machine:
+  `INITIATED -> SEPARATED -> COMPLETED`, plus `INITIATED -> WITHDRAWN`.
+- **Default clearance checklist** (`buildDefaultItems`), created atomically
+  with the case: one `ASSET_RETURN` item per asset the employee currently
+  holds (read via Asset Management's `getActiveAssignmentsForEmployee`,
+  title `Return asset <assetTag>`, `assetId` set), plus `KNOWLEDGE_TRANSFER`
+  ("Knowledge transfer"), `FINAL_SETTLEMENT` ("Final settlement") and
+  `ACCESS_REVOCATION` ("System access revocation"), all `PENDING`.
+- **One open case per employee**: at most one `INITIATED`/`SEPARATED` case
+  per employee. Enforced twice - a friendly pre-check
+  (`findOpenByEmployeeId`) and the hand-added partial unique index
+  `ExitCase_employeeId_open_key` (`WHERE status IN ('INITIATED',
+  'SEPARATED')`), whose `P2002` is caught and re-thrown as the same `409`.
+  `COMPLETED` and `WITHDRAWN` cases do not block a new one.
+- **Time-based, not clearance-based**: `lastWorkingDay` is what later
+  triggers separation (ADR-EM02); the checklist never does.
+- **Expected callers**: any authenticated employee (own resignation),
+  `ADMIN` (anyone, either type).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                              |
+| -------------------------------------- | -------- | -------------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `exitCase:create:own` or `exitCase:create:any`       |
+| `Content-Type: application/json`      | **Yes**  |                                                                      |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "employeeId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+  "type": "RESIGNATION",
+  "lastWorkingDay": "2026-10-31",
+  "reason": "Relocating to another city"
+}
+```
+
+| Field            | Type              | Required | Notes |
+| ---------------- | ----------------- | -------- | ----- |
+| `employeeId`     | string (UUID)     | No\*     | \*Required for `create:any` callers; ignored for `create:own` callers |
+| `type`           | enum              | **Yes**  | `RESIGNATION` \| `TERMINATION` (`TERMINATION` needs `create:any`) |
+| `lastWorkingDay` | string `YYYY-MM-DD` | **Yes** | `z.iso.date()`; a calendar date interpreted as **UTC** midnight |
+| `reason`         | string            | No       | Trimmed, min length 1 (an empty/whitespace string is `400`; `null` is **not** accepted on create) |
+
+## 7. Validation Rules
+
+- Zod (`400`): `type` in the enum, `lastWorkingDay` a real `YYYY-MM-DD`
+  date (e.g. `2026-02-30` and `2026-10-31T00:00:00Z` are rejected),
+  `employeeId` a UUID when supplied, `reason` non-empty when supplied.
+  Unknown fields are stripped.
+- Service checks, in this order:
+  1. `create:any` and no `employeeId` -> `400`.
+  2. `create:own`-only and `type !== 'RESIGNATION'` -> `403`.
+  3. `create:own`-only and no linked (non-deleted) Employee -> `400`.
+  4. Employee (`findById`, excludes soft-deleted) must exist -> `400`.
+  5. `lastWorkingDay` (UTC midnight) must not be before **today's UTC date**
+     -> `400`. Today itself is allowed (the case is then immediately due).
+  6. No open case for the employee -> `409`.
+- The clearance-asset list is read **before** the transaction opens
+  (`getActiveAssignmentsForEmployee`); see Edge Cases.
+
+## 8. Successful Response
+
+`clearanceItems` are ordered by `type` (enum declaration order:
+`ASSET_RETURN`, `KNOWLEDGE_TRANSFER`, `FINAL_SETTLEMENT`,
+`ACCESS_REVOCATION`, `OTHER`), then `createdAt`, then `id`, so the default
+checklist always comes back in the order listed below. Ordering by
+`createdAt` alone left it to random ids, because the default items are
+written in one statement and share a timestamp (found by the handbook verification pass, fixed 2026-09-22).
+
+```
+201 Created
+
+{
+  "exitCase": {
+    "id": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e",
+    "employeeId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "type": "RESIGNATION",
+    "status": "INITIATED",
+    "initiatedAt": "2026-09-22T10:00:00.000Z",
+    "lastWorkingDay": "2026-10-31T00:00:00.000Z",
+    "reason": "Relocating to another city",
+    "eligibleForRehire": null,
+    "rehireNote": null,
+    "separatedAt": null,
+    "completedAt": null,
+    "initiatedBy": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+    "createdAt": "2026-09-22T10:00:00.000Z",
+    "updatedAt": "2026-09-22T10:00:00.000Z",
+    "clearanceItems": [
+      { "id": "a3b4c5d6-e7f8-4a9b-8c0d-1e2f3a4b5c6d", "exitCaseId": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e", "type": "ASSET_RETURN", "title": "Return asset LAP-0042", "assetId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", "status": "PENDING", "waivedReason": null, "resolvedAt": null, "resolvedBy": null, "createdAt": "2026-09-22T10:00:00.000Z", "updatedAt": "2026-09-22T10:00:00.000Z" },
+      { "id": "c5d6e7f8-a9b0-4c1d-8e2f-3a4b5c6d7e8f", "exitCaseId": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e", "type": "KNOWLEDGE_TRANSFER", "title": "Knowledge transfer", "assetId": null, "status": "PENDING", "waivedReason": null, "resolvedAt": null, "resolvedBy": null, "createdAt": "2026-09-22T10:00:00.000Z", "updatedAt": "2026-09-22T10:00:00.000Z" },
+      { "id": "d6e7f8a9-b0c1-4d2e-9f3a-4b5c6d7e8f90", "exitCaseId": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e", "type": "FINAL_SETTLEMENT", "title": "Final settlement", "assetId": null, "status": "PENDING", "waivedReason": null, "resolvedAt": null, "resolvedBy": null, "createdAt": "2026-09-22T10:00:00.000Z", "updatedAt": "2026-09-22T10:00:00.000Z" },
+      { "id": "e7f8a9b0-c1d2-4e3f-8a4b-5c6d7e8f9a01", "exitCaseId": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e", "type": "ACCESS_REVOCATION", "title": "System access revocation", "assetId": null, "status": "PENDING", "waivedReason": null, "resolvedAt": null, "resolvedBy": null, "createdAt": "2026-09-22T10:00:00.000Z", "updatedAt": "2026-09-22T10:00:00.000Z" }
+    ]
+  }
+}
+```
+
+(`lastWorkingDay` is a Postgres `DATE`, serialised as UTC midnight.
+`initiatedBy` is the acting user's id. The example is derived from the
+Prisma model / Zod `ExitCase` schema, not captured from a live run.)
+
+## 9. Error Responses
+
+| Status | Reason                                             | Response (`message`)                                                              | When |
+| ------ | --------------------------------------------------- | ---------------------------------------------------------------------------------- | ---- |
+| `400`  | Zod validation failure                             | e.g. `"lastWorkingDay: Invalid ISO date"`, `"type: Invalid option: ..."`           | Bad/missing field |
+| `400`  | `create:any` caller omitted `employeeId`           | `"employeeId: required when initiating an exit case on behalf of an employee"`    | `ADMIN` without `employeeId` |
+| `400`  | `create:own` caller with no linked Employee        | `"No employee record linked to this account"`                                      | User not linked to a live Employee |
+| `400`  | Employee not found / soft-deleted                  | `"employeeId: references a record that does not exist"`                            | Unknown or offboarded `employeeId` |
+| `400`  | `lastWorkingDay` in the past                       | `"lastWorkingDay: cannot be before the date the exit case is initiated"`           | Date < today (UTC) |
+| `401`  | Missing/invalid token                              | Same as every other protected endpoint                                              | `authMiddleware` failure |
+| `403`  | Holds neither create permission                    | `"You do not have permission to perform this action"`                              | Route-level `requirePermission` |
+| `403`  | `create:own`-only caller sent `TERMINATION`        | `"You do not have permission to initiate a termination"`                            | `MANAGER`/`EMPLOYEE` + `type: TERMINATION` |
+| `409`  | Employee already has an open case                  | `"This employee already has an open exit case"`                                     | Pre-check hit, or DB partial unique index `P2002` |
+
+(`"You do not have permission to initiate an exit case"` exists in
+`resolveInitiation` as a last fallback but is unreachable through the
+route, because `requirePermission` already refuses a caller with neither
+grant.)
+
+## 10. Postman Test Cases
+
+| #   | Case                                                                  | Expected |
+| --- | ---------------------------------------------------------------------- | -------- |
+| 1   | `EMPLOYEE`, `type: RESIGNATION`, future `lastWorkingDay`              | `201`, case for **their own** employee, 3 default items + 1 per held asset |
+| 2   | `EMPLOYEE` supplying another employee's `employeeId`                  | `201`, but the case is for the **caller** (id ignored) |
+| 3   | `EMPLOYEE`, `type: TERMINATION`                                       | `403 "You do not have permission to initiate a termination"` |
+| 4   | `ADMIN`, `TERMINATION` for an employee, `employeeId` supplied         | `201` |
+| 5   | `ADMIN` with no `employeeId`                                          | `400 "employeeId: required when ..."` |
+| 6   | `ADMIN` with unknown `employeeId`                                     | `400 "employeeId: references a record that does not exist"` |
+| 7   | `lastWorkingDay` = yesterday (UTC)                                    | `400 "lastWorkingDay: cannot be before ..."` |
+| 8   | `lastWorkingDay` = today (UTC)                                        | `201` (immediately due) |
+| 9   | Second case for the same employee while one is open                   | `409 "This employee already has an open exit case"` |
+| 10  | New case after the first was `WITHDRAWN`/`COMPLETED`                  | `201` |
+| 11  | Employee holding 2 assets                                             | `201`, 2 `ASSET_RETURN` items titled `Return asset <tag>` |
+| 12  | No token                                                              | `401` |
+
+## 11. Negative Testing
+
+| Scenario                                 | Expected |
+| ----------------------------------------- | ---------- |
+| `lastWorkingDay: "31-10-2026"`            | `400` |
+| `lastWorkingDay: "2026-02-30"`            | `400` |
+| `type: "RETIREMENT"`                      | `400` |
+| `reason: "   "`                           | `400` |
+| `employeeId: "not-a-uuid"`                | `400` |
+| Empty body                                | `400` |
+| Role with no exit grants                  | `403 "You do not have permission to perform this action"` |
+| Tampered/expired JWT                      | `401` |
+
+## 12. Edge Cases
+
+| Scenario                                                              | Expected Behavior |
+| ---------------------------------------------------------------------- | ------------------- |
+| Two concurrent initiations for the same employee                       | One wins `201`; the other hits the partial unique index -> `P2002` caught -> `409` (same message), never a `500` |
+| Asset assigned to the employee between the asset read and the write   | Known minor point: the asset list is read **before** the creation transaction opens, so that asset gets no `ASSET_RETURN` item at creation; it is picked up at separation by `syncAssetReturnItems` (endpoint 150), which reads the held assets inside its transaction |
+| `lastWorkingDay` near midnight / non-UTC locale                        | "Today" is the **UTC** date, so a caller in a UTC-negative zone (evening local time) can be refused for their own local "today" |
+| `ADMIN` initiates a case for their **own** employee                    | Allowed; separating it later would revoke their own access (no last-admin protection) |
+| `create:own` caller whose Employee is soft-deleted                     | `400 "No employee record linked to this account"` |
+| Caller holds both `:any` and `:own`                                    | `:any` branch wins (`employeeId` then required) |
+
+## 13. Security Testing
+
+- **Identity spoofing**: as `EMPLOYEE`, send another employee's
+  `employeeId`; confirm the created case's `employeeId` is the caller's.
+- **Privilege**: confirm `TERMINATION` and initiating for someone else are
+  impossible without `exitCase:create:any` (seed: `ADMIN` only; `MANAGER`
+  and `EMPLOYEE` hold only `create:own`, `read:own`, `withdraw:own`).
+- **Idempotency/race**: fire two identical requests concurrently; exactly
+  one `201`, one `409`.
+
+## 14. Database Impact
+
+Reads: `Employee.findFirst` (by `userId` for `create:own`, then by `id`),
+`ExitCase.findFirst` (open-case pre-check), `AssetAssignment.findMany`
+(active, via Asset Management's exposed query). One transaction:
+`ExitCase.create` with nested `ClearanceItem` creates, plus one `AuditLog`
+row (`CREATE` / `ExitCase`, `afterData` = the created case).
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/exit-cases
+    ↓
+authMiddleware
+    ↓
+requirePermission('exitCase:create:own', 'exitCase:create:any') → 403
+    ↓
+validateMiddleware(createExitCaseSchema) → 400
+    ↓
+exitCase.controller.create
+    → service.createExitCase(body, { id, ipAddress, grantedPermissions })
+        ├─ resolveInitiation → 400 / 403
+        ├─ employeeRepository.findById → 400
+        ├─ lastWorkingDay >= todayUtc → 400
+        ├─ findOpenByEmployeeId → 409
+        ├─ assetAssignmentService.getActiveAssignmentsForEmployee
+        └─ $transaction: ExitCase.create (+ clearanceItems) + audit
+             └─ P2002 (partial unique index) → 409
+    ↓
+201 { exitCase }
+```
+
+## 16. Performance Notes
+
+Two indexed employee lookups, one indexed open-case lookup and one
+`AssetAssignment` query, then a single transaction. Checklist size is
+bounded by the assets one employee holds.
+
+## 17. Interview Notes
+
+- **Q: Why a database partial unique index as well as an application
+  pre-check?** The pre-check gives a friendly `409` in the common case, but
+  it is a read-then-write and races; the partial index
+  (`WHERE status IN ('INITIATED','SEPARATED')`) is the real guarantee.
+  Prisma's schema DSL cannot express it, so it is added by hand in the
+  migration (same mechanism as `Employee.userId` and the asset ledger's
+  active-row index), and the `P2002` is mapped to the same `409`.
+- **Q: Why ignore `employeeId` for self-initiators?** Identity for a
+  self-service action must come from the token, not the body.
+- **Q: Why is `lastWorkingDay` explicit rather than derived from a notice
+  period?** No notice-period policy exists yet; the date is set per case
+  and is the sole separation trigger (ADR-EM02).
+
+## 18. cURL Examples
+
+```bash
+# EMPLOYEE resigns
+curl -s -X POST "http://localhost:3000/api/v1/exit-cases" \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"RESIGNATION","lastWorkingDay":"2026-10-31","reason":"Relocating to another city"}'
+```
+
+```bash
+# ADMIN terminates an employee
+curl -s -X POST "http://localhost:3000/api/v1/exit-cases" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"employeeId\":\"$EMPLOYEE_ID\",\"type\":\"TERMINATION\",\"lastWorkingDay\":\"2026-09-30\"}"
+```
+
+## 19. Postman Collection Notes
+
+Save `exitCase.id` as `exitCaseId` and the `clearanceItems[].id` values as
+`itemId*` in a test script; endpoints 145-152 all build on them. Run once as
+`EMPLOYEE` (own resignation) and once as `ADMIN` (termination).
+
+## 20. Testing Checklist
+
+- ✅ `EMPLOYEE`/`MANAGER` can resign for themselves only; a supplied foreign `employeeId` is ignored
+- ✅ `TERMINATION` and on-behalf initiation need `exitCase:create:any` (`ADMIN`)
+- ✅ Default checklist: KT, final settlement, access revocation + one `ASSET_RETURN` per held asset
+- ✅ `lastWorkingDay` before today (UTC) -> `400`; must be `YYYY-MM-DD`
+- ✅ Second open case -> `409` with the exact message above (also under a race)
+- ✅ `401` with no token, `403` for roles with no exit grants
+
+---
+
+---
+
+# 145. `GET /exit-cases`
+
+## 1. Endpoint Information
+
+```
+Feature:            Exit Management Domain (2026-09-22, feature/28-exit-management-domain)
+Endpoint:           List Exit Cases
+Description:        Paginated, filterable list of exit cases; auto-scoped to the caller's own employee without :read:any
+Method:             GET
+URL:                /api/v1/exit-cases
+API Version:        v1
+Module:             modules/exit
+Authentication:     Yes (Bearer access token)
+Authorization:      `exitCase:read:own` OR `exitCase:read:any`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the self-service "my exit case" lookup for employees
+  and the cross-employee offboarding worklist for `ADMIN`.
+- **Auto-scoping, not refusal**: a caller **without** `exitCase:read:any`
+  has `filters.employeeId` **overwritten** with their own Employee id
+  (`findByUserId`), whatever `employeeId` they sent - the same self-service
+  list pattern as Leave, Performance, Training and Asset Management. A
+  caller with no linked live Employee gets an empty page
+  (`{ exitCases: [], pagination: { page, limit, total: 0, totalPages: 0 } }`),
+  not an error.
+- **Rows omit `clearanceItems`**: list rows are the bare `ExitCase` row;
+  fetch one case (endpoint 147) for its checklist.
+- **Reads `req.validatedQuery`** correctly.
+- **Expected callers**: any authenticated user (own cases), `ADMIN` (all).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                   |
+| -------------------------------------- | -------- | --------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `exitCase:read:own` or `exitCase:read:any` |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+| Name         | Type          | Default     | Description                                                     |
+| ------------ | ------------- | ----------- | ----------------------------------------------------------------- |
+| `page`       | integer       | `1`         | Min 1                                                             |
+| `limit`      | integer       | `10`        | Min 1, max 100                                                    |
+| `employeeId` | string (UUID) | -           | Filter by employee (**overridden** for callers lacking `:read:any`) |
+| `type`       | enum          | -           | `RESIGNATION`, `TERMINATION`                                      |
+| `status`     | enum          | -           | `INITIATED`, `SEPARATED`, `COMPLETED`, `WITHDRAWN`                |
+| `sortBy`     | enum          | `createdAt` | `lastWorkingDay`, `initiatedAt`, `status`, `createdAt`            |
+| `order`      | enum          | `desc`      | `asc`, `desc`                                                     |
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- `employeeId` must be a UUID when supplied (`400`); `type`/`status`/
+  `sortBy`/`order` must be one of the listed values; `limit` 1-100, `page`
+  >= 1.
+- No existence check on the `employeeId` filter - an unknown id yields an
+  empty page.
+- Ordering is `[{ <sortBy>: <order> }, { id: 'asc' }]` (stable tiebreak).
+  Sorting by `status` follows the Postgres enum declaration order
+  (`INITIATED`, `SEPARATED`, `COMPLETED`, `WITHDRAWN`), not alphabetical.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "exitCases": [
+    {
+      "id": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e",
+      "employeeId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+      "type": "RESIGNATION",
+      "status": "INITIATED",
+      "initiatedAt": "2026-09-22T10:00:00.000Z",
+      "lastWorkingDay": "2026-10-31T00:00:00.000Z",
+      "reason": "Relocating to another city",
+      "eligibleForRehire": null,
+      "rehireNote": null,
+      "separatedAt": null,
+      "completedAt": null,
+      "initiatedBy": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+      "createdAt": "2026-09-22T10:00:00.000Z",
+      "updatedAt": "2026-09-22T10:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 10, "total": 1, "totalPages": 1 }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                          | Response (`message`)                                  | When |
+| ------ | ------------------------------------------------ | ------------------------------------------------------ | ---- |
+| `400`  | Invalid query parameter                          | e.g. `"employeeId: Invalid UUID"`, `"status: Invalid option: ..."` | Bad UUID / enum / range |
+| `401`  | Missing/invalid token                            | Same as every other protected endpoint                | `authMiddleware` failure |
+| `403`  | Caller holds neither `:read:own` nor `:read:any` | `"You do not have permission to perform this action"` | Role with no exit read grant |
+
+(No ownership `403` here; a caller without `:any` is silently scoped.)
+
+## 10. Postman Test Cases
+
+| #   | Case                                                   | Expected |
+| --- | ------------------------------------------------------- | -------- |
+| 1   | `EMPLOYEE`, no params                                   | `200`, only their own cases |
+| 2   | `EMPLOYEE` supplying another employee's `employeeId`    | `200`, still only **their own** cases |
+| 3   | `EMPLOYEE` with no linked Employee                      | `200`, empty page |
+| 4   | `MANAGER`                                               | `200`, only their own cases (no team visibility) |
+| 5   | `ADMIN`, no params                                      | `200`, all cases |
+| 6   | `ADMIN`, `?status=INITIATED&type=RESIGNATION`           | `200`, filtered |
+| 7   | `ADMIN`, `?sortBy=lastWorkingDay&order=asc`             | `200`, soonest departures first |
+| 8   | `?status=DONE`                                          | `400` |
+| 9   | No token                                                | `401` |
+
+## 11. Negative Testing
+
+| Scenario                     | Expected |
+| ----------------------------- | ---------- |
+| `employeeId=not-a-uuid`       | `400` |
+| `limit=0` / `limit=101`       | `400` |
+| `sortBy=reason`               | `400` |
+| Tampered/expired JWT          | `401` |
+
+## 12. Edge Cases
+
+| Scenario                                               | Expected Behavior |
+| ------------------------------------------------------- | ------------------- |
+| `employeeId` supplied by a non-`:any` caller            | Silently replaced by the caller's own id |
+| Caller has both grants                                  | `:any` wins; no scoping |
+| Employee already separated (soft-deleted)               | A non-`:any` caller no longer resolves to an Employee (`findByUserId` excludes soft-deleted) so their list is empty; their tokens are revoked at separation anyway |
+| Page past the end                                       | Empty `exitCases`, correct `total` |
+
+## 13. Security Testing
+
+- **BOLA**: as `EMPLOYEE`, pass another employee's `employeeId`; confirm
+  only the caller's own cases return.
+- Confirm `MANAGER` holds only `exitCase:read:own` (per `prisma/seed.js`),
+  so a manager cannot list a report's exit case here.
+
+## 14. Database Impact
+
+Read-only: `Employee.findFirst` by `userId` (non-`:any` callers), then
+`ExitCase.findMany` and `count` in parallel.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/exit-cases
+    ↓
+authMiddleware
+    ↓
+requirePermission('exitCase:read:own', 'exitCase:read:any') → 403
+    ↓
+validateMiddleware(listExitCasesQuerySchema, 'query') → 400
+    ↓
+exitCase.controller.list
+    → service.listExitCases(req.validatedQuery, { id, ipAddress, grantedPermissions })
+        ├─ lacks :read:any → findByUserId; none → empty page; else filters.employeeId = own
+        └─ Promise.all([findAll, count])
+    ↓
+200 { exitCases, pagination }
+```
+
+## 16. Performance Notes
+
+Filters hit `ExitCase_employeeId_idx` / `ExitCase_status_idx`; no relation
+include, so a single flat query per page.
+
+## 17. Interview Notes
+
+- **Q: Why silent scoping instead of `403`?** A list has no single record
+  to refuse; narrowing is safe. The by-id endpoint (147) refuses with `403`.
+
+## 18. cURL Examples
+
+```bash
+# Own case (EMPLOYEE/MANAGER)
+curl -s "http://localhost:3000/api/v1/exit-cases" \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+```bash
+# ADMIN worklist: open resignations, soonest first
+curl -s "http://localhost:3000/api/v1/exit-cases?status=INITIATED&type=RESIGNATION&sortBy=lastWorkingDay&order=asc" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Run once per role token after creating a case as `EMPLOYEE` (endpoint 144)
+and assert the row counts differ between `EMPLOYEE` and `ADMIN`.
+
+## 20. Testing Checklist
+
+- ✅ `EMPLOYEE`/`MANAGER` see only their own cases; a foreign `employeeId` is overridden
+- ✅ `ADMIN` sees all and can filter by `employeeId`, `type`, `status`
+- ✅ No linked Employee -> empty page, not an error
+- ✅ Rows do not embed `clearanceItems`
+- ✅ `400` for bad UUIDs/enums/limits; `401` with no token
+
+---
+
+---
+
+# 146. `POST /exit-cases/process-due`
+
+## 1. Endpoint Information
+
+```
+Feature:            Exit Management Domain (2026-09-22, feature/28-exit-management-domain)
+Endpoint:           Process Due Separations (sweep)
+Description:        Separates every INITIATED exit case whose last working day has arrived, each in its own transaction
+Method:             POST
+URL:                /api/v1/exit-cases/process-due
+API Version:        v1
+Module:             modules/exit
+Authentication:     Yes (Bearer access token)
+Authorization:      `exitCase:manage:any`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the time-based separation trigger (ADR-EM02). The
+  project has **no scheduler infrastructure**, so instead of a cron job the
+  trigger is an explicit sweep an admin (or a future scheduler that can
+  authenticate as an admin) calls. Separation is driven by the calendar
+  (`lastWorkingDay <= today`), **never** by clearance completion.
+- **Selection**: `findDueForSeparation(todayUtc)` returns `INITIATED` cases
+  with `lastWorkingDay <= today (UTC)`, ordered by `lastWorkingDay ASC, id ASC`.
+- **Per-case isolation**: each due case runs through the same
+  `separateExitCase` used by endpoint 150 (with an empty body), in **its own
+  transaction**, sequentially. One case failing never blocks the others and
+  never rolls them back; the failure is reported in `failed`.
+- **Route registered before `/:id`** so the literal `process-due` is never
+  read as an id.
+- **No body, no query**: no validation middleware runs.
+- **Audit actor**: every resulting audit row names the admin who called the
+  sweep.
+- **Expected callers**: `ADMIN` only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                   |
+| -------------------------------------- | -------- | ----------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `exitCase:manage:any`     |
+
+## 4. Path Parameters
+
+None.
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None (any body is ignored).
+
+## 7. Validation Rules
+
+- None beyond authentication and the permission check.
+- Idempotent in effect: a second run finds no `INITIATED` cases left that
+  are due (already-separated ones are `SEPARATED`/`COMPLETED`), so
+  `processed` is `0`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "processed": 2,
+  "separated": ["b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e"],
+  "failed": [
+    { "id": "f8a9b0c1-d2e3-4f4a-9b5c-6d7e8f9a0b12", "message": "Employee not found" }
+  ]
+}
+```
+
+`processed` = number of due cases found (`separated.length + failed.length`).
+`failed[].message` is the caught error's own message **only when the error
+is operational** (a deliberate, user-safe error such as `NotFoundError` /
+`ConflictError`); for any other (unexpected) error it is the literal
+`"Internal Server Error"`, and the real error is logged. The example above
+is an operational error (illustrative of the shape only). An empty
+sweep returns `{ "processed": 0, "separated": [], "failed": [] }`.
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                  | When |
+| ------ | ------------------------------------ | ------------------------------------------------------ | ---- |
+| `401`  | Missing/invalid token                | Same as every other protected endpoint                | `authMiddleware` failure |
+| `403`  | Caller lacks `exitCase:manage:any`   | `"You do not have permission to perform this action"` | `MANAGER`, `EMPLOYEE` |
+
+(Per-case failures do **not** change the response status; they appear in
+`failed[]` under `200`.)
+
+## 10. Postman Test Cases
+
+| #   | Case                                                          | Expected |
+| --- | -------------------------------------------------------------- | -------- |
+| 1   | `ADMIN`, no due cases                                          | `200 { processed: 0, separated: [], failed: [] }` |
+| 2   | `ADMIN`, one case with `lastWorkingDay` = today                | `200`, its id in `separated`; case `SEPARATED` (or `COMPLETED`), employee soft-deleted, tokens revoked |
+| 3   | `ADMIN`, two due cases                                         | `200 processed: 2`, both separated independently |
+| 4   | Case with future `lastWorkingDay`                              | Not selected; untouched |
+| 5   | Run the sweep twice                                            | Second run `processed: 0` |
+| 6   | `EMPLOYEE` / `MANAGER`                                         | `403` |
+| 7   | No token                                                       | `401` |
+
+## 11. Negative Testing
+
+| Scenario                      | Expected |
+| ------------------------------ | ---------- |
+| `MANAGER` token                | `403` |
+| Tampered/expired JWT           | `401` |
+| `GET /exit-cases/process-due`  | Handled as `GET /:id` with id `process-due` -> `404 "Exit case not found"` for `ADMIN` |
+
+## 12. Edge Cases
+
+| Scenario                                                          | Expected Behavior |
+| ------------------------------------------------------------------ | ------------------- |
+| One case throws mid-transaction                                    | That case's transaction rolls back completely (employee **not** offboarded); it is listed in `failed`; the next case still runs; it is retried by the next sweep |
+| Case separated by another request between selection and its turn   | `separateExitCase` re-reads it: `409 "Only an INITIATED exit case can be separated"` lands in `failed` (a harmless no-op, but reported as a failure) |
+| Non-operational (unexpected) error in a case                       | `failed[].message` is `"Internal Server Error"` (same masking as the global error handler) and the real error is logged server-side. Previously the raw `error.message` (e.g. a Prisma message) was returned (found by the handbook verification pass, fixed 2026-09-22) |
+| Employee already offboarded through `DELETE /employees/:id`        | Not a failure: the primitive is skipped, the case just records the separation |
+| Large backlog                                                      | Cases run sequentially inside one HTTP request; no batching or limit |
+
+## 13. Security Testing
+
+- Confirm only `ADMIN` (`exitCase:manage:any`) can run the sweep.
+- Confirm an unexpected failure shows as `"Internal Server Error"` in
+  `failed[]` (never a raw database/Prisma message) while the real error
+  appears in the server log.
+
+## 14. Database Impact
+
+`ExitCase.findMany` (due set), then per case the full separation write set
+of endpoint 150: `ExitCase` status change, `ClearanceItem` inserts/updates,
+`Employee.deletedAt`, `User.tokensValidAfter`, `RefreshToken` revocation and
+audit rows (`UPDATE ExitCase`, `DELETE Employee`).
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/exit-cases/process-due
+    ↓
+authMiddleware → requirePermission('exitCase:manage:any') → 403
+    ↓
+exitCase.controller.processDue
+    → service.processDueSeparations(actor)
+        ├─ findDueForSeparation(todayUtc)
+        └─ for each due case (sequential):
+             try separateExitCase(id, {}, actor) → push to separated
+             catch → push { id, message } to failed
+    ↓
+200 { processed, separated, failed }
+```
+
+## 16. Performance Notes
+
+O(number of due cases) transactions, sequential, in one request; fine for a
+daily sweep, but there is no pagination/limit.
+
+## 17. Interview Notes
+
+- **Q: Why an endpoint instead of a cron job?** No scheduler exists in the
+  project (Leave notes the same); exposing the sweep as an explicit,
+  idempotent operation keeps the trigger time-based and testable, and any
+  future scheduler can simply call it.
+- **Q: Why per-case transactions?** So one bad case cannot roll back or
+  block the others, while each case's offboarding stays all-or-nothing.
+
+## 18. cURL Examples
+
+```bash
+curl -s -X POST "http://localhost:3000/api/v1/exit-cases/process-due" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Create a case with `lastWorkingDay` = today (endpoint 144) as `ADMIN`, run
+this once and assert the id appears in `separated`, then run it again and
+assert `processed: 0`.
+
+## 20. Testing Checklist
+
+- ✅ `ADMIN` only; `403` otherwise, `401` with no token
+- ✅ Only `INITIATED` cases with `lastWorkingDay <= today (UTC)` are processed
+- ✅ Each case is atomic and isolated; failures land in `failed` (operational message, or `"Internal Server Error"` for unexpected errors), response stays `200`
+- ✅ Second run is a no-op (`processed: 0`)
+- ✅ Separation is time-driven, not clearance-driven
+
+---
+
+---
+
+# 147. `GET /exit-cases/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Exit Management Domain (2026-09-22, feature/28-exit-management-domain)
+Endpoint:           Get Exit Case By ID
+Description:        Returns one exit case with its full clearance checklist, with an ownership check for callers lacking :read:any
+Method:             GET
+URL:                /api/v1/exit-cases/:id
+API Version:        v1
+Module:             modules/exit
+Authentication:     Yes (Bearer access token)
+Authorization:      `exitCase:read:own` OR `exitCase:read:any` (plus an ownership check for the `:own` case)
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the detail view of a case and its checklist - what is
+  still outstanding before the employee is cleared.
+- **Ownership** (`assertOwnershipOrAny`): `exitCase:read:any` passes
+  unconditionally; otherwise the caller's linked live Employee must equal
+  the case's `employeeId`, else `403`. A caller with no linked Employee is
+  also refused `403`.
+- **Existence is checked before ownership**, so a caller without `:any`
+  can tell a nonexistent id (`404`) from someone else's case (`403`), like
+  the other domains' by-id endpoints (ids are random UUIDs).
+- **Embeds `clearanceItems`** ordered by `type` (enum declaration order: `ASSET_RETURN`, `KNOWLEDGE_TRANSFER`, `FINAL_SETTLEMENT`, `ACCESS_REVOCATION`, `OTHER`), then `createdAt`, then `id` (found by the handbook verification pass, fixed 2026-09-22).
+- **Expected callers**: the case's own employee, or `ADMIN`.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                   |
+| -------------------------------------- | -------- | --------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `exitCase:read:own` or `exitCase:read:any` |
+
+## 4. Path Parameters
+
+| Name | Type   | Description  |
+| ---- | ------ | -------------- |
+| `id` | string | Exit case id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- Case must exist (`404`).
+- Ownership rule above (`403`).
+- `:id` is not UUID-validated; a malformed id yields `404`.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "exitCase": {
+    "id": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e",
+    "employeeId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "type": "RESIGNATION",
+    "status": "SEPARATED",
+    "initiatedAt": "2026-09-22T10:00:00.000Z",
+    "lastWorkingDay": "2026-10-31T00:00:00.000Z",
+    "reason": "Relocating to another city",
+    "eligibleForRehire": true,
+    "rehireNote": null,
+    "separatedAt": "2026-10-31T00:05:00.000Z",
+    "completedAt": null,
+    "initiatedBy": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+    "createdAt": "2026-09-22T10:00:00.000Z",
+    "updatedAt": "2026-10-31T00:05:00.000Z",
+    "clearanceItems": [
+      { "id": "a3b4c5d6-e7f8-4a9b-8c0d-1e2f3a4b5c6d", "exitCaseId": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e", "type": "ASSET_RETURN", "title": "Return asset LAP-0042", "assetId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", "status": "DONE", "waivedReason": null, "resolvedAt": "2026-10-30T15:00:00.000Z", "resolvedBy": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c", "createdAt": "2026-09-22T10:00:00.000Z", "updatedAt": "2026-10-30T15:00:00.000Z" },
+      { "id": "c5d6e7f8-a9b0-4c1d-8e2f-3a4b5c6d7e8f", "exitCaseId": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e", "type": "KNOWLEDGE_TRANSFER", "title": "Knowledge transfer", "assetId": null, "status": "PENDING", "waivedReason": null, "resolvedAt": null, "resolvedBy": null, "createdAt": "2026-09-22T10:00:00.000Z", "updatedAt": "2026-09-22T10:00:00.000Z" },
+      { "id": "e7f8a9b0-c1d2-4e3f-8a4b-5c6d7e8f9a01", "exitCaseId": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e", "type": "ACCESS_REVOCATION", "title": "System access revocation", "assetId": null, "status": "DONE", "waivedReason": null, "resolvedAt": "2026-10-31T00:05:00.000Z", "resolvedBy": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c", "createdAt": "2026-09-22T10:00:00.000Z", "updatedAt": "2026-10-31T00:05:00.000Z" }
+    ]
+  }
+}
+```
+
+(Shape derived from the Prisma model / Zod schema; the values illustrate a
+mid-flight `SEPARATED` case, not a captured response.)
+
+## 9. Error Responses
+
+| Status | Reason                                         | Response (`message`)                                       | When |
+| ------ | ----------------------------------------------- | ------------------------------------------------------------ | ---- |
+| `401`  | Missing/invalid token                           | Same as every other protected endpoint                       | `authMiddleware` failure |
+| `403`  | Holds neither read permission                   | `"You do not have permission to perform this action"`        | Role lacking both grants |
+| `403`  | `:own`-only caller reading someone else's case  | `"You do not have permission to view this exit case"`        | Ownership mismatch, or no linked Employee |
+| `404`  | No such case                                    | `"Exit case not found"`                                      | Unknown/malformed `id` |
+
+## 10. Postman Test Cases
+
+| #   | Case                                             | Expected |
+| --- | ------------------------------------------------- | -------- |
+| 1   | `EMPLOYEE` reads their own case                   | `200` with `clearanceItems` |
+| 2   | `EMPLOYEE` reads another employee's case          | `403 "You do not have permission to view this exit case"` |
+| 3   | `MANAGER` reads a report's case                   | `403` (no manager-wide scope) |
+| 4   | `ADMIN` reads any case                            | `200` |
+| 5   | Unknown id                                        | `404 "Exit case not found"` |
+| 6   | No token                                          | `401` |
+
+## 11. Negative Testing
+
+| Scenario                     | Expected |
+| ----------------------------- | ---------- |
+| Non-UUID id                   | `404` |
+| Tampered/expired JWT          | `401` |
+
+## 12. Edge Cases
+
+| Scenario                                          | Expected Behavior |
+| -------------------------------------------------- | ------------------- |
+| `WITHDRAWN`/`COMPLETED` case                        | Still readable - the record is permanent |
+| Employee already separated (soft-deleted)           | Their own token is revoked, and their user no longer resolves to a live Employee, so only `ADMIN` can read the case afterwards |
+
+## 13. Security Testing
+
+- **BOLA**: as `EMPLOYEE`, request another employee's case id; confirm
+  `403` and no case data in the error body.
+- Confirm `MANAGER` gets no elevated access (only `exitCase:read:own`).
+
+## 14. Database Impact
+
+Read-only: `ExitCase.findUnique` (with `clearanceItems`), plus
+`Employee.findFirst` by `userId` for non-`:any` callers.
+
+## 15. Request Lifecycle
+
+```
+GET /api/v1/exit-cases/:id
+    ↓
+authMiddleware → requirePermission('exitCase:read:own', 'exitCase:read:any') → 403
+    ↓
+exitCase.controller.getById
+    → service.getExitCaseById(id, requester)
+        ├─ findById → 404
+        └─ assertOwnershipOrAny(exitCase.employeeId, requester) → 403
+    ↓
+200 { exitCase }
+```
+
+## 16. Performance Notes
+
+Primary-key lookup with one batched relation query for the checklist, plus
+one indexed employee lookup for non-admin callers.
+
+## 17. Interview Notes
+
+- **Q: Why does the list scope silently but this `403`s?** A by-id request
+  targets one record, so there is something concrete to refuse; a list
+  narrows instead. Same split as Leave/Training/Asset Management.
+
+## 18. cURL Examples
+
+```bash
+curl -s "http://localhost:3000/api/v1/exit-cases/$EXIT_CASE_ID" \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Use `exitCaseId` from endpoint 144; run once as the case's employee (`200`)
+and once as a different employee (`403`).
+
+## 20. Testing Checklist
+
+- ✅ Own case -> `200` with checklist; someone else's -> `403` with the exact message above
+- ✅ `ADMIN` reads any
+- ✅ `404 "Exit case not found"` for unknown ids
+- ✅ `MANAGER` has no reports-visibility
+- ✅ `401` with no token
+
+---
+
+---
+
+# 148. `PATCH /exit-cases/:id`
+
+## 1. Endpoint Information
+
+```
+Feature:            Exit Management Domain (2026-09-22, feature/28-exit-management-domain)
+Endpoint:           Update Exit Case
+Description:        Edits lastWorkingDay (INITIATED only), reason and the rehire fields of an open exit case
+Method:             PATCH
+URL:                /api/v1/exit-cases/:id
+API Version:        v1
+Module:             modules/exit
+Authentication:     Yes (Bearer access token)
+Authorization:      `exitCase:manage:any`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: correct or extend a case - move the last working day,
+  amend the reason, and record the rehire recommendation (ADR-EM04).
+- **Editable while** `INITIATED` or `SEPARATED`. A `WITHDRAWN` case is
+  frozen (`409`). A `COMPLETED` case accepts **only** `eligibleForRehire` /
+  `rehireNote`; sending any other field (`lastWorkingDay`, `reason`) gives
+  `409` `"A COMPLETED exit case can no longer be edited, except its rehire
+  fields"`. This was added because a case can auto-complete inside
+  `separate` (or be separated by the `process-due` sweep, which sends no
+  body), which previously made the rehire flag impossible to record
+  (found by the handbook verification pass, fixed 2026-09-22).
+- **`lastWorkingDay`** may only be changed while `INITIATED` (`409`
+  otherwise) and must not precede the **initiation date** (UTC day of
+  `initiatedAt`). It is **not** compared with today, so an `ADMIN` can move
+  it into the past (any date on/after the initiation day), which makes the
+  case immediately due for the sweep.
+- **`eligibleForRehire` / `rehireNote`** are stored as data only - no
+  hiring code enforces them yet (ADR-EM04). `reason`, `eligibleForRehire`
+  and `rehireNote` accept `null` to clear.
+- **Not part of the state machine**: this endpoint never changes `status`.
+- **Concurrency-safe status guard**: after the initial read, the write
+  transaction row-locks the case (`exitCaseRepository.lockStatusById`,
+  `SELECT ... FOR UPDATE`) and **re-validates its current status** there,
+  so a case that was separated, withdrawn or completed after the first read
+  is refused with the same `409`s instead of being edited
+  (found by the handbook verification pass, fixed 2026-09-22).
+- **Expected callers**: `ADMIN` only.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                 |
+| -------------------------------------- | -------- | --------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `exitCase:manage:any`   |
+| `Content-Type: application/json`      | **Yes**  |                                         |
+
+## 4. Path Parameters
+
+| Name | Type   | Description  |
+| ---- | ------ | -------------- |
+| `id` | string | Exit case id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{
+  "lastWorkingDay": "2026-11-15",
+  "reason": "Notice period extended by mutual agreement",
+  "eligibleForRehire": true,
+  "rehireNote": "Strong performer; welcome back"
+}
+```
+
+| Field               | Type                | Required | Notes |
+| ------------------- | ------------------- | -------- | ----- |
+| `lastWorkingDay`    | string `YYYY-MM-DD` | No       | Only while `INITIATED`; UTC calendar date |
+| `reason`            | string \| `null`    | No       | Trimmed, min length 1; `null` clears |
+| `eligibleForRehire` | boolean \| `null`   | No       | `null` clears |
+| `rehireNote`        | string \| `null`    | No       | Trimmed, min length 1; `null` clears |
+
+All fields optional. An empty object `{}` passes validation and performs a
+no-op update (still writes an audit row and bumps `updatedAt`).
+
+## 7. Validation Rules
+
+- Zod (`400`): `lastWorkingDay` a real `YYYY-MM-DD`; strings non-empty
+  after trim; booleans strictly boolean. Unknown fields are stripped.
+- Service checks, in order: case exists (`404`) -> not `WITHDRAWN` (`409`), and
+  not `COMPLETED` unless the body contains only the rehire fields (`409`)
+  -> if `lastWorkingDay` supplied: status must be `INITIATED` (`409`) and
+  date not before the initiation date (`400`). Inside the transaction the
+  status checks are repeated against the row-locked current status.
+- Only fields that are present (`!== undefined`) are written.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "exitCase": {
+    "id": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e",
+    "employeeId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "type": "RESIGNATION",
+    "status": "INITIATED",
+    "initiatedAt": "2026-09-22T10:00:00.000Z",
+    "lastWorkingDay": "2026-11-15T00:00:00.000Z",
+    "reason": "Notice period extended by mutual agreement",
+    "eligibleForRehire": true,
+    "rehireNote": "Strong performer; welcome back",
+    "separatedAt": null,
+    "completedAt": null,
+    "initiatedBy": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+    "createdAt": "2026-09-22T10:00:00.000Z",
+    "updatedAt": "2026-09-22T11:30:00.000Z",
+    "clearanceItems": [ "... full checklist, same shape as endpoint 147 ..." ]
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                          | Response (`message`)                                                              | When |
+| ------ | ------------------------------------------------ | ---------------------------------------------------------------------------------- | ---- |
+| `400`  | Zod validation failure                           | e.g. `"lastWorkingDay: Invalid ISO date"`, `"eligibleForRehire: Invalid input: expected boolean, received string"` | Bad field |
+| `400`  | `lastWorkingDay` before initiation date          | `"lastWorkingDay: cannot be before the date the exit case was initiated"`          | Date < UTC day of `initiatedAt` |
+| `401`  | Missing/invalid token                            | Same as every other protected endpoint                                              | `authMiddleware` failure |
+| `403`  | Caller lacks `exitCase:manage:any`               | `"You do not have permission to perform this action"`                              | `MANAGER`, `EMPLOYEE` |
+| `404`  | No such case                                     | `"Exit case not found"`                                                            | Unknown/malformed `id` |
+| `409`  | Case withdrawn                                   | `"A WITHDRAWN exit case can no longer be edited"`                                   | `WITHDRAWN` case (any field) |
+| `409`  | Completed case, non-rehire field                 | `"A COMPLETED exit case can no longer be edited, except its rehire fields"`         | `COMPLETED` case and the body has any field other than `eligibleForRehire`/`rehireNote` |
+| `409`  | `lastWorkingDay` change after separation         | `"lastWorkingDay can only be changed while the exit case is INITIATED"`            | `SEPARATED` case + `lastWorkingDay` |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                       | Expected |
+| --- | ----------------------------------------------------------- | -------- |
+| 1   | `ADMIN`, new `lastWorkingDay` on `INITIATED` case           | `200`, date updated |
+| 2   | `ADMIN`, set `eligibleForRehire: true` + `rehireNote`       | `200` |
+| 3   | `ADMIN`, `reason: null`                                     | `200`, reason cleared |
+| 4   | `lastWorkingDay` on a `SEPARATED` case                      | `409 "lastWorkingDay can only be changed while the exit case is INITIATED"` |
+| 5   | `rehireNote` on a `SEPARATED` case                          | `200` |
+| 6   | Any edit on a `WITHDRAWN` case                              | `409 "A WITHDRAWN exit case can no longer be edited"` |
+| 6b  | `reason` / `lastWorkingDay` on a `COMPLETED` case           | `409 "A COMPLETED exit case can no longer be edited, except its rehire fields"` |
+| 6c  | `eligibleForRehire` / `rehireNote` only, on a `COMPLETED` case | `200` |
+| 7   | `lastWorkingDay` before the initiation date                 | `400` |
+| 8   | `EMPLOYEE` token                                            | `403` |
+| 9   | Unknown id                                                  | `404 "Exit case not found"` |
+| 10  | No token                                                    | `401` |
+
+## 11. Negative Testing
+
+| Scenario                           | Expected |
+| ----------------------------------- | ---------- |
+| `lastWorkingDay: "2026/11/15"`      | `400` |
+| `reason: ""`                        | `400` |
+| `eligibleForRehire: "yes"`          | `400` |
+| Empty body (no JSON at all)         | `400` |
+| Tampered/expired JWT                | `401` |
+
+## 12. Edge Cases
+
+| Scenario                                                              | Expected Behavior |
+| ---------------------------------------------------------------------- | ------------------- |
+| `{}` body                                                              | `200` no-op (audit row still written) |
+| `lastWorkingDay` moved to a past date (>= initiation day)               | Accepted; case becomes due for the sweep/separation |
+| Case separated and auto-`COMPLETED` at separation (all items already resolved) | The rehire fields can still be recorded afterwards through this endpoint; everything else is frozen (`409`). Fixed 2026-09-22 (previously impossible after `process-due`) |
+| `{}` body on a `COMPLETED` case                                          | `200` no-op (no non-rehire key present) |
+| Edit races with a concurrent separate/withdraw/completion               | The transaction row-locks the case and re-checks the **current** status, so a case that closed (or, for `lastWorkingDay`, left `INITIATED`) after the initial read is refused with the corresponding `409` instead of being edited. Fixed 2026-09-22 |
+| `initiatedAt` late in a UTC day                                        | The floor is the **UTC date** of `initiatedAt` |
+
+## 13. Security Testing
+
+- Confirm `EMPLOYEE`/`MANAGER` (no `exitCase:manage:any`) get `403` -
+  an employee cannot edit their own last working day.
+
+## 14. Database Impact
+
+`ExitCase.findUnique` (+ items), then one transaction: `SELECT "status" ...
+FOR UPDATE` on the case, `ExitCase.update` (only the supplied fields) and one `AuditLog` row (`UPDATE` / `ExitCase`,
+before/after snapshots).
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/exit-cases/:id
+    ↓
+authMiddleware → requirePermission('exitCase:manage:any') → 403
+    ↓
+validateMiddleware(updateExitCaseSchema) → 400
+    ↓
+exitCase.controller.update
+    → service.updateExitCase(id, body, actor)
+        ├─ findById → 404
+        ├─ assertEditable: WITHDRAWN → 409; COMPLETED + non-rehire field → 409
+        ├─ lastWorkingDay: status must be INITIATED → 409; >= initiation day → 400
+        └─ $transaction:
+             ├─ lockStatusById (SELECT … FOR UPDATE) → re-run the status checks → 409
+             └─ update + audit
+    ↓
+200 { exitCase }
+```
+
+## 16. Performance Notes
+
+Primary-key read + primary-key update + one audit insert.
+
+## 17. Interview Notes
+
+- **Q: Why can't `lastWorkingDay` change after separation?** Separation
+  has already happened on that date - the offboarding primitive ran and
+  access was revoked; moving the date afterwards would falsify the record.
+- **Q: Why are the rehire fields only "data"?** ADR-EM04 builds the flag
+  now so the recommendation is captured at exit time; no hiring code reads
+  it yet.
+
+## 18. cURL Examples
+
+```bash
+curl -s -X PATCH "http://localhost:3000/api/v1/exit-cases/$EXIT_CASE_ID" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"lastWorkingDay":"2026-11-15","eligibleForRehire":true}'
+```
+
+## 19. Postman Collection Notes
+
+Use `exitCaseId` from endpoint 144. Chain: PATCH the date, GET (endpoint 147)
+to confirm, then separate (endpoint 150) and re-PATCH `lastWorkingDay` to see
+the `409`.
+
+## 20. Testing Checklist
+
+- ✅ `ADMIN` can edit date/reason/rehire fields on an `INITIATED` case
+- ✅ `lastWorkingDay` frozen after `INITIATED`; `WITHDRAWN` fully frozen; `COMPLETED` accepts only the rehire fields (exact messages above)
+- ✅ A case that closes between the read and the write is refused (row lock + re-validation)
+- ✅ Date before initiation day -> `400`
+- ✅ `null` clears `reason`/`eligibleForRehire`/`rehireNote`
+- ✅ `403` for non-admins, `404` for unknown ids, `401` with no token
+
+---
+
+---
+
+# 149. `POST /exit-cases/:id/withdraw`
+
+## 1. Endpoint Information
+
+```
+Feature:            Exit Management Domain (2026-09-22, feature/28-exit-management-domain)
+Endpoint:           Withdraw Exit Case
+Description:        Cancels an INITIATED exit case (ADMIN: either type; employee: own resignation before the last working day)
+Method:             POST
+URL:                /api/v1/exit-cases/:id/withdraw
+API Version:        v1
+Module:             modules/exit
+Authentication:     Yes (Bearer access token)
+Authorization:      `exitCase:manage:any` OR `exitCase:withdraw:own` (route level), then service-level ownership/type/date checks
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the only way to undo an exit before separation.
+  After separation reversal is a **rehire** through Identity's existing
+  flow, not a withdrawal (ADR-EM03).
+- **Two callers**:
+  - `exitCase:manage:any` (`ADMIN`): may withdraw **either** type while
+    `INITIATED`, with **no** last-working-day cut-off.
+  - `exitCase:withdraw:own` only (`MANAGER`, `EMPLOYEE`): may withdraw only
+    their **own `RESIGNATION`**, and only **before** the last working day
+    arrives (`lastWorkingDay > today (UTC)`; on the day itself it is
+    refused).
+- **Only `INITIATED`** cases are withdrawable (`SEPARATED`, `COMPLETED`,
+  `WITHDRAWN` -> `409`).
+- **Atomic**: compare-and-set `INITIATED -> WITHDRAWN` inside a
+  transaction, so a withdrawal racing a separation has exactly one winner.
+- **Effect**: the case becomes `WITHDRAWN` (a terminal state); clearance
+  items are left as they were; the partial unique index no longer counts
+  the case, so a new case can be opened later.
+- **No body**, no validation middleware.
+- **Check order** (matters for what an outsider learns): existence (`404`)
+  -> permission/ownership/type (`403`) -> status (`409`) -> date cut-off
+  for `:own`-only callers (`409`).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                                        |
+| -------------------------------------- | -------- | -------------------------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `exitCase:manage:any` or `exitCase:withdraw:own` |
+
+## 4. Path Parameters
+
+| Name | Type   | Description  |
+| ---- | ------ | -------------- |
+| `id` | string | Exit case id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+None.
+
+## 7. Validation Rules
+
+- Case exists (`404`).
+- Non-`manage:any` callers: must hold `withdraw:own`, be the case's
+  employee, and the case must be a `RESIGNATION` - otherwise `403`.
+- Status must be `INITIATED` (`409`).
+- Non-`manage:any` callers: `lastWorkingDay` must be strictly after today's
+  UTC date (`409`).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "exitCase": {
+    "id": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e",
+    "employeeId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "type": "RESIGNATION",
+    "status": "WITHDRAWN",
+    "initiatedAt": "2026-09-22T10:00:00.000Z",
+    "lastWorkingDay": "2026-10-31T00:00:00.000Z",
+    "reason": "Relocating to another city",
+    "eligibleForRehire": null,
+    "rehireNote": null,
+    "separatedAt": null,
+    "completedAt": null,
+    "initiatedBy": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+    "createdAt": "2026-09-22T10:00:00.000Z",
+    "updatedAt": "2026-09-23T09:00:00.000Z",
+    "clearanceItems": [ "... unchanged checklist, same shape as endpoint 147 ..." ]
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                                             | Response (`message`)                                                                                   | When |
+| ------ | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ---- |
+| `401`  | Missing/invalid token                              | Same as every other protected endpoint                                                                   | `authMiddleware` failure |
+| `403`  | Holds neither permission                           | `"You do not have permission to perform this action"`                                                   | Route-level `requirePermission` |
+| `403`  | `:own`-only caller not permitted for this case     | `"You do not have permission to withdraw this exit case"`                                               | Someone else's case, a `TERMINATION`, or no linked Employee |
+| `404`  | No such case                                       | `"Exit case not found"`                                                                                 | Unknown/malformed `id` (checked **before** ownership) |
+| `409`  | Not `INITIATED` (or lost a race)                   | `"Only an INITIATED exit case can be withdrawn - once separated, reversal is a rehire, not a withdrawal"` | `SEPARATED`/`COMPLETED`/`WITHDRAWN`, or CAS count 0 |
+| `409`  | `:own` withdrawal on/after the last working day    | `"The last working day has arrived - this resignation can no longer be withdrawn"`                      | `lastWorkingDay <= today (UTC)` |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                            | Expected |
+| --- | ---------------------------------------------------------------- | -------- |
+| 1   | `EMPLOYEE` withdraws their own `RESIGNATION`, future last day    | `200`, `status: WITHDRAWN` |
+| 2   | `EMPLOYEE` withdraws someone else's case                         | `403 "You do not have permission to withdraw this exit case"` |
+| 3   | `EMPLOYEE` withdraws their own `TERMINATION`                     | `403` (same message) |
+| 4   | `EMPLOYEE`, `lastWorkingDay` = today                             | `409 "The last working day has arrived - ..."` |
+| 5   | `ADMIN` withdraws a `TERMINATION`                                | `200` |
+| 6   | `ADMIN` withdraws a case whose last day has passed (still `INITIATED`) | `200` (no date cut-off for `manage:any`) |
+| 7   | Withdraw a `SEPARATED` case                                      | `409 "Only an INITIATED exit case can be withdrawn - ..."` |
+| 8   | Withdraw an already `WITHDRAWN` case                             | `409` (same message) |
+| 9   | Open a new case after withdrawing                                | `201` (endpoint 144) |
+| 10  | Unknown id                                                       | `404` |
+| 11  | No token                                                         | `401` |
+
+## 11. Negative Testing
+
+| Scenario                              | Expected |
+| -------------------------------------- | ---------- |
+| Role with no exit grants               | `403 "You do not have permission to perform this action"` |
+| Non-UUID id                            | `404` |
+| Tampered/expired JWT                   | `401` |
+
+## 12. Edge Cases
+
+| Scenario                                                    | Expected Behavior |
+| ------------------------------------------------------------ | ------------------- |
+| Withdraw and separate fired concurrently                     | Both do a compare-and-set on `INITIATED`; one gets a row count of `1`, the other `0` -> the loser gets `409` (withdraw) / `409 "Only an INITIATED exit case can be separated"` (separate) |
+| Employee's linked user has no live Employee                  | `403` |
+| `:own` caller asking about a non-existent id vs. someone else's | `404` vs. `403` - existence is distinguishable |
+| After withdrawal                                             | Clearance items stay as-is (not cleaned up); employee unaffected (never offboarded) |
+
+## 13. Security Testing
+
+- **BOLA**: as `EMPLOYEE`, withdraw another employee's case; expect `403`.
+- Confirm an employee cannot withdraw a `TERMINATION` or after the last
+  working day.
+
+## 14. Database Impact
+
+`ExitCase.findUnique`, `Employee.findFirst` by `userId` (non-admin), then
+one transaction: `ExitCase.updateMany` (`WHERE id AND status = INITIATED`),
+re-read, and one `AuditLog` row (`UPDATE` / `ExitCase`, before/after).
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/exit-cases/:id/withdraw
+    ↓
+authMiddleware → requirePermission('exitCase:manage:any', 'exitCase:withdraw:own') → 403
+    ↓
+exitCase.controller.withdraw
+    → service.withdrawExitCase(id, actor)
+        ├─ findById → 404
+        ├─ not manage:any → withdraw:own + own employee + RESIGNATION → 403
+        ├─ status !== INITIATED → 409
+        ├─ not manage:any and lastWorkingDay <= todayUtc → 409
+        └─ $transaction: transitionStatus(INITIATED → WITHDRAWN) (0 rows → 409) + re-read + audit
+    ↓
+200 { exitCase }
+```
+
+## 16. Performance Notes
+
+Primary-key reads plus one guarded `UPDATE`.
+
+## 17. Interview Notes
+
+- **Q: Why is withdrawal only allowed while `INITIATED`?** Once the case
+  is `SEPARATED` the employee has been offboarded and their sessions
+  revoked; that is not reversible by flipping a status. ADR-EM03 routes
+  reversal through Identity's existing rehire flow instead.
+- **Q: Why a compare-and-set?** It makes "withdraw vs. separate" a
+  single-winner race without holding locks.
+
+## 18. cURL Examples
+
+```bash
+# EMPLOYEE withdraws their own resignation
+curl -s -X POST "http://localhost:3000/api/v1/exit-cases/$EXIT_CASE_ID/withdraw" \
+  -H "Authorization: Bearer $EMPLOYEE_TOKEN"
+```
+
+```bash
+# ADMIN withdraws any INITIATED case
+curl -s -X POST "http://localhost:3000/api/v1/exit-cases/$EXIT_CASE_ID/withdraw" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## 19. Postman Collection Notes
+
+Use `exitCaseId` from endpoint 144. Test as the owning employee, a different
+employee (`403`), and `ADMIN`; create a fresh case per run since
+`WITHDRAWN` is terminal.
+
+## 20. Testing Checklist
+
+- ✅ Employee can withdraw only their own `RESIGNATION`, and only before the last working day
+- ✅ `ADMIN` can withdraw either type with no date cut-off
+- ✅ Only `INITIATED` cases -> otherwise `409` with the exact message above
+- ✅ Race with separation has exactly one winner
+- ✅ `404` for unknown ids, `401` with no token
+
+---
+
+---
+
+# 150. `POST /exit-cases/:id/separate`
+
+## 1. Endpoint Information
+
+```
+Feature:            Exit Management Domain (2026-09-22, feature/28-exit-management-domain)
+Endpoint:           Separate Employee (offboard)
+Description:        Atomically separates the employee: runs Identity's offboarding primitive, revokes access, syncs asset items and closes the case if fully cleared
+Method:             POST
+URL:                /api/v1/exit-cases/:id/separate
+API Version:        v1
+Module:             modules/exit
+Authentication:     Yes (Bearer access token)
+Authorization:      `exitCase:manage:any`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the moment the employee actually leaves. It is the
+  Exit Orchestration Service's one boundary into Identity (ADR-EM01/EM02):
+  it calls the **unmodified** `employeeService.softDeleteEmployee`, exactly
+  once per case.
+- **Time-based, not clearance-based** (ADR-EM02): allowed only when the
+  case is `INITIATED` **and** `lastWorkingDay <= today (UTC)`. Outstanding
+  clearance items never block it - the employee's access must not depend on
+  a checklist being finished. (Because the comparison is `<=` on the UTC
+  date, separation becomes possible from **00:00 UTC of the last working
+  day itself**.)
+- **One transaction** (`prisma.$transaction`), in this order:
+  1. Compare-and-set `INITIATED -> SEPARATED`, stamping `separatedAt`
+     (and `eligibleForRehire` / `rehireNote` if supplied). Row count 0 ->
+     `409` (another request already moved it). This is what makes the
+     offboarding run exactly once under concurrency.
+  2. Read the employee's currently held assets **inside the transaction,
+     after the compare-and-set** (`getActiveAssignmentsForEmployee(employeeId,
+     tx)`), then `syncAssetReturnItems`: add an `ASSET_RETURN` item for every
+     held asset that does not already have a `PENDING` or `WAIVED` item
+     (`findAssetIdsWithOpenOrWaivedItem`). So an asset handed out after the
+     case was initiated is not missed, an asset whose earlier item is `DONE`
+     but which is held again gets a **fresh** item, and a `WAIVED` (lost)
+     asset is not resurrected as a new pending item. Both points were found
+     by the handbook verification pass and fixed 2026-09-22. A `DONE` item
+     is still not re-verified against Asset Management once set.
+  3. `softDeleteEmployee(employeeId, actor, tx)` - passed the **outer
+     transaction**: sets `Employee.deletedAt`, invalidates the linked
+     user's access tokens (`tokensValidAfter`), revokes **all** their
+     refresh tokens (ADR-006; no-ops if the Employee has no linked user),
+     and writes an `Employee` `DELETE` audit row - all inside this same
+     transaction.
+  4. Resolve the `ACCESS_REVOCATION` item (`PENDING -> DONE`, `resolvedAt`,
+     `resolvedBy` = actor) - the offboarding primitive is what revokes
+     access, so the item closes itself.
+  5. `completeIfResolved`: if no item is still `PENDING`, compare-and-set
+     `SEPARATED -> COMPLETED` (`completedAt` set).
+  6. Re-read the case and write an `ExitCase` `UPDATE` audit row.
+  If any step throws, **nothing commits** - including the offboarding.
+- **Already offboarded case**: if the Employee was already soft-deleted
+  through the direct `DELETE /employees/:id` while the case was open
+  (`employeeRepository.findById` excludes soft-deleted rows), the
+  primitive is **skipped** (it would `404`) and the case simply records the
+  separation.
+- **Body optional**: `separateExitCaseSchema` is `.prefault({})`, so the
+  endpoint works with **no body at all**.
+- **Expected callers**: `ADMIN` (manually), or the sweep (endpoint 146).
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                                        |
+| -------------------------------------- | -------- | ---------------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `exitCase:manage:any`          |
+| `Content-Type: application/json`      | No       | Only when sending the optional body            |
+
+## 4. Path Parameters
+
+| Name | Type   | Description  |
+| ---- | ------ | -------------- |
+| `id` | string | Exit case id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+Optional; `{}` is assumed when omitted.
+
+```json
+{
+  "eligibleForRehire": true,
+  "rehireNote": "Left on good terms"
+}
+```
+
+| Field               | Type    | Required | Notes |
+| ------------------- | ------- | -------- | ----- |
+| `eligibleForRehire` | boolean | No       | Stored as data only (ADR-EM04) |
+| `rehireNote`        | string  | No       | Trimmed, min length 1 |
+
+## 7. Validation Rules
+
+- Zod (`400`): `eligibleForRehire` boolean, `rehireNote` non-empty after
+  trim. Unknown fields are stripped; a missing body is fine.
+- Service: case exists (`404`) -> status `INITIATED` (`409`) ->
+  `lastWorkingDay <= today (UTC)` (`409`).
+- Only supplied rehire fields are written; omitted ones are left untouched.
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "exitCase": {
+    "id": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e",
+    "employeeId": "5e6f4b1a-9c2d-4e3f-8a1b-2c3d4e5f6a7d",
+    "type": "RESIGNATION",
+    "status": "SEPARATED",
+    "initiatedAt": "2026-09-22T10:00:00.000Z",
+    "lastWorkingDay": "2026-10-31T00:00:00.000Z",
+    "reason": "Relocating to another city",
+    "eligibleForRehire": true,
+    "rehireNote": "Left on good terms",
+    "separatedAt": "2026-10-31T00:05:00.000Z",
+    "completedAt": null,
+    "initiatedBy": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+    "createdAt": "2026-09-22T10:00:00.000Z",
+    "updatedAt": "2026-10-31T00:05:00.000Z",
+    "clearanceItems": [ "... ACCESS_REVOCATION now DONE; other items as they were; any newly added ASSET_RETURN items PENDING ..." ]
+  }
+}
+```
+
+`status` is `COMPLETED` (with `completedAt` set) when every clearance item
+was already `DONE`/`WAIVED` at separation.
+
+## 9. Error Responses
+
+| Status | Reason                                       | Response (`message`)                                             | When |
+| ------ | --------------------------------------------- | ------------------------------------------------------------------ | ---- |
+| `400`  | Zod validation failure                        | e.g. `"eligibleForRehire: Invalid input: expected boolean, received string"` | Bad body field |
+| `401`  | Missing/invalid token                         | Same as every other protected endpoint                            | `authMiddleware` failure |
+| `403`  | Caller lacks `exitCase:manage:any`            | `"You do not have permission to perform this action"`             | `MANAGER`, `EMPLOYEE` |
+| `404`  | No such case                                  | `"Exit case not found"`                                           | Unknown/malformed `id` |
+| `404`  | Employee vanished mid-flight                  | `"Employee not found"`                                            | Employee soft-deleted between the pre-read and the transaction; whole transaction rolls back |
+| `409`  | Not `INITIATED` (or lost a race)              | `"Only an INITIATED exit case can be separated"`                  | `SEPARATED`/`COMPLETED`/`WITHDRAWN`, or CAS count 0 |
+| `409`  | Last working day not reached                  | `` `The last working day (${YYYY-MM-DD}) has not arrived yet` `` e.g. `"The last working day (2026-10-31) has not arrived yet"` | `lastWorkingDay > today (UTC)` |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                              | Expected |
+| --- | ------------------------------------------------------------------ | -------- |
+| 1   | `ADMIN`, case with `lastWorkingDay` = today, **no body**           | `200`, `status: SEPARATED` |
+| 2   | Same, body `{ "eligibleForRehire": true, "rehireNote": "..." }`    | `200`, rehire fields stored |
+| 3   | Case with future `lastWorkingDay`                                  | `409 "The last working day (2026-10-31) has not arrived yet"` |
+| 4   | Case with clearance items still `PENDING`                          | `200` - separation is **not** blocked by clearance |
+| 5   | After separation: employee's old access token                      | `401` on next request (tokens invalidated) |
+| 6   | After separation: employee's refresh token                         | Refresh rejected (all refresh tokens revoked) |
+| 7   | After separation: `GET /employees/:id`                             | `404` (soft-deleted) |
+| 8   | After separation: `ACCESS_REVOCATION` item                         | `DONE`, `resolvedBy` = admin id |
+| 9   | Employee now holds an asset with no `ASSET_RETURN` item            | New `PENDING` `ASSET_RETURN` item appears on the case |
+| 10  | All items already `DONE`/`WAIVED` before separating                | `200`, `status: COMPLETED` immediately |
+| 11  | Separate the same case twice                                       | Second call `409 "Only an INITIATED exit case can be separated"` |
+| 12  | Separate a `WITHDRAWN` case                                        | `409` (same message) |
+| 13  | Employee already offboarded via `DELETE /employees/:id`            | `200`; primitive skipped, case `SEPARATED` |
+| 14  | `EMPLOYEE` token                                                   | `403` |
+| 15  | Unknown id                                                         | `404 "Exit case not found"` |
+| 16  | No token                                                           | `401` |
+
+## 11. Negative Testing
+
+| Scenario                              | Expected |
+| -------------------------------------- | ---------- |
+| `eligibleForRehire: "yes"`             | `400` |
+| `rehireNote: ""`                       | `400` |
+| Tampered/expired JWT                   | `401` |
+| Two concurrent separate calls          | One `200`, the other `409` - the offboarding runs once |
+
+## 12. Edge Cases
+
+| Scenario                                                              | Expected Behavior |
+| ---------------------------------------------------------------------- | ------------------- |
+| Employee has no linked user account                                    | Soft-delete happens; session/token revocation is a no-op |
+| Failure in any later step (audit, sync, primitive)                      | Whole transaction rolls back: case stays `INITIATED`, employee not offboarded |
+| Asset assigned to the employee just before separation                   | The held-asset read runs inside the transaction after the compare-and-set, so it is included and a matching `ASSET_RETURN` item is added; the case cannot auto-complete while it is held. Fixed 2026-09-22 (previously read outside the transaction) |
+| Asset returned then re-issued to the same employee mid-case             | The old item is `DONE`, so `syncAssetReturnItems` adds a fresh `PENDING` item. Fixed 2026-09-22 (previously any existing item suppressed it) |
+| Employee soft-deleted between the pre-transaction `Employee` read and the transaction | Known minor point: the `Employee` existence read is still outside the transaction; `softDeleteEmployee` then throws `404 "Employee not found"` and the whole transaction rolls back |
+| `ASSET_RETURN` item `WAIVED` while the asset is still held              | The asset ledger row is never closed; the asset stays `ASSIGNED` to the offboarded employee |
+| Separating a case for the acting `ADMIN`'s own employee                 | Allowed; their own tokens are revoked (no last-admin protection) |
+| Timezone                                                                | "Today" is the UTC date; separation is available from 00:00 UTC of `lastWorkingDay` (start of the last day, not its end) |
+| Case finishes in the same call                                          | `COMPLETED` is reached inside the transaction; no separate audit row for the completion (the single `UPDATE` audit captures the final state) |
+
+## 13. Security Testing
+
+- Confirm the employee's **existing** access token stops working on its next
+  request and their refresh tokens are dead (ADR-006).
+- Confirm `MANAGER`/`EMPLOYEE` cannot call this endpoint.
+- Confirm a future-dated case cannot be separated early (no
+  "force"/override parameter exists).
+
+## 14. Database Impact
+
+One transaction: `ExitCase.updateMany` (CAS `INITIATED -> SEPARATED`),
+`ClearanceItem` read + `createMany` (asset sync), `Employee.update`
+(`deletedAt`), `User.update` (`tokensValidAfter`), `RefreshToken.updateMany`
+(revoke all), `AuditLog` (`DELETE` / `Employee`), `ClearanceItem.updateMany`
+(`ACCESS_REVOCATION` -> `DONE`), `ClearanceItem.count` (pending),
+optionally `ExitCase.updateMany` (CAS `SEPARATED -> COMPLETED`), `ExitCase`
+re-read, `AuditLog` (`UPDATE` / `ExitCase`). Pre-transaction reads:
+`ExitCase`, `Employee`. The active `AssetAssignment` read now runs inside
+the transaction.
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/exit-cases/:id/separate
+    ↓
+authMiddleware → requirePermission('exitCase:manage:any') → 403
+    ↓
+validateMiddleware(separateExitCaseSchema) → 400   (body defaults to {})
+    ↓
+exitCase.controller.separate
+    → service.separateExitCase(id, body, actor)
+        ├─ findById → 404
+        ├─ status !== INITIATED → 409
+        ├─ lastWorkingDay > todayUtc → 409
+        ├─ (outside tx) employeeRepository.findById
+        └─ $transaction:
+             ├─ CAS INITIATED → SEPARATED (0 rows → 409)
+             ├─ getActiveAssignmentsForEmployee(employeeId, tx)
+             ├─ syncAssetReturnItems (skip assets with a PENDING/WAIVED item)
+             ├─ employee exists → employeeService.softDeleteEmployee(id, actor, tx)
+             ├─ resolve ACCESS_REVOCATION → DONE
+             ├─ completeIfResolved (CAS SEPARATED → COMPLETED)
+             └─ re-read + audit
+    ↓
+200 { exitCase }
+```
+
+## 16. Performance Notes
+
+Roughly a dozen statements in one short transaction; no external calls.
+
+## 17. Interview Notes
+
+- **Q: Why is the trigger the date and not "clearance complete"?**
+  ADR-EM02: security must not depend on paperwork. A departing employee's
+  access must end on the agreed day even if a laptop is still
+  outstanding; the checklist then tracks what is left to close.
+- **Q: Why pass the outer transaction into `softDeleteEmployee`?** So the
+  offboarding (soft delete + token revocation + audit) commits or rolls
+  back together with the case's state change. The primitive was changed
+  only to accept an optional trailing `outerTx`; its behaviour for every
+  other caller is unchanged.
+- **Q: How is "exactly once" guaranteed?** The `INITIATED -> SEPARATED`
+  compare-and-set inside the transaction: a concurrent second caller
+  updates zero rows and gets `409` before the primitive runs.
+
+## 18. cURL Examples
+
+```bash
+# No body needed
+curl -s -X POST "http://localhost:3000/api/v1/exit-cases/$EXIT_CASE_ID/separate" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+```bash
+# With a rehire recommendation
+curl -s -X POST "http://localhost:3000/api/v1/exit-cases/$EXIT_CASE_ID/separate" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"eligibleForRehire":true,"rehireNote":"Left on good terms"}'
+```
+
+## 19. Postman Collection Notes
+
+Create a case with `lastWorkingDay` = today (endpoint 144), then run this
+once with no body. Follow with a request as the employee using their old
+token (expect `401`) to verify revocation.
+
+## 20. Testing Checklist
+
+- ✅ Works with no body; only for `INITIATED` cases with `lastWorkingDay <= today (UTC)`
+- ✅ Not blocked by outstanding clearance items
+- ✅ Employee soft-deleted and sessions/refresh tokens revoked in the same transaction
+- ✅ `ACCESS_REVOCATION` item resolved automatically; missing `ASSET_RETURN` items synced from a held-asset read taken inside the transaction (a re-issued asset with a `DONE` item gets a fresh item)
+- ✅ Auto-`COMPLETED` when every item is already resolved
+- ✅ Exactly-once under concurrency (`409` for the loser); full rollback on failure
+- ✅ `403`/`404`/`409`/`401` messages exactly as above
+
+---
+
+---
+
+# 151. `POST /exit-cases/:id/clearance-items`
+
+## 1. Endpoint Information
+
+```
+Feature:            Exit Management Domain (2026-09-22, feature/28-exit-management-domain)
+Endpoint:           Add Clearance Item
+Description:        Adds a custom OTHER-type clearance item to an INITIATED or SEPARATED exit case
+Method:             POST
+URL:                /api/v1/exit-cases/:id/clearance-items
+API Version:        v1
+Module:             modules/exit
+Authentication:     Yes (Bearer access token)
+Authorization:      `exitCase:manage:any`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: the default checklist cannot cover everything (ID
+  card, parking pass, exit interview...). `ADMIN` can append custom
+  items.
+- **Always `type: OTHER`**, `status: PENDING`, no `assetId`; the client
+  cannot choose the type.
+- **Allowed on `INITIATED` and `SEPARATED`** cases only. On a `SEPARATED`
+  case the new `PENDING` item delays completion until it is resolved.
+  `COMPLETED`/`WITHDRAWN` -> `409`.
+- **Returns only the item** (`{ clearanceItem }`), not the case.
+- **Expected callers**: `ADMIN`.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                               |
+| -------------------------------------- | -------- | ------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `exitCase:manage:any` |
+| `Content-Type: application/json`      | **Yes**  |                                       |
+
+## 4. Path Parameters
+
+| Name | Type   | Description  |
+| ---- | ------ | -------------- |
+| `id` | string | Exit case id |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{ "title": "Return company ID card" }
+```
+
+| Field   | Type   | Required | Notes |
+| ------- | ------ | -------- | ----- |
+| `title` | string | **Yes**  | Trimmed, min length 1 |
+
+## 7. Validation Rules
+
+- `title` required and non-empty after trim (`400 "title: Title is
+  required"`; a missing/non-string `title` yields Zod's own message).
+- Case exists (`404`); status `INITIATED` or `SEPARATED` (`409`).
+- No duplicate-title check; the same title can be added repeatedly.
+
+## 8. Successful Response
+
+```
+201 Created
+
+{
+  "clearanceItem": {
+    "id": "f9a0b1c2-d3e4-4f5a-8b6c-7d8e9f0a1b23",
+    "exitCaseId": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e",
+    "type": "OTHER",
+    "title": "Return company ID card",
+    "assetId": null,
+    "status": "PENDING",
+    "waivedReason": null,
+    "resolvedAt": null,
+    "resolvedBy": null,
+    "createdAt": "2026-09-22T12:00:00.000Z",
+    "updatedAt": "2026-09-22T12:00:00.000Z"
+  }
+}
+```
+
+## 9. Error Responses
+
+| Status | Reason                              | Response (`message`)                                              | When |
+| ------ | ------------------------------------ | ------------------------------------------------------------------- | ---- |
+| `400`  | Missing/blank title                  | `"title: Title is required"` (blank string); Zod's own message for a missing/non-string `title` | Bad body |
+| `401`  | Missing/invalid token                | Same as every other protected endpoint                              | `authMiddleware` failure |
+| `403`  | Caller lacks `exitCase:manage:any`   | `"You do not have permission to perform this action"`               | `MANAGER`, `EMPLOYEE` |
+| `404`  | No such case                         | `"Exit case not found"`                                             | Unknown/malformed `id` |
+| `409`  | Case closed                          | `` `Clearance items cannot be added to a ${status} exit case` `` e.g. `"Clearance items cannot be added to a COMPLETED exit case"` | `COMPLETED` or `WITHDRAWN` (including a case that closed after the initial read - the status is re-checked under a row lock) |
+
+## 10. Postman Test Cases
+
+| #   | Case                                        | Expected |
+| --- | -------------------------------------------- | -------- |
+| 1   | `ADMIN`, valid title on `INITIATED` case      | `201`, `type: OTHER`, `PENDING` |
+| 2   | `ADMIN`, valid title on `SEPARATED` case      | `201`; case cannot complete until it is resolved |
+| 3   | `ADMIN`, on `COMPLETED` case                  | `409 "Clearance items cannot be added to a COMPLETED exit case"` |
+| 4   | `ADMIN`, on `WITHDRAWN` case                  | `409 "Clearance items cannot be added to a WITHDRAWN exit case"` |
+| 5   | Blank title                                   | `400 "title: Title is required"` |
+| 6   | `EMPLOYEE` token                              | `403` |
+| 7   | Unknown case id                               | `404 "Exit case not found"` |
+| 8   | No token                                      | `401` |
+
+## 11. Negative Testing
+
+| Scenario                          | Expected |
+| ---------------------------------- | ---------- |
+| `title: "   "`                     | `400` |
+| Missing `title`                    | `400` |
+| `type` supplied in the body        | Ignored (always `OTHER`) |
+| Tampered/expired JWT               | `401` |
+
+## 12. Edge Cases
+
+| Scenario                                                         | Expected Behavior |
+| ----------------------------------------------------------------- | ------------------- |
+| Adding to a `SEPARATED` case                                       | Allowed; the case stays `SEPARATED` until every item (including this one) is resolved |
+| Add races with the case auto-completing / being withdrawn          | The transaction row-locks the case and re-validates its current status, so a case that closed after the initial read is refused with the same `409` (`"Clearance items cannot be added to a COMPLETED exit case"`), never left with a stray `PENDING` item. Fixed 2026-09-22 (previously checked outside the transaction) |
+| Duplicate titles                                                   | Allowed |
+
+## 13. Security Testing
+
+- Confirm only `exitCase:manage:any` can add items; an employee cannot add
+  or remove items on their own case.
+
+## 14. Database Impact
+
+`ExitCase.findUnique`, then one transaction: `SELECT "status" ... FOR UPDATE`
+on the case, `ClearanceItem.create` and one
+`AuditLog` row (`CREATE` / `ClearanceItem`, `afterData` = the item).
+
+## 15. Request Lifecycle
+
+```
+POST /api/v1/exit-cases/:id/clearance-items
+    ↓
+authMiddleware → requirePermission('exitCase:manage:any') → 403
+    ↓
+validateMiddleware(addClearanceItemSchema) → 400
+    ↓
+exitCase.controller.addClearanceItem
+    → service.addClearanceItem(exitCaseId, body, actor)
+        ├─ findById → 404
+        ├─ status not in [INITIATED, SEPARATED] → 409
+        └─ $transaction:
+             ├─ lockStatusById (SELECT … FOR UPDATE) → re-check status → 409
+             └─ ClearanceItem.create + audit
+    ↓
+201 { clearanceItem }
+```
+
+## 16. Performance Notes
+
+Two primary-key operations and an audit insert.
+
+## 17. Interview Notes
+
+- **Q: Why can't the client set the item type?** The `ASSET_RETURN` type
+  is tied to an asset reference and `ACCESS_REVOCATION` is resolved by the
+  offboarding step; letting clients create those would break both
+  invariants, so custom items are always `OTHER`.
+
+## 18. cURL Examples
+
+```bash
+curl -s -X POST "http://localhost:3000/api/v1/exit-cases/$EXIT_CASE_ID/clearance-items" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Return company ID card"}'
+```
+
+## 19. Postman Collection Notes
+
+Use `exitCaseId` from endpoint 144; save `clearanceItem.id` as `itemId` for
+endpoint 152.
+
+## 20. Testing Checklist
+
+- ✅ Creates an `OTHER`, `PENDING` item on `INITIATED`/`SEPARATED` cases
+- ✅ `409` (exact message) on `COMPLETED`/`WITHDRAWN`, including a case that closed mid-request (row lock + re-check)
+- ✅ Blank/missing title -> `400`
+- ✅ `ADMIN` only; `404` for unknown case; `401` with no token
+
+---
+
+---
+
+# 152. `PATCH /exit-cases/:id/clearance-items/:itemId`
+
+## 1. Endpoint Information
+
+```
+Feature:            Exit Management Domain (2026-09-22, feature/28-exit-management-domain)
+Endpoint:           Update Clearance Item (resolve / waive / reopen)
+Description:        Sets a clearance item to PENDING, DONE or WAIVED (with a reason) and completes the case when the last item is resolved
+Method:             PATCH
+URL:                /api/v1/exit-cases/:id/clearance-items/:itemId
+API Version:        v1
+Module:             modules/exit
+Authentication:     Yes (Bearer access token)
+Authorization:      `exitCase:manage:any`
+Public/Protected:   Protected
+```
+
+## 2. Purpose
+
+- **Why it exists**: work the checklist - mark items done, waive the ones
+  that cannot be completed (e.g. a lost laptop), or reopen a mistake.
+- **Statuses**: `PENDING` (reopen), `DONE`, `WAIVED`. `WAIVED` **requires**
+  a `waivedReason` (checked in the service: `400`); `waivedReason` is
+  ignored - and cleared to `null` - for any other status. Resolving
+  (`DONE`/`WAIVED`) stamps `resolvedAt` and `resolvedBy` (actor);
+  `PENDING` clears both.
+- **`ASSET_RETURN` -> `DONE` check against Asset Management**: refused
+  (`409`) while `getCurrentHolder(item.assetId)` shows the asset still
+  held **by this case's employee**. Exit Management only reads that query;
+  it never writes to the asset ledger - record the return in Asset
+  Management (or waive the item). If the asset is now held by someone
+  else, or is unassigned, `DONE` is accepted. The check applies to `DONE`
+  only (not `WAIVED`/`PENDING`), and is a point-in-time read.
+- **`ACCESS_REVOCATION` items cannot be edited while the case is
+  `INITIATED`** (`409`) - they are resolved automatically at separation.
+  Once `SEPARATED`, they can be edited (reopened or waived) like any other.
+- **Completion**: on a `SEPARATED` case, if no item is left `PENDING`
+  after this update, the case moves `SEPARATED -> COMPLETED` (compare-and-
+  set, `completedAt` set) in the same transaction, with an extra `ExitCase`
+  audit row. The response's `exitCaseStatus` reports it. On an `INITIATED`
+  case, completion never happens here.
+- **Frozen once `COMPLETED`/`WITHDRAWN`** (`409`) - so a completed case
+  cannot be "reopened" through an item.
+- **Response** is `{ clearanceItem, exitCaseStatus }`, not the case.
+- **Expected callers**: `ADMIN`.
+
+## 3. Request Headers
+
+| Header                                | Required | Notes                               |
+| -------------------------------------- | -------- | ------------------------------------- |
+| `Authorization: Bearer <accessToken>` | **Yes**  | Must resolve to `exitCase:manage:any` |
+| `Content-Type: application/json`      | **Yes**  |                                       |
+
+## 4. Path Parameters
+
+| Name     | Type   | Description       |
+| -------- | ------ | ------------------- |
+| `id`     | string | Exit case id        |
+| `itemId` | string | Clearance item id (must belong to this case) |
+
+## 5. Query Parameters
+
+None.
+
+## 6. Request Body
+
+```json
+{ "status": "WAIVED", "waivedReason": "Laptop reported lost" }
+```
+
+| Field          | Type   | Required | Notes |
+| -------------- | ------ | -------- | ----- |
+| `status`       | enum   | **Yes**  | `PENDING` \| `DONE` \| `WAIVED` |
+| `waivedReason` | string | Only for `WAIVED` | Trimmed, min length 1; ignored otherwise |
+
+## 7. Validation Rules
+
+- Zod (`400`): `status` in the enum; `waivedReason` non-empty when supplied.
+- Service checks, in this order:
+  1. Case exists (`404 "Exit case not found"`).
+  2. Item exists **and** belongs to this case (`404 "Clearance item not
+     found"`) - an item id from another case is a `404`, not a `403`.
+  3. Case status is `INITIATED` or `SEPARATED` (`409`).
+  4. `ACCESS_REVOCATION` item while `INITIATED` (`409`).
+  5. `WAIVED` without `waivedReason` (`400`) - note this `400` comes after
+     the `404`/`409` checks, because it is a service rule, not Zod.
+  6. `ASSET_RETURN` -> `DONE` while the asset is still held by the
+     employee (`409`).
+
+## 8. Successful Response
+
+```
+200 OK
+
+{
+  "clearanceItem": {
+    "id": "a3b4c5d6-e7f8-4a9b-8c0d-1e2f3a4b5c6d",
+    "exitCaseId": "b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e",
+    "type": "ASSET_RETURN",
+    "title": "Return asset LAP-0042",
+    "assetId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "status": "WAIVED",
+    "waivedReason": "Laptop reported lost",
+    "resolvedAt": "2026-10-31T09:00:00.000Z",
+    "resolvedBy": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+    "createdAt": "2026-09-22T10:00:00.000Z",
+    "updatedAt": "2026-10-31T09:00:00.000Z"
+  },
+  "exitCaseStatus": "SEPARATED"
+}
+```
+
+`exitCaseStatus` is the case's status **after** this call: `INITIATED`,
+`SEPARATED`, or `COMPLETED` when this update resolved the last pending item
+of a `SEPARATED` case.
+
+## 9. Error Responses
+
+| Status | Reason                                              | Response (`message`)                                                                                         | When |
+| ------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---- |
+| `400`  | Zod validation failure                               | e.g. `"status: Invalid option: expected one of \"PENDING\"\|\"DONE\"\|\"WAIVED\""`                             | Bad `status` / empty `waivedReason` |
+| `400`  | `WAIVED` without a reason                            | `"waivedReason: required when waiving a clearance item"`                                                     | Service check |
+| `401`  | Missing/invalid token                                | Same as every other protected endpoint                                                                        | `authMiddleware` failure |
+| `403`  | Caller lacks `exitCase:manage:any`                   | `"You do not have permission to perform this action"`                                                        | `MANAGER`, `EMPLOYEE` |
+| `404`  | No such case                                         | `"Exit case not found"`                                                                                      | Unknown/malformed `id` |
+| `404`  | No such item, or item belongs to another case        | `"Clearance item not found"`                                                                                 | Unknown/foreign `itemId` |
+| `409`  | Case closed                                          | `` `A ${status} exit case can no longer be edited` `` e.g. `"A COMPLETED exit case can no longer be edited"` | `COMPLETED` or `WITHDRAWN`, including a case that closed after the initial read (re-checked under a row lock) |
+| `409`  | Editing the access-revocation item before separation | `"The system access revocation item is resolved automatically at separation"`                                | `ACCESS_REVOCATION` item, case `INITIATED` |
+| `409`  | Asset still assigned to the employee                 | `"This asset is still assigned to the employee - record its return in Asset Management, or waive this item"` | `ASSET_RETURN` -> `DONE` while held |
+
+## 10. Postman Test Cases
+
+| #   | Case                                                                   | Expected |
+| --- | ----------------------------------------------------------------------- | -------- |
+| 1   | `DONE` on a `KNOWLEDGE_TRANSFER` item, `INITIATED` case                 | `200`, `exitCaseStatus: INITIATED` |
+| 2   | `DONE` on `ASSET_RETURN` while the asset is still assigned              | `409 "This asset is still assigned to the employee - ..."` |
+| 3   | Return the asset in Asset Management, then `DONE`                       | `200` |
+| 4   | `WAIVED` with `waivedReason`                                            | `200`, reason stored |
+| 5   | `WAIVED` without `waivedReason`                                         | `400 "waivedReason: required when waiving a clearance item"` |
+| 6   | `PENDING` on a `DONE` item                                              | `200`, `resolvedAt`/`resolvedBy`/`waivedReason` cleared |
+| 7   | `ACCESS_REVOCATION` item on an `INITIATED` case                         | `409 "The system access revocation item is resolved automatically at separation"` |
+| 8   | Resolve the last `PENDING` item on a `SEPARATED` case                   | `200`, `exitCaseStatus: COMPLETED` |
+| 9   | Reopen an item on a `SEPARATED` case, then resolve it again             | `200` both times; case completes on the second |
+| 10  | Any edit on a `COMPLETED`/`WITHDRAWN` case                              | `409 "A COMPLETED exit case can no longer be edited"` (or `WITHDRAWN`) |
+| 11  | `itemId` from a different case                                          | `404 "Clearance item not found"` |
+| 12  | `EMPLOYEE` token                                                        | `403` |
+| 13  | No token                                                                | `401` |
+
+## 11. Negative Testing
+
+| Scenario                              | Expected |
+| -------------------------------------- | ---------- |
+| `status: "APPROVED"`                   | `400` |
+| Missing `status`                       | `400` |
+| `waivedReason: ""`                     | `400` |
+| Unknown `itemId`                       | `404 "Clearance item not found"` |
+| Tampered/expired JWT                   | `401` |
+
+## 12. Edge Cases
+
+| Scenario                                                                | Expected Behavior |
+| ------------------------------------------------------------------------ | ------------------- |
+| `waivedReason` sent with `DONE`                                          | Ignored; stored `waivedReason` becomes `null` |
+| `DONE` on an already-`DONE` item                                         | `200`; `resolvedAt`/`resolvedBy` are refreshed and the completion check re-runs |
+| Asset returned in Asset Management but the item still `PENDING`          | Not auto-resolved - an admin must mark it `DONE` (the check then passes) |
+| Asset re-assigned to the employee **after** the item was marked `DONE`   | The item stays `DONE`; the check only runs at the moment of the update |
+| Two concurrent updates resolving the last two `PENDING` items            | The transaction row-locks the case (`SELECT ... FOR UPDATE`), so the two updates serialize and the second sees the first's item: exactly one of them completes the case (`exitCaseStatus: COMPLETED`). Fixed 2026-09-22 (previously neither completed it and the case stayed `SEPARATED` with nothing pending) |
+| Update races with the case completing or being withdrawn                 | The current status is re-read under the row lock; a case that closed after the initial read is refused with `409` `"A COMPLETED exit case can no longer be edited"` (or `WITHDRAWN`). `exitCaseStatus` in the response reflects the locked, current status. Fixed 2026-09-22 |
+| `ASSET_RETURN` -> `DONE` holder check                                    | Known minor point: the `getCurrentHolder` read is a point-in-time read taken before the transaction |
+| `ACCESS_REVOCATION` item after separation                                | Editable: can be reopened (blocks completion) or waived |
+| Completing through this endpoint                                         | Writes an extra `ExitCase` `UPDATE` audit row (`PENDING`-count == 0); `completedAt` is set |
+
+## 13. Security Testing
+
+- Confirm only `exitCase:manage:any` can resolve items; the employee cannot
+  mark their own items done.
+- Confirm an `itemId` from case A cannot be edited through case B's URL.
+- Confirm an `ASSET_RETURN` item cannot be marked `DONE` while the asset is
+  still assigned to the employee.
+
+## 14. Database Impact
+
+`ExitCase.findUnique`, `ClearanceItem.findUnique`, `AssetAssignment`
+(current holder, for `ASSET_RETURN` -> `DONE`), then one transaction:
+`SELECT "status" ... FOR UPDATE` on the case, `ClearanceItem.update`, `AuditLog` (`UPDATE` / `ClearanceItem`), and - on a
+`SEPARATED` case - `ClearanceItem.count` (pending) plus, when zero,
+`ExitCase.updateMany` (CAS `SEPARATED -> COMPLETED`), re-read and a second
+`AuditLog` (`UPDATE` / `ExitCase`).
+
+## 15. Request Lifecycle
+
+```
+PATCH /api/v1/exit-cases/:id/clearance-items/:itemId
+    ↓
+authMiddleware → requirePermission('exitCase:manage:any') → 403
+    ↓
+validateMiddleware(updateClearanceItemSchema) → 400
+    ↓
+exitCase.controller.updateClearanceItem
+    → service.updateClearanceItem(exitCaseId, itemId, body, actor)
+        ├─ findById (case) → 404
+        ├─ clearance item findById, must belong to case → 404
+        ├─ case not INITIATED/SEPARATED → 409
+        ├─ ACCESS_REVOCATION while INITIATED → 409
+        ├─ WAIVED without waivedReason → 400
+        ├─ ASSET_RETURN + DONE → assetAssignmentService.getCurrentHolder → 409 if held by employee
+        └─ $transaction:
+             ├─ lockStatusById (SELECT … FOR UPDATE) → not INITIATED/SEPARATED → 409
+             └─ item update + audit; SEPARATED → completeIfResolved (+ audit)
+    ↓
+200 { clearanceItem, exitCaseStatus }
+```
+
+## 16. Performance Notes
+
+A handful of primary-key reads/updates; the completion check is one indexed
+`count` on `ClearanceItem_exitCaseId_idx`.
+
+## 17. Interview Notes
+
+- **Q: Why does marking an asset item `DONE` consult Asset Management
+  instead of just trusting the admin?** Exit Management reads Asset
+  Management's exposed query (never its tables) so the checklist cannot
+  claim "returned" while the ledger says the employee still holds it; the
+  escape hatch for genuinely lost items is an explicit, reasoned `WAIVED`.
+- **Q: Why does completion live here and not on a schedule?** Completion is
+  purely a function of the checklist (`SEPARATED` + nothing `PENDING`), so
+  it is evaluated whenever a checklist change could make it true - and at
+  separation itself.
+
+## 18. cURL Examples
+
+```bash
+# Mark done
+curl -s -X PATCH "http://localhost:3000/api/v1/exit-cases/$EXIT_CASE_ID/clearance-items/$ITEM_ID" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"DONE"}'
+```
+
+```bash
+# Waive with a reason
+curl -s -X PATCH "http://localhost:3000/api/v1/exit-cases/$EXIT_CASE_ID/clearance-items/$ITEM_ID" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"WAIVED","waivedReason":"Laptop reported lost"}'
+```
+
+## 19. Postman Collection Notes
+
+Use `exitCaseId` and the `itemId*` values saved from endpoints 144/151.
+Drive a `SEPARATED` case (endpoint 150) to `COMPLETED` by resolving each
+`PENDING` item in turn and assert the final response's `exitCaseStatus`.
+
+## 20. Testing Checklist
+
+- ✅ `DONE` / `WAIVED` / `PENDING` transitions stamp or clear `resolvedAt`, `resolvedBy`, `waivedReason` correctly
+- ✅ `WAIVED` requires `waivedReason` (`400` with the exact message)
+- ✅ `ASSET_RETURN` -> `DONE` refused while Asset Management shows the employee still holding it
+- ✅ `ACCESS_REVOCATION` item locked while `INITIATED`, editable after separation
+- ✅ Last resolved item on a `SEPARATED` case -> `exitCaseStatus: COMPLETED`; two concurrent last-item updates still complete it exactly once (row lock)
+- ✅ `COMPLETED`/`WITHDRAWN` frozen; foreign `itemId` -> `404`; `403` non-admin; `401` no token

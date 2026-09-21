@@ -12,7 +12,7 @@ Every ADR produced across every domain sign-off, in dependency order. Full reaso
 ## Identity & Employee Lifecycle
 Full ADR set lives in [[domain-identity-employee-lifecycle]]; the most load-bearing for later domains:
 - **ADR-004** — Employee Lifecycle Service. Accepted; **onboarding half Implemented (2026-09-16)**, built during Recruitment's domain pass as `employeeOnboarding.service.js` since Recruitment's Hire Orchestration Service needed a real target. Scoped to onboarding only — the §5 "one service or two" question (onboarding+offboarding together, or separate) remains open; offboarding stays exactly where ADR-006 already put it.
-- **ADR-006** — Offboarding Revokes Access by Default. **Accepted; Implemented (2026-09-13)**, scoped to session/token revocation — `softDeleteEmployee` now stamps `User.tokensValidAfter` and revokes all of the linked user's refresh tokens, transactionally. Does not prevent a fresh re-login (see ADR-007). Relied upon by Exit Management's ADR-EM02, whose dependency is now satisfied.
+- **ADR-006** — Offboarding Revokes Access by Default. **Accepted; Implemented (2026-09-13)**, scoped to session/token revocation — `softDeleteEmployee` now stamps `User.tokensValidAfter` and revokes all of the linked user's refresh tokens, transactionally. Does not prevent a fresh re-login (see ADR-007). Relied upon by Exit Management's ADR-EM02, whose dependency is now satisfied. (The code had only ever lived on the unmerged branch `security/offboarding-access-revocation`; it reached `main` on 2026-09-22, cherry-picked with Exit Management.)
 - **ADR-007** — Deferred: User Account Status. No `isActive`/status field exists on `User`; `login()` has no status check. Still deferred — no verified requirement forces this yet; ADR-006's implementation deliberately did not resurrect it.
 
 ## Branch — [[domain-branch]]
@@ -150,11 +150,14 @@ Full ADR set lives in [[domain-identity-employee-lifecycle]]; the most load-bear
 ## Exit Management — [[domain-exit-management]]
 | ADR | Summary | Status |
 |---|---|---|
-| EM01 | Exit Management as the structural mirror of Recruitment | Accepted |
-| EM02 | Separation trigger (Identity's offboarding primitive) decoupled from clearance completion — time-based, not administrative | Accepted |
-| EM03 | Post-separation reversal uses Identity's existing rehire flow; no second undo mechanism | Accepted |
-| EM04 | `eligibleForRehire` flag built now | Accepted |
-| EM05 | Final settlement blocked on Leave's LV06 | **Deferred — Open** |
+| EM01 | Exit Management as the structural mirror of Recruitment | Accepted; Implemented (2026-09-22) — `ExitCase`/`ClearanceItem`, one orchestration service, Identity's primitive unmodified apart from an optional trailing `outerTx` |
+| EM02 | Separation trigger (Identity's offboarding primitive) decoupled from clearance completion — time-based, not administrative | Accepted; Implemented (2026-09-22) — `separate` refuses before `lastWorkingDay` and ignores clearance state; ADR-006 (never merged before) cherry-picked as a prerequisite |
+| EM03 | Post-separation reversal uses Identity's existing rehire flow; no second undo mechanism | Accepted; Implemented (2026-09-22) — `WITHDRAWN` only from `INITIATED` |
+| EM04 | `eligibleForRehire` flag built now | Accepted; Implemented (2026-09-22) — stored as data, no enforcement yet |
+| EM05 | Final settlement blocked on Leave's LV06 | **Deferred — Open** (manual `FINAL_SETTLEMENT` clearance item only; Payroll gap for separated employees noted) |
+| EM06 | Permission scoping | Accepted; Implemented (2026-09-22) — `ADMIN`-only for termination/manage; `create:own`/`read:own`/`withdraw:own` for employees; no `MANAGER` reports-visibility |
+| EM07 | Separation mechanics: explicit `separate` + `process-due` sweep (no scheduler), atomic transaction, already-offboarded handling | Accepted; Implemented (2026-09-22) |
+| EM08 | Clearance checklist mechanics (asset check against Asset Management, waive with reason, auto-complete) | Accepted; Implemented (2026-09-22) |
 
 ## All Open / Deferred ADRs Requiring Resolution Before Full Implementation
 

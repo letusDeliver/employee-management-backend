@@ -32,6 +32,8 @@ model User {
   uploadedEnrollmentDocuments EnrollmentDocument[] @relation("EnrollmentDocumentUploader")
   assignedAssets              AssetAssignment[]    @relation("AssetAssigner")
   returnedAssets              AssetAssignment[]    @relation("AssetReturner")
+  initiatedExitCases          ExitCase[]           @relation("ExitCaseInitiator")
+  resolvedClearanceItems      ClearanceItem[]      @relation("ClearanceItemResolver")
 }
 
 model RefreshToken {
@@ -146,6 +148,7 @@ model Employee {
   hiredViaApplication          Application?
   enrollments                  Enrollment[]
   assetAssignments             AssetAssignment[]
+  exitCases                    ExitCase[]
 
   // No @unique on userId: Prisma's schema DSL can't express a *partial*
   // unique constraint (scoped to non-deleted rows), so the real
@@ -935,14 +938,15 @@ enum AssetStatus {
 }
 
 model Asset {
-  id          String            @id @default(uuid())
-  assetTag    String            @unique
-  type        String
-  description String?
-  status      AssetStatus       @default(AVAILABLE)
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  assignments AssetAssignment[]
+  id             String            @id @default(uuid())
+  assetTag       String            @unique
+  type           String
+  description    String?
+  status         AssetStatus       @default(AVAILABLE)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  assignments    AssetAssignment[]
+  clearanceItems ClearanceItem[]
 
   @@index([status])
 }
@@ -977,6 +981,94 @@ model AssetAssignment {
 
   @@index([assetId])
   @@index([employeeId])
+}
+
+// Exit Management (docs/domain-exit-management.md). The rich pre-separation
+// process surrounding Identity's unmodified offboarding primitive
+// (softDeleteEmployee) - the structural mirror of Recruitment (ADR-EM01).
+// INITIATED->SEPARATED happens only when lastWorkingDay has arrived (a time-
+// based trigger, deliberately NOT clearance completion, ADR-EM02);
+// SEPARATED->COMPLETED once every clearance item is DONE or WAIVED.
+// WITHDRAWN is only reachable while INITIATED - after separation, reversal is
+// Identity's existing rehire flow, not a second undo mechanism (ADR-EM03).
+enum ExitCaseType {
+  RESIGNATION
+  TERMINATION
+}
+
+enum ExitCaseStatus {
+  INITIATED
+  SEPARATED
+  COMPLETED
+  WITHDRAWN
+}
+
+// Never deleted (a personnel/compliance record, no delete endpoint), so
+// Restrict on employeeId, same reasoning as Payslip/Enrollment. "At most one
+// open (INITIATED or SEPARATED) case per Employee" is a hand-added partial
+// unique index in the migration SQL, which Prisma's schema DSL cannot express.
+// lastWorkingDay is a calendar date (UTC), set explicitly per case - no
+// notice-period policy engine (ADR-EM05 area, deferred).
+model ExitCase {
+  id                String          @id @default(uuid())
+  employeeId        String
+  employee          Employee        @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  type              ExitCaseType
+  status            ExitCaseStatus  @default(INITIATED)
+  initiatedAt       DateTime        @default(now())
+  lastWorkingDay    DateTime        @db.Date
+  reason            String?
+  // ADR-EM04 - decided around separation; stored as data only, no hiring
+  // code enforces it yet.
+  eligibleForRehire Boolean?
+  rehireNote        String?
+  separatedAt       DateTime?
+  completedAt       DateTime?
+  initiatedBy       String?
+  initiator         User?           @relation("ExitCaseInitiator", fields: [initiatedBy], references: [id], onDelete: SetNull)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  clearanceItems    ClearanceItem[]
+
+  @@index([employeeId])
+  @@index([status])
+}
+
+enum ClearanceItemType {
+  ASSET_RETURN
+  KNOWLEDGE_TRANSFER
+  FINAL_SETTLEMENT
+  ACCESS_REVOCATION
+  OTHER
+}
+
+enum ClearanceItemStatus {
+  PENDING
+  DONE
+  WAIVED
+}
+
+// Child of ExitCase (aggregate-internal, Cascade). assetId is a read-only
+// reference to Asset Management (never ownership) for ASSET_RETURN items;
+// Restrict so a referenced asset cannot vanish from under the record.
+model ClearanceItem {
+  id           String              @id @default(uuid())
+  exitCaseId   String
+  exitCase     ExitCase            @relation(fields: [exitCaseId], references: [id], onDelete: Cascade)
+  type         ClearanceItemType
+  title        String
+  assetId      String?
+  asset        Asset?              @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  status       ClearanceItemStatus @default(PENDING)
+  waivedReason String?
+  resolvedAt   DateTime?
+  resolvedBy   String?
+  resolver     User?               @relation("ClearanceItemResolver", fields: [resolvedBy], references: [id], onDelete: SetNull)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@index([exitCaseId])
+  @@index([assetId])
 }
 
 model EmployeeDocument {

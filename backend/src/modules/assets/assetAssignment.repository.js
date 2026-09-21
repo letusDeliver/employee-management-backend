@@ -16,8 +16,8 @@ const findActiveByAssetId = (assetId, client = prisma) => {
   return client.assetAssignment.findFirst({ where: { assetId, returnedAt: null }, include });
 };
 
-const findAllActiveByEmployeeId = (employeeId) => {
-  return prisma.assetAssignment.findMany({
+const findAllActiveByEmployeeId = (employeeId, client = prisma) => {
+  return client.assetAssignment.findMany({
     where: { employeeId, returnedAt: null },
     orderBy: [{ assignedAt: 'desc' }, { id: 'asc' }],
     include,

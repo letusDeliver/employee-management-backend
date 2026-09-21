@@ -537,7 +537,13 @@ default checkbox.
 **ADR-006 — Offboarding Revokes Access by Default**
 Status: Accepted; **Implemented** (2026-09-13, branch
 `security/offboarding-access-revocation`) — scoped to session/token
-revocation only; see the scoping note below.
+revocation only; see the scoping note below. **Reached `main` on 2026-09-22:**
+that branch was never merged, so `main`'s `softDeleteEmployee` did not
+actually revoke access until the commit was cherry-picked into Exit
+Management's branch as a prerequisite of its separation trigger (ADR-EM02).
+`softDeleteEmployee` also gained an optional trailing `outerTx` parameter
+then, so Exit Management can run it inside its own transaction; behavior is
+unchanged when it is omitted.
 Summary: Soft-deleting an Employee with a linked `User` now, in the same
 transaction as the soft-delete, stamps `User.tokensValidAfter` (reusing the
 existing mechanism `auth.service.js`'s `logout()` already relied on) and

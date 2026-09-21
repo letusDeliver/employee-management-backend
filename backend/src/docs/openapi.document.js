@@ -27,6 +27,7 @@ import '../modules/training/trainingProgram.docs.js';
 import '../modules/training/enrollment.docs.js';
 import '../modules/assets/asset.docs.js';
 import '../modules/assets/assetAssignment.docs.js';
+import '../modules/exit/exitCase.docs.js';
 
 // Import order matters: every *.docs.js file must finish calling
 // registry.registerPath() (a side effect of import) before

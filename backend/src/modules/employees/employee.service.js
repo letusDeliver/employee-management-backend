@@ -276,14 +276,19 @@ const updateEmployee = async (id, data, actor) => {
   }
 };
 
-const softDeleteEmployee = async (id, actor) => {
+// `outerTx` is optional: Exit Management's separation (ADR-EM02) needs the
+// soft-delete, access revocation and its own ExitCase state change to be one
+// all-or-nothing transaction, so it passes its own - the same optional
+// trailing-transaction convention employeeOnboarding.service.js uses. Behavior
+// is unchanged when it is omitted.
+const softDeleteEmployee = async (id, actor, outerTx) => {
   const employee = await employeeRepository.findById(id);
 
   if (!employee) {
     throw new NotFoundError('Employee not found');
   }
 
-  await prisma.$transaction(async (tx) => {
+  const run = async (tx) => {
     await employeeRepository.softDelete(id, tx);
 
     // ADR-006: offboarding revokes access by default. Mirrors logout()'s own
@@ -310,7 +315,14 @@ const softDeleteEmployee = async (id, actor) => {
       },
       tx,
     );
-  });
+  };
+
+  if (outerTx) {
+    await run(outerTx);
+    return;
+  }
+
+  await prisma.$transaction(run);
 };
 
 export default {

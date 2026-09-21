@@ -530,6 +530,54 @@ export const AssetAssignmentSchema = z
   })
   .meta({ id: 'AssetAssignment' });
 
+export const ClearanceItemSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'a3b4c5d6-e7f8-4a9b-8c0d-1e2f3a4b5c6d' }),
+    exitCaseId: z.uuid().meta({ example: 'b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e' }),
+    type: z
+      .enum(['ASSET_RETURN', 'KNOWLEDGE_TRANSFER', 'FINAL_SETTLEMENT', 'ACCESS_REVOCATION', 'OTHER'])
+      .meta({ example: 'ASSET_RETURN' }),
+    title: z.string().meta({ example: 'Return asset LAP-0042' }),
+    assetId: z.uuid().nullable().meta({
+      example: 'e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b',
+      description: 'Read-only reference to Asset Management; set only for ASSET_RETURN items',
+    }),
+    status: z.enum(['PENDING', 'DONE', 'WAIVED']).meta({ example: 'PENDING' }),
+    waivedReason: z.string().nullable().meta({ example: null }),
+    resolvedAt: z.iso.datetime().nullable().meta({ example: null }),
+    resolvedBy: z.uuid().nullable().meta({ example: null }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-22T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-22T10:00:00.000Z' }),
+  })
+  .meta({ id: 'ClearanceItem' });
+
+export const ExitCaseSchema = z
+  .object({
+    id: z.uuid().meta({ example: 'b4c5d6e7-f8a9-4b0c-9d1e-2f3a4b5c6d7e' }),
+    employeeId: z.uuid().meta({ example: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    type: z.enum(['RESIGNATION', 'TERMINATION']).meta({ example: 'RESIGNATION' }),
+    status: z.enum(['INITIATED', 'SEPARATED', 'COMPLETED', 'WITHDRAWN']).meta({
+      example: 'INITIATED',
+    }),
+    initiatedAt: z.iso.datetime().meta({ example: '2026-09-22T10:00:00.000Z' }),
+    lastWorkingDay: z.iso.datetime().meta({
+      example: '2026-10-31T00:00:00.000Z',
+      description: 'A calendar date (UTC midnight)',
+    }),
+    reason: z.string().nullable().meta({ example: null }),
+    eligibleForRehire: z.boolean().nullable().meta({ example: null }),
+    rehireNote: z.string().nullable().meta({ example: null }),
+    separatedAt: z.iso.datetime().nullable().meta({ example: null }),
+    completedAt: z.iso.datetime().nullable().meta({ example: null }),
+    initiatedBy: z.uuid().nullable().meta({ example: null }),
+    clearanceItems: z.array(ClearanceItemSchema).optional().meta({
+      description: 'Present on single-case reads and mutations; omitted from list rows',
+    }),
+    createdAt: z.iso.datetime().meta({ example: '2026-09-22T10:00:00.000Z' }),
+    updatedAt: z.iso.datetime().meta({ example: '2026-09-22T10:00:00.000Z' }),
+  })
+  .meta({ id: 'ExitCase' });
+
 export const PaginationMetaSchema = z
   .object({
     page: z.int().meta({ example: 1 }),

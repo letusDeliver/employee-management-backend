@@ -682,6 +682,48 @@ const PERMISSIONS = [
     scope: 'any',
     description: 'Read any asset assignment, current holder and custody history',
   },
+  {
+    key: 'exitCase:create:own',
+    resource: 'exitCase',
+    action: 'create',
+    scope: 'own',
+    description: "Initiate the caller's own voluntary resignation",
+  },
+  {
+    key: 'exitCase:create:any',
+    resource: 'exitCase',
+    action: 'create',
+    scope: 'any',
+    description: 'Initiate a resignation or termination exit case for any employee',
+  },
+  {
+    key: 'exitCase:read:own',
+    resource: 'exitCase',
+    action: 'read',
+    scope: 'own',
+    description: "Read the caller's own exit case and clearance checklist only",
+  },
+  {
+    key: 'exitCase:read:any',
+    resource: 'exitCase',
+    action: 'read',
+    scope: 'any',
+    description: 'Read any exit case, including listing across employees',
+  },
+  {
+    key: 'exitCase:manage:any',
+    resource: 'exitCase',
+    action: 'manage',
+    scope: 'any',
+    description: 'Edit, withdraw, separate and run the due-separation sweep; manage clearance items',
+  },
+  {
+    key: 'exitCase:withdraw:own',
+    resource: 'exitCase',
+    action: 'withdraw',
+    scope: 'own',
+    description: "Withdraw the caller's own resignation before the last working day",
+  },
 ];
 
 const ROLE_PERMISSIONS = {
@@ -778,6 +820,12 @@ const ROLE_PERMISSIONS = {
     'assetAssignment:return',
     'assetAssignment:read:own',
     'assetAssignment:read:any',
+    'exitCase:create:own',
+    'exitCase:create:any',
+    'exitCase:read:own',
+    'exitCase:read:any',
+    'exitCase:manage:any',
+    'exitCase:withdraw:own',
   ],
   MANAGER: [
     'employee:create',
@@ -815,6 +863,9 @@ const ROLE_PERMISSIONS = {
     'enrollment:read:own',
     'enrollment:withdraw:own',
     'assetAssignment:read:own',
+    'exitCase:create:own',
+    'exitCase:read:own',
+    'exitCase:withdraw:own',
   ],
   EMPLOYEE: [
     'employee:read:own',
@@ -840,6 +891,9 @@ const ROLE_PERMISSIONS = {
     'enrollment:read:own',
     'enrollment:withdraw:own',
     'assetAssignment:read:own',
+    'exitCase:create:own',
+    'exitCase:read:own',
+    'exitCase:withdraw:own',
   ],
 };
 
@@ -878,7 +932,7 @@ const seedRolesAndGrants = async () => {
 const main = async () => {
   await seedPermissions();
   await seedRolesAndGrants();
-  console.log('Seed complete: 3 system roles, 96 permissions, role-permission grants.');
+  console.log('Seed complete: 3 system roles, 102 permissions, role-permission grants.');
 };
 
 main()

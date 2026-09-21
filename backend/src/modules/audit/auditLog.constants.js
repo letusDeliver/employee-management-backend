@@ -34,4 +34,6 @@ export const AUDIT_ENTITY_TYPES = Object.freeze({
   ENROLLMENT_DOCUMENT: 'EnrollmentDocument',
   ASSET: 'Asset',
   ASSET_ASSIGNMENT: 'AssetAssignment',
+  EXIT_CASE: 'ExitCase',
+  CLEARANCE_ITEM: 'ClearanceItem',
 });

@@ -254,6 +254,15 @@ All routes are mounted under `/api/v1`.
 | `GET`    | `/assets/:id/assignments`              | Access token, `assetAssignment:read:any` (ADMIN only) | Full custody history of an Asset |
 | `GET`    | `/asset-assignments`                   | Access token, `assetAssignment:read:own` or `:read:any` | List assignments — filter by `employeeId`/`assetId`/`active`; a `:read:own`-only caller is auto-scoped to their own employee record |
 | `GET`    | `/asset-assignments/:id`               | Access token, `assetAssignment:read:own` or `:read:any` | Get one assignment (`:own` callers only their own) |
+| `POST`   | `/exit-cases`                          | Access token, `exitCase:create:own` or `:create:any` | Initiate an Exit Case — an employee starts their own `RESIGNATION`; `TERMINATION` or another employee needs `:create:any` (ADMIN). Creates the default clearance checklist |
+| `GET`    | `/exit-cases`                          | Access token, `exitCase:read:own` or `:read:any` | List Exit Cases — filter by `employeeId`/`type`/`status`; a `:read:own`-only caller is auto-scoped to their own employee record |
+| `POST`   | `/exit-cases/process-due`              | Access token, `exitCase:manage:any` (ADMIN only) | Separate every `INITIATED` case whose last working day has arrived (system-wide sweep; no scheduler exists yet) |
+| `GET`    | `/exit-cases/:id`                      | Access token, `exitCase:read:own` or `:read:any` | Get one Exit Case with its clearance items (`:own` callers only their own) |
+| `PATCH`  | `/exit-cases/:id`                      | Access token, `exitCase:manage:any` (ADMIN only) | Update a case — `lastWorkingDay` only while `INITIATED`; `eligibleForRehire`/`rehireNote`/`reason` until `COMPLETED` |
+| `POST`   | `/exit-cases/:id/withdraw`             | Access token, `exitCase:manage:any` or `exitCase:withdraw:own` | Withdraw a case while `INITIATED` — an employee only their own resignation, only before the last working day |
+| `POST`   | `/exit-cases/:id/separate`             | Access token, `exitCase:manage:any` (ADMIN only) | Separate the employee — invokes Identity's offboarding (soft-delete + session/token revocation) once the last working day has arrived; body optional |
+| `POST`   | `/exit-cases/:id/clearance-items`      | Access token, `exitCase:manage:any` (ADMIN only) | Add a custom (`OTHER`) clearance item |
+| `PATCH`  | `/exit-cases/:id/clearance-items/:itemId` | Access token, `exitCase:manage:any` (ADMIN only) | Mark an item `DONE`/`WAIVED` (with reason)/reopen it; the last resolved item completes a `SEPARATED` case |
 
 `POST`/`PATCH /employees` also accept an optional `branchId`, validated
 against Branch's positive-allowlist rule (must exist and be `ACTIVE`).
@@ -423,6 +432,37 @@ status change and two audit rows in one transaction. Mutations are flat
 `assetAssignmentService.getCurrentHolder` / `getActiveAssignmentsForEmployee`
 are the two reusable queries the future Exit Management domain will consume.
 No financial/depreciation fields (deferred, ADR-AM04).
+
+**New domain (2026-09-22):** Exit Management (`docs/domain-exit-management.md`)
+— the structural mirror of Recruitment: a rich pre-separation process
+(`ExitCase` with a `ClearanceItem` checklist) surrounding Identity's
+minimal, unmodified offboarding primitive. `ExitCase.status` is a guarded
+machine (`INITIATED → SEPARATED → COMPLETED`, `WITHDRAWN` only from
+`INITIATED`; after separation, reversal is a rehire, not a withdrawal). The
+central decision (ADR-EM02): the offboarding primitive runs when
+`lastWorkingDay` arrives — never because clearance finished — so a slow
+laptop return cannot extend a departed employee's system access. Since no
+scheduler exists in this project, that trigger is `POST
+/exit-cases/:id/separate` (refuses before the date) plus `POST
+/exit-cases/process-due`, a sweep a future cron can call. Separation is one
+transaction: compare-and-set `INITIATED → SEPARATED`, the unmodified
+`softDeleteEmployee` (soft-delete plus revocation of the linked account's
+access and refresh tokens, ADR-006) run inside that same transaction, the
+access-revocation clearance item resolved, and auto-completion if nothing is
+pending. Each case starts with clearance items for every asset the employee
+holds (read from Asset Management's `getActiveAssignmentsForEmployee`),
+knowledge transfer, final settlement and access revocation; an asset item
+cannot be marked `DONE` while Asset Management still shows it held (record
+the return there, or waive it with a reason). At most one open case per
+employee (service check plus a hand-added partial unique index). Employees
+initiate/withdraw only their own resignation and read only their own case;
+terminations and everything else are `ADMIN`-only (no HR role exists).
+**Prerequisite merged with it:** ADR-006's access revocation had only ever
+lived on the unmerged branch `security/offboarding-access-revocation` and
+was cherry-picked in. Final-settlement calculation stays open (blocked on
+Leave's encashment policy, ADR-LV06), `eligibleForRehire` is stored but not
+yet enforced anywhere, and a departed employee is excluded from
+`processPayrollRun` (a known Payroll follow-up).
 
 **Breaking change (2026-09-13):** Employee's free-text `department`
 (`String`) field was removed and replaced by a **mandatory**

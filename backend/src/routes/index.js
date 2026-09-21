@@ -26,6 +26,7 @@ import trainingProgramRouter from '../modules/training/trainingProgram.routes.js
 import enrollmentRouter, { trainingComplianceRouter } from '../modules/training/enrollment.routes.js';
 import assetRouter from '../modules/assets/asset.routes.js';
 import assetAssignmentRouter from '../modules/assets/assetAssignment.routes.js';
+import exitCaseRouter from '../modules/exit/exitCase.routes.js';
 
 const router = Router();
 
@@ -53,6 +54,7 @@ router.use('/enrollments', enrollmentRouter);
 router.use('/training-compliance', trainingComplianceRouter);
 router.use('/assets', assetRouter);
 router.use('/asset-assignments', assetAssignmentRouter);
+router.use('/exit-cases', exitCaseRouter);
 
 router.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });

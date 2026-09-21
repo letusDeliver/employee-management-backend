@@ -176,8 +176,11 @@ const getCurrentHolder = async (assetId) => {
   return assetAssignmentRepository.findActiveByAssetId(assetId);
 };
 
-const getActiveAssignmentsForEmployee = (employeeId) => {
-  return assetAssignmentRepository.findAllActiveByEmployeeId(employeeId);
+// `client` is optional so a consumer running its own transaction (Exit
+// Management's separation) reads the ledger inside it rather than from a
+// snapshot taken before it opened.
+const getActiveAssignmentsForEmployee = (employeeId, client) => {
+  return assetAssignmentRepository.findAllActiveByEmployeeId(employeeId, client);
 };
 
 const listAssignmentHistory = async (assetId) => {
