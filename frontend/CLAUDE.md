@@ -123,6 +123,8 @@ EmployeeListPageComponent` automatically — verified live during Feature
 - [x] Feature 4 — Account: self-service profile view, profile picture upload/delete
 - [x] Feature 5 — Users: admin-only, read-only user list (search + client-side sort)
 - [x] Feature 6 — Employees: full CRUD, documents, first real `DataTableComponent`
+- [x] Feature 7 — Branch: master-data CRUD, first domain of the HRMS
+  domain-by-domain rollout (14 backend domains with no frontend yet)
 
 _(Feature 0 — Angular Project Initialization — completed, on the
 `frontend` branch. Scaffolded via `npx @angular/cli@21.2.19 new frontend`
@@ -1251,3 +1253,117 @@ an Employees record's linked-user name still resolving correctly after
 `UserDirectoryService`'s `limit=100` change. `ng build`/`ng lint` clean
 throughout. See `backend/CLAUDE.md`'s matching entry for the server-side
 half of this pass, including the case-insensitive role-filter fix.)_
+
+_(Feature 7 — Branch — 2026-09-22, on the `frontend` branch. First
+feature of a new phase: all 15 backend HRMS domains are now implemented
+(`backend/CLAUDE.md`, `489cbd7`), 14 of them with zero frontend. Rather
+than continue treating frontend work as open-ended "enhancement phase"
+(v9's framing), it now follows a deliberate domain-by-domain rollout -
+see the new `.claude/skills/implement-frontend-domain/SKILL.md` for the
+full order and process, and `docs/frontend-architecture-blueprint.md`'s
+v11 for the architectural summary this entry expands on.
+
+**Real, verified finding from recon, before any code**: Employee
+create/edit (Feature 6) is currently broken against the real backend.
+`employee.dto.ts`/`employee.model.ts` still model `department`/`jobTitle`
+as free-text strings; the backend has since migrated
+`Employee.departmentId`/`designationId` to mandatory governed-master-data
+foreign keys (`backend/prisma/schema.prisma`, migrations
+`add_department_contract`/`add_designation_contract`), added a mandatory
+`employmentType` enum, and optional `branchId`/`shiftId`. This is why
+master data (Branch, Department, Designation, Shift) is first in the
+rollout - fixing Employee's form needs real data to populate those
+selects from, and is scoped as that wave's explicit capstone step, not a
+separate later task.
+
+**Branch itself** (`features/branches/`) is the simplest domain shape
+built yet - pure master-data CRUD, `ADMIN`-only mutations, `branch:read`
+granted to all three roles (`docs/domain-branch.md` ADR-B07, confirmed
+against `prisma/seed.js` before writing any code). Real backend contract
+verified directly against `branch.validation.js`/`.routes.js`/
+`.controller.js` (not the domain doc's prose alone): `POST`/`GET`/
+`GET :id`/`PATCH`/`DELETE /branches`, `{ name, code?, holidayCalendarId? }`
+on create, all fields optional (with `holidayCalendarId` nullable) on
+update, `{ branches, pagination }` on list.
+
+Two architecture decisions, both flagged and discussed in Phase 2/3
+before implementation:
+
+1. **`MatDialog` create/edit instead of a routed page** - Employees'
+   routed form is justified by its sub-resources (documents) and
+   detail-only fields; a 3-field aggregate with no sub-resources doesn't
+   carry that cost. `BranchFormDialogComponent` handles both create and
+   edit (one component, like `EmployeeFormPageComponent`), closes with
+   the created/updated `Branch` via a typed `MatDialogRef<T, Branch>`,
+   though the list page never needs to read that return value -
+   `BranchStore.createBranch`/`updateBranch` already patch the `branches`
+   signal in their own `tap()`.
+2. **No DTO/Model/Mapper split** - `branch.models.ts` is a single shared
+   file (mirrors `auth.models.ts`'s precedent), since Branch has zero
+   wire/domain divergence: no `Decimal`, and `createdAt`/`updatedAt` stay
+   ISO strings straight through (`DatePipe` accepts them directly).
+
+**`BranchStore` is `createListQueryState()`'s third consumer, not a copy
+of `EmployeeStore`'s now-superseded hand-written version** - caught by
+checking the actual current state of `shared/utils/` rather than copying
+the most-familiar Store file. `EmployeeStore` predates the helper and is
+already flagged (Users Server-Side Pagination pass) as a pending,
+still-unmigrated follow-up; building Branch on top of that pattern would
+have meant knowingly writing new code against a pattern the codebase
+already moved past. `BranchStore` uses `createListQueryState<BranchListQuery>()`
+exactly as `UsersStore` does.
+
+Reused without modification: `DataTableComponent` (Branch's list is
+genuinely server-side paginated, matching its designed contract),
+`MatChipsModule` for the status column (Users' precedent for a small
+enum-like value, in place of hand-rolled chip CSS - which also sidesteps
+this app's known "component-scoped SCSS referencing a Tailwind `@theme`
+token via runtime `var()` silently loses it in production" gotcha
+entirely), `ConfirmDialogComponent`, `PageHeaderComponent`/
+`InlineBannerComponent`/`EmptyStateComponent`, `notBlankValidator`. New:
+one icon, `locationOn: 'location_on'` (`shared/icon-names.ts`), and one
+`NAV_CONFIG` entry gated on `branch:read` alone (mutation buttons are
+gated separately, in-page, on `branch:create`/`:update`/`:delete` - the
+same two-layer pattern `EmployeeTableComponent` already established:
+route visibility and row-action permission are different questions).
+
+**Two apparent bugs surfaced during live verification, both root-caused
+to the verification script, not the app** (no interactive browser tool
+available in this environment; verification was scripted end-to-end with
+Playwright against the real running backend, using two real accounts -
+a promoted `ADMIN` and a default `EMPLOYEE`, both created via
+`POST /auth/register` then cleaned up after):
+
+1. A duplicate-branch-name screenshot appeared to show a client-side
+   "required" validation error on an empty Name field, instead of the
+   expected server-side `409`. Isolating the exact step (explicit
+   dialog-open settle time, a locator scoped to `mat-dialog-container`,
+   logging the real `POST /branches` response) showed the actual, correct
+   behavior: a real `409 {"message":"A branch with this name or code
+   already exists"}` from `branch.service.js`, surfaced via
+   `app-inline-banner`, with the Name field retaining its entered value
+   and the dialog staying open. The original run's fill/click sequence
+   raced the dialog-open animation in the unscoped script - not an app
+   defect.
+2. A delete-confirmation click intermittently timed out with "locator
+   resolved to 3 elements." `button:has-text("Delete")` matched the row's
+   own icon-only Delete button (whose tooltip/aria-label text also
+   contains "Delete") in addition to the confirm dialog's real button.
+   Fixed by scoping to `app-confirm-dialog button:has-text("Delete")`.
+
+Verified live end-to-end against the real running backend, no mocks: as
+`ADMIN` - Branches appears in the Sidebar and is reachable, create (with
+a real success toast), duplicate-name rejected with the real inline `409`
+message (dialog stays open, field retains its value), edit (name + code +
+status, confirmed the row updates and the status chip flips to
+"Inactive"), search filter narrows the list, status filter narrows the
+list, delete (real success toast, row removed, confirmed gone). As
+`EMPLOYEE` - Branches still appears in the Sidebar (matches `branch:read`
+being granted to all three roles) and the list loads read-only, but no
+"New Branch" button and no Edit/Delete icons render on any row - both
+gates verified by DOM inspection, not just visual inspection.
+`ng build`/`ng lint`/`ng test` clean throughout; all scratch accounts and
+test data removed afterward via direct Prisma scripts, verified zero rows
+remain. See `handbook/frontend-07-branch.md` for the full write-up and
+`docs/frontend-architecture-blueprint.md`'s v11 for the architectural
+record.)_

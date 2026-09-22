@@ -43,4 +43,15 @@ export const NAV_CONFIG: NavItem[] = [
     description: 'View and manage employee records.',
     permissions: ['employee:read:any'],
   },
+  {
+    // branch:read only, not create/update/delete - it's granted to all 3
+    // roles server-side (docs/domain-branch.md ADR-B07), so this link is
+    // visible to everyone; only the page's own New/Edit/Delete actions are
+    // further gated on branch:create/:update/:delete.
+    route: '/branches',
+    icon: ICON_NAMES.locationOn,
+    label: 'Branches',
+    description: 'Manage branch and location master data.',
+    permissions: ['branch:read'],
+  },
 ];

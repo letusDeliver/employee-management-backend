@@ -1,0 +1,41 @@
+<h2 mat-dialog-title>{{ isEditMode ? 'Edit Branch' : 'New Branch' }}</h2>
+<form [formGroup]="form" (ngSubmit)="submit()">
+  <mat-dialog-content class="flex flex-col gap-1">
+    <mat-form-field class="w-full">
+      <mat-label>Name</mat-label>
+      <input matInput formControlName="name" />
+      @if (form.controls.name.invalid && form.controls.name.touched) {
+        <mat-error>Branch name is required.</mat-error>
+      }
+    </mat-form-field>
+
+    <mat-form-field class="w-full">
+      <mat-label>Code (optional)</mat-label>
+      <input matInput formControlName="code" />
+    </mat-form-field>
+
+    @if (isEditMode) {
+      <mat-form-field class="w-full">
+        <mat-label>Status</mat-label>
+        <mat-select formControlName="status">
+          <mat-option value="ACTIVE">Active</mat-option>
+          <mat-option value="INACTIVE">Inactive</mat-option>
+        </mat-select>
+      </mat-form-field>
+    }
+
+    @if (serverError(); as message) {
+      <app-inline-banner tone="error" [message]="message" />
+    }
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    @if (submitting()) {
+      <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Saving" />
+    }
+    <button mat-button type="button" [disabled]="submitting()" (click)="cancel()">Cancel</button>
+    <button mat-flat-button color="primary" type="submit" [disabled]="submitting() || (form.invalid && form.touched)">
+      {{ isEditMode ? 'Save Changes' : 'Create Branch' }}
+    </button>
+  </mat-dialog-actions>
+</form>

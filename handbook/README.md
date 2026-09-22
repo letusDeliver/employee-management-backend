@@ -31,6 +31,13 @@ after that feature ships.
 ## Frontend Chapters
 
 0. [Angular Project Initialization](./frontend-00-project-initialization.md)
+1. [Angular Material, Tailwind CSS & the Design System](./frontend-01-material-tailwind-design-system.md)
+2. [Authentication](./frontend-02-authentication.md)
+3. [Landing Page & Dashboard Quick-Navigation](./frontend-03-landing-dashboard.md)
+4. [Account](./frontend-04-account.md)
+5. [Users](./frontend-05-users.md)
+6. [Employees](./frontend-06-employees.md)
+7. [Branch](./frontend-07-branch.md)
 
 ## Backend Stack
 

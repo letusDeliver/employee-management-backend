@@ -1,0 +1,39 @@
+<app-page-header title="Branches">
+  @if (sessionStore.hasAnyPermission('branch:create')) {
+    <button pageHeaderActions mat-flat-button color="primary" type="button" (click)="openCreateDialog()">
+      <mat-icon>{{ icons.add }}</mat-icon>
+      New Branch
+    </button>
+  }
+</app-page-header>
+
+<app-branch-toolbar (filtersChange)="onFiltersChange($event)" />
+
+@if (deleteError(); as message) {
+  <app-inline-banner tone="error" [message]="message" />
+}
+
+@if (branchStore.error(); as message) {
+  <app-inline-banner tone="error" [message]="message" />
+} @else if (!branchStore.loading() && branchStore.branches().length === 0) {
+  <app-empty-state
+    [icon]="icons.locationOn"
+    [title]="hasActiveFilters() ? 'No branches match your filters' : 'No branches yet'"
+    [description]="
+      hasActiveFilters()
+        ? 'Try a different search or clear your filters.'
+        : 'Branch records will appear here once you add one.'
+    "
+  />
+} @else {
+  <app-branch-table
+    [rows]="branchStore.branches()"
+    [loading]="branchStore.loading()"
+    [pagination]="branchStore.pagination()"
+    [deletingIds]="deletingIds()"
+    (pageChange)="onPageChange($event)"
+    (sortChange)="onSortChange($event)"
+    (editRequested)="openEditDialog($event)"
+    (deleteRequested)="onDeleteRequested($event)"
+  />
+}

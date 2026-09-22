@@ -26,6 +26,7 @@ export const ICON_NAMES = {
   uploadFile: 'upload_file',
   download: 'download',
   close: 'close',
+  locationOn: 'location_on',
 } as const satisfies Record<string, string>;
 
 export type IconName = keyof typeof ICON_NAMES;

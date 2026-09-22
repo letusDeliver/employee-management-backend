@@ -9,10 +9,13 @@ content, Dashboard quick-navigation cards + widgets region), Feature 4
 (Account — self-service profile view + profile picture management), and
 Feature 5 (Users — admin-only, read-only user list), and Feature 6
 (Employees — full CRUD, documents, the first real `DataTableComponent`)
-are all complete — see `frontend/CLAUDE.md`'s Progress Log. Employees
-was the last feature on the original roadmap; any further frontend work
-is now enhancement-phase, following the same 8-phase workflow
-(`frontend/CLAUDE.md`).
+are all complete — see `frontend/CLAUDE.md`'s Progress Log. As of
+2026-09-22, frontend work is no longer "enhancement-phase" (v9's
+framing) — with all 15 backend HRMS domains now implemented, the
+frontend is systematically building screens domain-by-domain for the 14
+that have none, starting with master data (Branch, first). See the
+`implement-frontend-domain` skill for the rollout order and process,
+still the same 8-phase workflow (`frontend/CLAUDE.md`).
 
 This blueprint is the frontend's equivalent of the backend's
 `CLAUDE.md` + `planning/feature-NN-*.md` combination: a durable
@@ -218,6 +221,36 @@ handbook kept in sync, one commit per feature).
   is title + description + action slot only — breadcrumbs stay exclusively
   `BreadcrumbsComponent`'s responsibility. See `docs/design-system.md`'s
   `PageHeaderComponent` catalog entry.
+- v11 (this revision) — Domain-by-domain HRMS frontend rollout begins:
+  **Branch** (first of 14 backend domains with no frontend). Recon for
+  this pass surfaced a real, verified contract drift: Feature 6's
+  `employee.dto.ts`/`employee.model.ts` still model `department`/
+  `jobTitle` as free text, but the backend has since migrated
+  `Employee.departmentId`/`designationId` to mandatory governed-master-data
+  FKs plus a mandatory `employmentType` enum and optional `branchId`/
+  `shiftId` — Employee create/edit is currently broken against the real
+  backend. This is why master data (Branch, Department, Designation,
+  Shift) comes first in the rollout, with fixing Employee's form as its
+  explicit capstone step — see the `implement-frontend-domain` skill for
+  the full order and reasoning.
+
+  Branch itself (`features/branches/`) is pure master-data CRUD and
+  establishes two new precedents: (1) the first feature to use a
+  **`MatDialog`-based create/edit form instead of a routed page** —
+  deliberate, since Branch has no sub-resources or detail-only fields to
+  justify a full route + breadcrumb for a 3-field aggregate; (2) the
+  first to skip a DTO/Model/Mapper split entirely, using one shared
+  `branch.models.ts` (the same precedent `auth.models.ts` set) since
+  Branch has zero wire/domain divergence. Reuses `DataTableComponent`
+  (real server-side pagination, its designed contract), `MatChipsModule`
+  for the status column (Users' precedent), and the same two-layer
+  permission-gating pattern every prior feature uses: `branch:read` gates
+  the route (`permissionGuard`/`NAV_CONFIG`), `branch:create`/`:update`/
+  `:delete` further gate the page's own actions, checked directly in
+  `BranchTableComponent` exactly as `EmployeeTableComponent` already
+  does. `holidayCalendarId` exists on the real `Branch` model but is
+  deliberately not a form field yet — Holiday Calendar (a later domain)
+  has no frontend to select from.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:

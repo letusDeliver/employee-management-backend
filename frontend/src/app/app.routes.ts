@@ -64,6 +64,17 @@ export const routes: Routes = [
         // "Employees" node above it to find.
         data: { breadcrumb: 'Employees' },
       },
+      {
+        // A single flat route, unlike 'employees' above - Branch's create/edit
+        // is a dialog, not a routed sub-page, so there's nothing to nest here.
+        path: 'branches',
+        loadComponent: () =>
+          import('./features/branches/branch-list/branch-list-page.component').then(
+            (m) => m.BranchListPageComponent,
+          ),
+        canActivate: [permissionGuard],
+        data: { breadcrumb: 'Branches', permissions: ['branch:read'] },
+      },
     ],
   },
 ];
