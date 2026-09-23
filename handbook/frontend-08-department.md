@@ -187,7 +187,7 @@ one second of logging in bounces to `/login`, because the backend's refresh
 tokens are JWTs with no unique id (only a one-second `iat`), so two issued
 for one user in the same second are identical and hit the unique constraint
 (`POST /auth/refresh` → 500). A real user rarely reloads that fast; a
-scripted test does. An earlier version of this paragraph claimed the deep link
+scripted test does. (**Fixed 2026-09-24** in the backend - see chapter 9.) An earlier version of this paragraph claimed the deep link
 worked after checking only that the URL stayed put - that proved nothing about
 rendering, which is why it is stated this carefully now.
 

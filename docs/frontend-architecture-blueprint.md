@@ -343,6 +343,12 @@ handbook kept in sync, one commit per feature).
   A full page load within a second of logging in bounces to `/login`; after a
   realistic pause deep links to `/branches`, `/employees` and `/departments`
   all restore the session and render. Affects every route, not Department.
+  **Resolved 2026-09-24 (backend, `backend/CLAUDE.md`):** refresh tokens now carry a
+  random `jti`, and rotation claims the old token and issues the new one in a single
+  transaction, so a reload immediately after login renders. The fuller diagnosis was
+  worse than stated here: the old code revoked the old token *before* issuing the
+  new pair, so the collision also destroyed the session (the same cookie then
+  returned 401).
 - v14 (this revision) — **Designation** (third of 14; the first domain built
   *on* the shared master-data screen). `features/designations/` is four small
   files (models as aliases, an explicit service, a ~10-line store subclass,

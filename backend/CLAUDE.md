@@ -2158,3 +2158,79 @@ Verified live end-to-end against the running server (twice — before and after 
 `docs/domain-exit-management.md` (ADR-EM01-04 implemented, EM05 still deferred with the Payroll gap noted, new EM06-08, confidence 84%→89%), `docs/domain-identity-employee-lifecycle.md` (ADR-006 note corrected), `docs/adr-index.md`, `docs/deferred-decisions-register.md` updated. `handbook/API_ENDPOINTS.md` gained endpoints 144-152 (delegated to a background agent, then verified and corrected). `backend/README.md` updated to match.
 
 Deliberately **backend-only**, same as every prior domain.)_
+
+_(Refresh-Token Rotation Fix — 2026-09-24, directly on `main`. Found during the
+frontend Designation work (2026-09-23): a full page load within about a second of
+logging in bounced to `/login`. The backend error log showed
+`Unique constraint failed on the fields: ("tokenHash")` from
+`refreshTokenRepository.create()`, surfacing as `POST /auth/refresh` -> 500 and
+then 401.
+
+**Two root causes, both in the refresh path.** (1) A refresh token is a JWT of
+`{ sub, roles }` plus `iat`/`exp`, and `iat` has one-second resolution with no
+unique claim, so two refresh tokens issued for the same user in the same second
+are byte-identical; their SHA-256 hashes collide on `RefreshToken.tokenHash`'s
+unique constraint. (2) `refresh()` **revoked the old token first and issued the
+new pair afterwards, with no transaction** - so when issuing failed the old token
+was already burned and the same cookie then returned 401: the session was
+destroyed, not merely interrupted. Reproduced deterministically before touching
+code: two `signRefreshToken()` calls for one payload returned identical strings,
+and through the API 6 of 6 "login, then refresh immediately" attempts returned
+500 with the same cookie then returning 401; after a 1.5s pause it worked.
+Beyond a reload right after login this also hit any two refreshes for one user in
+the same second (e.g. two tabs).
+
+**Fix (backend-only, no schema change, no API/Swagger change).**
+`utils/jwt.js` - `signRefreshToken` adds `jwtid: crypto.randomUUID()`, so every
+refresh token is unique (access tokens are never stored and are unchanged).
+`refreshToken.repository.js` - `create(data, client)` now accepts a transaction
+client, and a new `claimActiveByHash(tokenHash, client)` revokes a token only if
+it is still active, in ONE `updateMany`, returning whether this call did it (two
+concurrent refreshes race on the row lock and the loser re-evaluates the WHERE
+against the winner's committed write, matching zero rows). `auth.service.js` -
+`refresh()` now runs claim-then-issue inside one `prisma.$transaction`, so a
+failure while issuing rolls the claim back and leaves the caller's session
+untouched; `issueTokenPair(user, client = prisma)` threads the client through
+(`register`/`login` keep the default, as before). The unique `jti` alone would
+have removed an accidental guard - previously the second of two parallel
+refreshes failed on the hash collision - which is why the atomic claim ships
+with it: rotation is now genuinely single-use. Tokens issued before this change
+carry no `jti` and keep verifying and rotating exactly as before, so existing
+sessions are unaffected.
+
+**Tests: 13 new** (the auth path had none). `utils/jwt.test.js` (5): consecutive
+tokens differ, 200 tokens in one instant are all distinct, a UUID `jti` with the
+original claims intact, the caller's payload is not mutated, access tokens
+unchanged. `modules/auth/auth.service.test.js` (8, integration against the dev
+DB with per-run fixtures cleaned up in `after`, same convention as the other
+suites): refresh immediately after register and after login, five rotations in a
+row, single-use (a rotated token is rejected), two parallel refreshes -> exactly
+one wins and the other is `UnauthorizedError`, **a simulated failure while storing
+the new token does not burn the old one** (`mock.method` on
+`refreshTokenRepository.create`, then the original token still rotates), garbage
+and never-stored tokens rejected, and logout revoking. **Mutation check**: three
+deliberate breakages (remove `jwtid`; claim outside the transaction; drop the
+`revoked: false` condition from the claim) failed 9 specs, every one an intended
+guard; restored. Full backend suite 155/155, `eslint .` clean (it also caught an
+unused import in my own new test, fixed).
+
+**Live verification** (real server, temporary accounts): 6 of 6 "login, then
+refresh immediately" attempts now return 200 with a new cookie (was 6/6 x 500);
+the old cookie then returns 401 (single-use) and the NEW cookie still works (the
+session survives); two parallel refreshes of one cookie -> exactly one 200 and
+one 401; logout then refresh -> 401. And in a real browser (Playwright), reloading
+`/departments`, `/branches` and `/designations` **immediately** after login - no
+pause - now renders each page, where it used to bounce to `/login`.
+
+**Considered, deliberately not done:** refresh-token *reuse detection* (revoking a
+user's whole token family when a rotated token is replayed) - a legitimate
+hardening, but a behaviour change with its own design questions (it would log out
+a user whose second tab raced the first); `findValidByHash` is kept (logout still
+uses it); no rate limiting was added.
+
+**Separate finding, not fixed:** `attendance/attendance.service.test.js` creates
+`Attendance Test Department/Designation <timestamp>` fixtures and never removes
+them, so every full-suite run leaves one pair in the dev database - this is the
+source of the ~70 leftover "Attendance Test ..." rows visible in the frontend's
+Departments and Designations lists. My full-suite run added one pair, which I
+deleted (unreferenced, identified by the run timestamp in the name).)_

@@ -1520,7 +1520,10 @@ files kept older timestamps, never rebuilt again. Touching them forced a
 rebuild; the same repro then sent `"code":null` and a clean re-run passed. NOT a
 regression. Lesson: force a rebuild after any mutation check and confirm a
 suspected regression from the real request before blaming or absolving the code.
-(2) **Pre-existing backend defect, not fixed**: a full page load within ~1s of
+(2) **Pre-existing backend defect (FIXED 2026-09-24 - see `backend/CLAUDE.md`'s
+"Refresh-Token Rotation Fix"; the diagnosis below was incomplete: the old code also
+revoked the old token before issuing the new pair, so the collision destroyed the
+session)**: a full page load within ~1s of
 logging in bounces to `/login` (`/branches` fails the same way). The backend
 error log shows `Unique constraint failed on ("tokenHash")` from
 `refreshTokenRepository.create()`: a refresh token is a JWT of `{ sub, roles }`

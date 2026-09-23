@@ -17,7 +17,9 @@ const DUMMY_HASH = bcrypt.hashSync('dummy-password-for-timing-safety', SALT_ROUN
 
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
-const issueTokenPair = async (user) => {
+// `client` lets refresh() run the insert inside its rotation transaction; register
+// and login keep the default (no transaction) on purpose.
+const issueTokenPair = async (user, client = prisma) => {
   const roles = await rbacRepository.getRoleNamesForUser(user.id);
   const payload = { sub: user.id, roles };
   const accessToken = jwt.signAccessToken(payload);
@@ -25,11 +27,14 @@ const issueTokenPair = async (user) => {
 
   const { exp } = jwt.decode(refreshToken);
 
-  await refreshTokenRepository.create({
-    tokenHash: hashToken(refreshToken),
-    userId: user.id,
-    expiresAt: new Date(exp * 1000),
-  });
+  await refreshTokenRepository.create(
+    {
+      tokenHash: hashToken(refreshToken),
+      userId: user.id,
+      expiresAt: new Date(exp * 1000),
+    },
+    client,
+  );
 
   return { accessToken, refreshToken, roles };
 };
@@ -89,21 +94,26 @@ const refresh = async (refreshToken) => {
     throw new UnauthorizedError('Invalid refresh token');
   }
 
-  const storedToken = await refreshTokenRepository.findValidByHash(hashToken(refreshToken));
-
-  if (!storedToken) {
-    throw new UnauthorizedError('Invalid refresh token');
-  }
-
-  await refreshTokenRepository.revoke(storedToken.id);
-
   const user = await userRepository.findById(payload.sub);
 
   if (!user) {
     throw new UnauthorizedError('Invalid refresh token');
   }
 
-  return issueTokenPair(user);
+  // Rotation is one transaction: claim the old token (atomic, single-use - see
+  // claimActiveByHash), then issue and store the new pair. If issuing fails for
+  // any reason the claim rolls back and the caller's session is untouched; the
+  // previous revoke-then-issue sequence burned the old token first, so a failure
+  // in between (a hash collision, a dropped connection) logged the user out.
+  return prisma.$transaction(async (tx) => {
+    const claimed = await refreshTokenRepository.claimActiveByHash(hashToken(refreshToken), tx);
+
+    if (!claimed) {
+      throw new UnauthorizedError('Invalid refresh token');
+    }
+
+    return issueTokenPair(user, tx);
+  });
 };
 
 const logout = async (refreshToken) => {

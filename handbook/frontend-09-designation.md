@@ -245,7 +245,11 @@ telling them apart is the substance of this section.**
    clean re-run passed. **Lesson: after a mutation check, force a rebuild before
    any live verification, and confirm a suspected regression by capturing the
    real request before blaming — or absolving — the code.**
-2. **A pre-existing backend defect (not fixed).** A full page load within about
+2. **A pre-existing backend defect (FIXED 2026-09-24 in the backend — a random `jti`
+   on every refresh token, plus rotation that claims the old token and issues the new
+   one in a single transaction; see `backend/CLAUDE.md`. The diagnosis below was
+   incomplete: the old code revoked the old token *before* issuing the new pair, so
+   the collision also destroyed the session).** A full page load within about
    one second of logging in bounced to `/login`. The backend error log showed
    `Unique constraint failed on the fields: ("tokenHash")` from
    `refreshTokenRepository.create()`. A refresh token is a JWT of
