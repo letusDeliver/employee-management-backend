@@ -291,6 +291,58 @@ handbook kept in sync, one commit per feature).
   hint that wraps overflows into whatever follows (here, the dialog buttons);
   use `subscriptSizing="dynamic"` on any field whose hint or error may wrap.
   Amends §13 (Material) accordingly.
+- v13 (this revision) — **Shared master-data screen extracted from
+  Department** (behaviour-preserving refactor; Designation follows in the
+  next revision). v12 deferred extraction until two genuinely identical
+  instances existed; that condition is met - diffing the Designation backend
+  module against Department's (names normalised) showed identical routes,
+  validation shape, permissions and delete semantics. Establishes or amends:
+  (1) **§2/§11 - `shared/master-data/`**: a domain-agnostic *UI pattern*
+  (not a business domain, so it does not break "shared has zero knowledge of
+  any feature's business meaning"), containing `MasterDataRecord` and its
+  request/query/`MasterDataApi` types, an abstract `MasterDataStore`, and
+  four components (`MasterDataListPageComponent`, `-TableComponent`,
+  `-ToolbarComponent`, `-FormDialogComponent`). Nothing in it imports from
+  `features/`. (2) **First abstract base class in the app** -
+  `MasterDataStore<T,C,U>`. Deliberately narrow: a concrete store is
+  `providedIn: 'root'` and supplies only `api` and `labels`. Initialisation-
+  order rule: base-class field initialisers run BEFORE the subclass's, so the
+  base must never read `api`/`labels` in its constructor or initialisers,
+  only inside methods. Inheritance is justified here because the behaviour
+  (list state, refetch, cancellation, step-back) is identical and stateful;
+  it is not a licence to reach for base classes elsewhere - prefer composition
+  unless a subclass genuinely is-a specialisation. (3) **HTTP services stay
+  per-domain** - each is its own explicit thin wrapper (§8), owns its path and
+  maps its own response key (`departments`) into the neutral `{ items,
+  pagination }` that `MasterDataApi` returns; a divergence in one domain's
+  wire shape never touches `shared/`. (4) **No config-only routes** - each
+  domain keeps a tiny explicit page component (store, icon, permission
+  prefix), so routing and permission keys stay visible per domain. (5)
+  **§9 clarified - presentational components decide nothing about
+  permissions**: `MasterDataTableComponent` takes `canEdit`/`canDelete`
+  inputs and never injects `SessionStore`; the smart page derives them from
+  `<prefix>:update`/`:delete`. (6) **Branch is deliberately not migrated**:
+  its dialog will gain a Holiday Calendar select, and touching a shipped,
+  verified feature widens the blast radius; migrating `BranchStore` onto the
+  base store would also fix its local-patching defects (v12) and is tracked
+  as its own follow-up. (7) **Testing**: shared behaviour is proven once
+  (base store against a fake API, plus dialog/table/toolbar/list-page specs -
+  46 tests total), each domain adds a small wiring spec for its path, keys and
+  wording. A mutation check (six deliberate breakages, each caught by its
+  intended spec) confirmed the specs can fail. **Process lesson**: a
+  mutation check run against a live `ng serve` leaves the watcher serving the
+  *mutated* bundle if restored files keep an older mtime - a live check then
+  "fails" on code that is actually correct (here: the code-clearing PATCH sent
+  no `code` at all). After any mutation check, force a rebuild (touch the
+  restored files) and re-run live verification against a fresh build. (8)
+  **Pre-existing backend defect found during live verification (not
+  changed)**: a refresh token is a JWT of `{ sub, roles }` plus a one-second
+  `iat` with no unique id, so two refresh tokens issued for one user in the
+  same second are byte-identical and `RefreshToken.tokenHash`'s unique
+  constraint raises P2002 -> `POST /auth/refresh` returns 500 (then 401).
+  A full page load within a second of logging in bounces to `/login`; after a
+  realistic pause deep links to `/branches`, `/employees` and `/departments`
+  all restore the session and render. Affects every route, not Department.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:

@@ -3,29 +3,37 @@ import { Injectable, inject } from '@angular/core';
 import { Observable, map } from 'rxjs';
 
 import { API_BASE_URL } from '../../../core/config/api-base-url.token';
-import { Paginated } from '../../../shared/models/paginated.model';
+import {
+  MasterDataApi,
+  MasterDataListQuery,
+  MasterDataPage,
+} from '../../../shared/master-data/master-data.models';
 import { toHttpParams } from '../../../shared/utils/http-params.util';
 import {
   CreateDepartmentRequest,
   Department,
-  DepartmentListQuery,
   DepartmentResponse,
   DepartmentsListResponse,
   UpdateDepartmentRequest,
 } from './department.models';
 
-/** Thin HttpClient wrapper - one method per real endpoint, zero business logic (blueprint §8). */
+/**
+ * Thin HttpClient wrapper - one method per real endpoint, zero business
+ * logic (blueprint §8). Owns the `/departments` path and maps this
+ * endpoint's own response key (`departments`) into the shared, neutral
+ * `items` that `MasterDataStore` consumes.
+ */
 @Injectable({ providedIn: 'root' })
-export class DepartmentService {
+export class DepartmentService implements MasterDataApi<Department, CreateDepartmentRequest, UpdateDepartmentRequest> {
   private readonly http = inject(HttpClient);
   private readonly baseUrl = inject(API_BASE_URL);
 
-  list(query: DepartmentListQuery): Observable<{ departments: Department[]; pagination: Paginated }> {
+  list(query: MasterDataListQuery): Observable<MasterDataPage<Department>> {
     const params = toHttpParams(query);
 
     return this.http
       .get<DepartmentsListResponse>(`${this.baseUrl}/departments`, { params })
-      .pipe(map(({ departments, pagination }) => ({ departments, pagination })));
+      .pipe(map(({ departments, pagination }) => ({ items: departments, pagination })));
   }
 
   getById(id: string): Observable<Department> {

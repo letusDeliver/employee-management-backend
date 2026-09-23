@@ -23,7 +23,7 @@
   </ng-template>
 
   <ng-template appDataTableCell="actions" let-row>
-    @if (sessionStore.hasAnyPermission('department:update')) {
+    @if (canEdit()) {
       <button
         mat-icon-button
         type="button"
@@ -34,7 +34,7 @@
         <mat-icon>{{ icons.edit }}</mat-icon>
       </button>
     }
-    @if (sessionStore.hasAnyPermission('department:delete')) {
+    @if (canDelete()) {
       @if (deletingIds().has(row.id)) {
         <mat-progress-spinner diameter="20" mode="indeterminate" [attr.aria-label]="'Deleting ' + row.name" />
       } @else {

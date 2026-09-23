@@ -1442,8 +1442,11 @@ Inactive filter removes it** (proves refetch-not-patch), sort (`sortBy=name`)
 and pagination (`page=2`) requests, delete-unused (toast, row gone), and
 delete-in-use → 409 "…deactivate it instead" with the row remaining. As
 `EMPLOYEE` — link and read-only list present; no New button and no
-Edit/Delete icons in the DOM. Deep-link full page load of `/departments`
-restores the session and lands correctly. 26 of 28 first-run checks passed;
+Edit/Delete icons in the DOM. A full page load of `/departments` restores the session and renders
+(this claim was first made after checking only that the URL stayed put; it was
+properly verified, with the page rendering, only after the shared-screen
+extraction - see blueprint v13 for the pre-existing same-second refresh-token
+collision that bounces a reload made within ~1s of login). 26 of 28 first-run checks passed;
 the failures were both script-side (a racing request-log read, and reading
 dialog text mid fade-in) and were re-checked with proper waits and passed.
 Test data (both accounts, refresh tokens, `ZZV…` departments, a fixture

@@ -1,11 +1,11 @@
-<h2 mat-dialog-title>{{ isEditMode ? 'Edit Department' : 'New Department' }}</h2>
+<h2 mat-dialog-title>{{ isEditMode ? 'Edit ' : 'New ' }}{{ labels.singular }}</h2>
 <form [formGroup]="form" (ngSubmit)="submit()">
   <mat-dialog-content class="flex flex-col gap-1">
     <mat-form-field class="w-full">
       <mat-label>Name</mat-label>
       <input matInput formControlName="name" />
       @if (form.controls.name.invalid && form.controls.name.touched) {
-        <mat-error>Department name is required.</mat-error>
+        <mat-error>{{ labels.singular }} name is required.</mat-error>
       }
     </mat-form-field>
 
@@ -21,7 +21,7 @@
           <mat-option value="ACTIVE">Active</mat-option>
           <mat-option value="INACTIVE">Inactive</mat-option>
         </mat-select>
-        <mat-hint>Inactive departments can't be assigned to employees.</mat-hint>
+        <mat-hint>Inactive {{ labels.plural | lowercase }} can't be assigned to employees.</mat-hint>
       </mat-form-field>
     }
 
@@ -36,7 +36,7 @@
     }
     <button mat-button type="button" [disabled]="submitting()" (click)="cancel()">Cancel</button>
     <button mat-flat-button color="primary" type="submit" [disabled]="submitting() || (form.invalid && form.touched)">
-      {{ isEditMode ? 'Save Changes' : 'Create Department' }}
+      {{ isEditMode ? 'Save Changes' : 'Create ' + labels.singular }}
     </button>
   </mat-dialog-actions>
 </form>

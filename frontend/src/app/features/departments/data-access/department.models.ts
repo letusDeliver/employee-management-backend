@@ -1,34 +1,22 @@
 import { Paginated } from '../../../shared/models/paginated.model';
+import {
+  CreateMasterDataRequest,
+  MasterDataRecord,
+  UpdateMasterDataRequest,
+} from '../../../shared/master-data/master-data.models';
 
 /**
- * Single shared file, no DTO/Model/Mapper split - Department has zero
- * wire/domain divergence (no Decimal, no date reshaping any component
- * needs), the same reasoning `branch.models.ts` and `auth.models.ts` already
- * established. `createdAt`/`updatedAt` stay ISO strings straight off the
- * wire; Angular's `DatePipe` accepts them directly.
+ * Department is structurally a `MasterDataRecord` (`id / name / code? /
+ * status / createdAt / updatedAt`, no `holidayCalendarId`), so its domain
+ * types are aliases of the shared shapes - kept as this feature's own names
+ * so Department can diverge later without touching `shared/`. No DTO/Model/
+ * Mapper split: zero wire/domain divergence (same reasoning as Branch/Auth).
  */
-export type DepartmentStatus = 'ACTIVE' | 'INACTIVE';
+export type Department = MasterDataRecord;
+export type CreateDepartmentRequest = CreateMasterDataRequest;
+export type UpdateDepartmentRequest = UpdateMasterDataRequest;
 
-export interface Department {
-  id: string;
-  name: string;
-  code: string | null;
-  status: DepartmentStatus;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type DepartmentSortField = 'name' | 'code' | 'status' | 'createdAt';
-
-export interface DepartmentListQuery {
-  page: number;
-  limit: number;
-  search?: string;
-  status?: DepartmentStatus;
-  sortBy: DepartmentSortField;
-  order: 'asc' | 'desc';
-}
-
+// The wire shapes: each endpoint returns its own key, never a generic envelope (blueprint §0).
 export interface DepartmentsListResponse {
   departments: Department[];
   pagination: Paginated;
@@ -36,15 +24,4 @@ export interface DepartmentsListResponse {
 
 export interface DepartmentResponse {
   department: Department;
-}
-
-export interface CreateDepartmentRequest {
-  name: string;
-  code?: string;
-}
-
-export interface UpdateDepartmentRequest {
-  name?: string;
-  code?: string | null;
-  status?: DepartmentStatus;
 }

@@ -7,22 +7,26 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { debounceTime, distinctUntilChanged } from 'rxjs';
 
-import { ICON_NAMES } from '../../../shared/icon-names';
-import { DepartmentListQuery } from '../data-access/department.models';
+import { ICON_NAMES } from '../icon-names';
+import { MasterDataListQuery } from './master-data.models';
 
-export type DepartmentFilters = Partial<Pick<DepartmentListQuery, 'search' | 'status'>>;
+export type MasterDataFilters = Partial<Pick<MasterDataListQuery, 'search' | 'status'>>;
 
-/** Presentational-ish (domain-scoped, per §10), mirrors `BranchToolbarComponent`'s debounced filter form. */
+/**
+ * Presentational, domain-agnostic: a debounced search box and a status
+ * filter. Contains no domain wording at all - it was already word-for-word
+ * identical across Branch, Department and Designation.
+ */
 @Component({
-  selector: 'app-department-toolbar',
+  selector: 'app-master-data-toolbar',
   imports: [ReactiveFormsModule, MatFormFieldModule, MatInputModule, MatSelectModule, MatIconModule],
-  templateUrl: './department-toolbar.component.html',
-  styleUrl: './department-toolbar.component.scss',
+  templateUrl: './master-data-toolbar.component.html',
+  styleUrl: './master-data-toolbar.component.scss',
 })
-export class DepartmentToolbarComponent {
+export class MasterDataToolbarComponent {
   protected readonly icons = ICON_NAMES;
 
-  readonly filtersChange = output<DepartmentFilters>();
+  readonly filtersChange = output<MasterDataFilters>();
 
   private readonly formBuilder = inject(FormBuilder);
   protected readonly form = this.formBuilder.nonNullable.group({
@@ -40,7 +44,7 @@ export class DepartmentToolbarComponent {
       .subscribe((value) =>
         this.filtersChange.emit({
           search: value.search,
-          status: value.status ? (value.status as DepartmentFilters['status']) : undefined,
+          status: value.status ? (value.status as MasterDataFilters['status']) : undefined,
         }),
       );
   }

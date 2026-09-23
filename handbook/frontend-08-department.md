@@ -1,5 +1,16 @@
 # Frontend Chapter 8 — Department
 
+> **Update — the screen described below was later extracted.** As planned in
+> Architecture decision 1, once Designation proved a second identical
+> instance, Department's list page, table, toolbar and form dialog moved into
+> `shared/master-data/`, its store became a ~10-line subclass of
+> `MasterDataStore`, and the per-feature components in the folder tree below
+> no longer exist (Department keeps its models, its explicit HTTP service, its
+> store subclass and a thin page component). Behaviour is unchanged. The
+> decisions, tests and reasoning here still hold - they now live in one shared
+> place. See Chapter 9 and blueprint v13. This chapter is kept as written
+> because it records how the screen was designed *before* extraction.
+
 ## Theory
 
 Department is master data: the functional classification of an Employee —
@@ -168,9 +179,17 @@ A single flat route, same as Branch:
 }
 ```
 
-Verified live: a full page load (deep link) of `/departments` restores the
-session via the silent refresh and lands on the page, exactly as
-`/branches` does.
+Verified live (re-verified properly after the shared-screen extraction): a
+full page load of `/departments` restores the session via the silent refresh
+and renders the list, exactly as `/branches` and `/employees` do. **Caveat
+found while checking this, not caused by Department:** reloading within about
+one second of logging in bounces to `/login`, because the backend's refresh
+tokens are JWTs with no unique id (only a one-second `iat`), so two issued
+for one user in the same second are identical and hit the unique constraint
+(`POST /auth/refresh` → 500). A real user rarely reloads that fast; a
+scripted test does. An earlier version of this paragraph claimed the deep link
+worked after checking only that the URL stayed put - that proved nothing about
+rendering, which is why it is stated this carefully now.
 
 ## State Management
 
