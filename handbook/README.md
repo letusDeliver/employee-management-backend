@@ -38,6 +38,7 @@ after that feature ships.
 5. [Users](./frontend-05-users.md)
 6. [Employees](./frontend-06-employees.md)
 7. [Branch](./frontend-07-branch.md)
+8. [Department](./frontend-08-department.md)
 
 ## Backend Stack
 

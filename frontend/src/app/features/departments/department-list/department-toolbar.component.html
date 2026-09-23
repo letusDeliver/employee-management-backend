@@ -1,0 +1,17 @@
+<div class="mb-4 flex flex-wrap items-end gap-2">
+  <form [formGroup]="form" class="flex flex-wrap gap-2">
+    <mat-form-field subscriptSizing="dynamic">
+      <mat-label>Search</mat-label>
+      <mat-icon matPrefix>{{ icons.search }}</mat-icon>
+      <input matInput formControlName="search" />
+    </mat-form-field>
+    <mat-form-field subscriptSizing="dynamic">
+      <mat-label>Status</mat-label>
+      <mat-select formControlName="status">
+        <mat-option value="">All</mat-option>
+        <mat-option value="ACTIVE">Active</mat-option>
+        <mat-option value="INACTIVE">Inactive</mat-option>
+      </mat-select>
+    </mat-form-field>
+  </form>
+</div>

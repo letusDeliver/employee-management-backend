@@ -54,4 +54,14 @@ export const NAV_CONFIG: NavItem[] = [
     description: 'Manage branch and location master data.',
     permissions: ['branch:read'],
   },
+  {
+    // department:read only - granted to all 3 roles server-side
+    // (docs/domain-department.md ADR-D08), so this link is visible to
+    // everyone; New/Edit/Delete are further gated in-page.
+    route: '/departments',
+    icon: ICON_NAMES.apartment,
+    label: 'Departments',
+    description: 'Manage department master data.',
+    permissions: ['department:read'],
+  },
 ];

@@ -1,0 +1,53 @@
+<app-data-table
+  [columns]="columns"
+  [rows]="rows()"
+  [loading]="loading()"
+  [totalCount]="pagination().total"
+  [pageIndex]="pagination().page - 1"
+  [pageSize]="pagination().limit"
+  (pageChange)="pageChange.emit($event)"
+  (sortChange)="sortChange.emit($event)"
+>
+  <ng-template appDataTableCell="code" let-row>
+    {{ row.code ?? '—' }}
+  </ng-template>
+
+  <ng-template appDataTableCell="status" let-row>
+    <mat-chip-set>
+      <mat-chip>{{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}</mat-chip>
+    </mat-chip-set>
+  </ng-template>
+
+  <ng-template appDataTableCell="createdAt" let-row>
+    {{ row.createdAt | date: 'mediumDate' }}
+  </ng-template>
+
+  <ng-template appDataTableCell="actions" let-row>
+    @if (sessionStore.hasAnyPermission('department:update')) {
+      <button
+        mat-icon-button
+        type="button"
+        [attr.aria-label]="'Edit ' + row.name"
+        matTooltip="Edit"
+        (click)="editRequested.emit(row)"
+      >
+        <mat-icon>{{ icons.edit }}</mat-icon>
+      </button>
+    }
+    @if (sessionStore.hasAnyPermission('department:delete')) {
+      @if (deletingIds().has(row.id)) {
+        <mat-progress-spinner diameter="20" mode="indeterminate" [attr.aria-label]="'Deleting ' + row.name" />
+      } @else {
+        <button
+          mat-icon-button
+          type="button"
+          [attr.aria-label]="'Delete ' + row.name"
+          matTooltip="Delete"
+          (click)="deleteRequested.emit(row)"
+        >
+          <mat-icon>{{ icons.delete }}</mat-icon>
+        </button>
+      }
+    }
+  </ng-template>
+</app-data-table>

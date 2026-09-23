@@ -125,6 +125,8 @@ EmployeeListPageComponent` automatically — verified live during Feature
 - [x] Feature 6 — Employees: full CRUD, documents, first real `DataTableComponent`
 - [x] Feature 7 — Branch: master-data CRUD, first domain of the HRMS
   domain-by-domain rollout (14 backend domains with no frontend yet)
+- [x] Feature 8 — Department: master-data CRUD, refetch-after-mutation Store,
+  first real unit specs
 
 _(Feature 0 — Angular Project Initialization — completed, on the
 `frontend` branch. Scaffolded via `npx @angular/cli@21.2.19 new frontend`
@@ -1367,3 +1369,92 @@ test data removed afterward via direct Prisma scripts, verified zero rows
 remain. See `handbook/frontend-07-branch.md` for the full write-up and
 `docs/frontend-architecture-blueprint.md`'s v11 for the architectural
 record.)_
+
+_(Feature 8 — Department — 2026-09-23, to be committed directly on `main` (no
+`frontend` branch exists anymore). Second of the 14 backend domains with no
+frontend; same pure master-data shape as Branch (`features/departments/`,
+`ADMIN`-only mutations, `department:read` granted to all three roles —
+`docs/domain-department.md` ADR-D08, confirmed against `prisma/seed.js`).
+Real backend contract verified directly against `department.validation.js`/
+`.routes.js`/`.docs.js`/`.service.js`/`.repository.js` and the Prisma model,
+not the domain doc's prose alone. Full write-up:
+`handbook/frontend-08-department.md`; architectural record: blueprint v12.
+
+**Real findings from recon, before any code.** (1) Department is
+`id, name, code?, status, createdAt, updatedAt` — no `holidayCalendarId`.
+(2) `Employee.departmentId` is *mandatory* and the delete guard counts
+soft-deleted employees, so a department that ever had an employee can never
+be deleted — deactivating is the real lifecycle action and a delete `409`
+is a normal outcome. (3) Name uniqueness is case-insensitive in the service
+but the DB constraint is case-sensitive (concurrent-create race; backend
+note, not fixed). (4) Employee responses carry only a bare `departmentId`
+(the nested include exists only for Payroll's read). (5) `PATCH
+/employees/:id` re-validates assignability whenever `departmentId` is
+*present* even if unchanged — so the Employee capstone's edit form must send
+only changed FK fields and must still display a current department that has
+since been deactivated. (4) and (5) are recorded for the capstone.
+
+**Four decisions, made explicit (the user delegated final calls):**
+(A) mirror Branch now, extract a shared master-data pattern *after*
+Designation — Branch's own shape is not stable (gains a Holiday Calendar
+select), so extracting from Branch+Department is generalising from a pair
+where one member is known to diverge; (B) no `core/` department directory
+yet — it arrives with the Employee capstone, where four lookups are needed
+at once, and its options are a *functional* dependency (unlike user-name
+enrichment), so a failed load must block the form; (C) `DepartmentStore`
+**refetches after every mutation** instead of patching the array as
+`BranchStore` does, and steps back a page when deleting the only row on a
+later page — with server-side paging local patching can misplace a row,
+leave `pagination.total` stale, or keep a row that no longer matches an
+active filter (identified by reading `BranchStore`, *not* reproduced in a
+browser; Branch was deliberately left untouched); (D) keep Delete, with
+confirmation copy pointing at deactivation, and deactivate through the edit
+dialog as Branch does. `loadList()` also cancels a superseded request —
+unsubscribing *before* setting `loading`, because `finalize()` runs on
+unsubscribe.
+
+**First real unit specs in the frontend** (Vitest via `ng test`): Store
+(10), dialog (7), table (5) — 22 new, 24 total with the 2 existing app
+specs. The whole app previously had one scaffold spec and Branch shipped
+with none, so "`ng test` clean" had meant almost nothing. All passed on the
+first run, so a **mutation check** followed: removing the step-back-a-page
+condition and sending `undefined` instead of `null` for a cleared code each
+failed exactly the spec meant to guard it; both reverted.
+
+**One real bug found only visually.** The edit dialog's Status hint wrapped
+to two lines inside a `<mat-form-field>` whose subscript area is fixed at
+one line by default; the second line was clipped behind the Cancel/Save
+buttons. Confirmed by measurement (hint box y=543.5, height 36 vs. actions
+top y=563.5), fixed with a shorter one-line hint plus
+`subscriptSizing="dynamic"`, re-measured (height 20, no overlap). jsdom does
+no layout, so no spec could have caught it.
+
+**Live verification, real backend, two temporary accounts** (a promoted
+`ADMIN` and a default `EMPLOYEE`, created via `POST /auth/register`; no
+interactive browser tool exists here, so scripted with Playwright): as
+`ADMIN` — sidebar link/route/breadcrumb, initial `GET /departments?page=1&
+limit=10&sortBy=createdAt&order=desc` → 200, create (201 + toast), duplicate
+name in a *different case* → inline 409 with the dialog open and the value
+retained, blank name blocked client-side with no request, edit (rename +
+clear code → `—` + Inactive chip, `PATCH` → 200), status/search filters
+including the filtered empty state, **re-activating a row under an active
+Inactive filter removes it** (proves refetch-not-patch), sort (`sortBy=name`)
+and pagination (`page=2`) requests, delete-unused (toast, row gone), and
+delete-in-use → 409 "…deactivate it instead" with the row remaining. As
+`EMPLOYEE` — link and read-only list present; no New button and no
+Edit/Delete icons in the DOM. Deep-link full page load of `/departments`
+restores the session and lands correctly. 26 of 28 first-run checks passed;
+the failures were both script-side (a racing request-log read, and reading
+dialog text mid fade-in) and were re-checked with proper waits and passed.
+Test data (both accounts, refresh tokens, `ZZV…` departments, a fixture
+employee/designation, and the audit rows my actor wrote) removed via a
+scoped Prisma script; zero rows verified remaining. The ~68 pre-existing
+"Attendance Test Department …" rows in the dev database were left alone.
+
+**Observations outside this feature's scope, not changed:** the shell's
+overlay drawer stays open after tapping a nav link at narrow widths; the
+global `errorInterceptor` toasts every error that the page also shows
+inline (Branch identical); at 390px the shared `DataTableComponent` scrolls
+horizontally so the Edit/Delete icons are off-screen until scrolled (this
+screen's stated responsive decision: desktop-first, usable narrow via
+scroll). `ng build`/`ng lint`/`ng test` clean.)_

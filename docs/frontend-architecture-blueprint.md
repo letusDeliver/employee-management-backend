@@ -251,6 +251,46 @@ handbook kept in sync, one commit per feature).
   does. `holidayCalendarId` exists on the real `Branch` model but is
   deliberately not a form field yet — Holiday Calendar (a later domain)
   has no frontend to select from.
+- v12 (this revision) — **Department** (second of 14; same master-data
+  shape as Branch, `features/departments/`). Establishes or amends:
+  (1) **§6 clarified — refetch-after-mutation is now the default for
+  server-paginated lists.** §6's "every mutation's UI state is patched from
+  the server's actual response only" was written for a single Employee list
+  and reads as if local patching is *the* compliant approach. With
+  server-side paging it is not: a patched row can land on the wrong
+  page/sort position, leave `pagination.total` stale, or survive an edit
+  that no longer matches the active filter. `DepartmentStore` calls
+  `loadList()` after every successful mutation instead, plus steps back one
+  page when it deletes the only row on a later page; the rule's intent (never
+  guess the server's result; never do optimistic UI) is unchanged, a refetch
+  being its strictest form. `BranchStore` and `EmployeeStore` still patch
+  locally and are flagged as follow-ups, not changed here. (2)
+  **Superseded-request cancellation** — a Store's `loadList()` keeps its
+  `Subscription` and unsubscribes the previous one *before* setting
+  `loading` (unsubscribing runs the old request's `finalize()`), so a slow
+  earlier response can never overwrite a newer one. (3) **The frontend's
+  first real unit specs** (Vitest via `ng test`): Store, dialog and table,
+  22 tests, with a mutation check proving the specs can fail; before this the
+  app had one scaffold spec and Branch shipped with none. (4) **Deliberate
+  deferral of shared master-data abstractions** — Department mirrors Branch
+  file-for-file; extraction is scheduled *after* Designation, once two
+  genuinely identical instances exist, because Branch's own shape is not
+  stable (it gains a Holiday Calendar select) and Shift differs more. (5)
+  **No `core/` department directory yet** — it arrives with the Employee
+  capstone, where four master-data lookups are needed at once; because
+  `departmentId` is mandatory its options are a *functional* dependency
+  (a failed load must block the form), unlike §12's user-name enrichment
+  which degrades silently. (6) **Two backend behaviours the Employee
+  capstone must honour**, recorded so they are not rediscovered: Employee
+  responses carry only a bare `departmentId` (no nested object), and
+  `PATCH /employees/:id` re-validates assignability whenever `departmentId`
+  is *present* even if unchanged, so the edit form must send only changed FK
+  fields and must still display a current department that has since been
+  deactivated. (7) **A real layout bug found only visually**: a
+  `<mat-form-field>` reserves a fixed one-line subscript area by default, so a
+  hint that wraps overflows into whatever follows (here, the dialog buttons);
+  use `subscriptSizing="dynamic"` on any field whose hint or error may wrap.
+  Amends §13 (Material) accordingly.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:
