@@ -28,6 +28,7 @@ export const ICON_NAMES = {
   close: 'close',
   locationOn: 'location_on',
   apartment: 'apartment',
+  work: 'work',
 } as const satisfies Record<string, string>;
 
 export type IconName = keyof typeof ICON_NAMES;

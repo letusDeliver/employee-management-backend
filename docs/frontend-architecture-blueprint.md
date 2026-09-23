@@ -343,6 +343,26 @@ handbook kept in sync, one commit per feature).
   A full page load within a second of logging in bounces to `/login`; after a
   realistic pause deep links to `/branches`, `/employees` and `/departments`
   all restore the session and render. Affects every route, not Department.
+- v14 (this revision) — **Designation** (third of 14; the first domain built
+  *on* the shared master-data screen). `features/designations/` is four small
+  files (models as aliases, an explicit service, a ~10-line store subclass,
+  a thin page component) plus a wiring spec, against fifteen for a mirrored
+  Department. Confirms v13's extraction premise with evidence rather than
+  assertion: before any code, the Designation backend module was diffed against
+  Department's with names normalised (routes, permissions and validation shape
+  identical; service/repository differ only in comments and wrapping). Adds:
+  (1) **a per-page `description`** (the existing `PageHeaderComponent` input,
+  first used) on both master-data pages, to keep "job title" and "function"
+  distinct as `docs/domain-designation.md` §10 asks; (2) **one icon**, `work`;
+  (3) **a cheap wording guard** - a grep for the word "department" in
+  `shared/master-data` (non-comment) and in a sibling feature returns nothing,
+  catching copy-paste leaking domain wording; (4) **verification discipline
+  learned the hard way**: confirming that test-data cleanup removed everything
+  found a gap in the cleanup script (it removed a fixture by id but not rows the
+  UI created), and a claim that deep links "worked" had only checked the URL, not
+  that the page rendered - both corrected. The Department and Designation
+  screens are verified by one entity-parameterised live script (35/35 checks
+  each); 51 unit tests in total.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:

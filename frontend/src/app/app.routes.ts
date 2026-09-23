@@ -85,6 +85,16 @@ export const routes: Routes = [
         canActivate: [permissionGuard],
         data: { breadcrumb: 'Departments', permissions: ['department:read'] },
       },
+      {
+        // Flat, same as 'departments' - create/edit is a dialog, not a routed sub-page.
+        path: 'designations',
+        loadComponent: () =>
+          import('./features/designations/designation-list/designation-list-page.component').then(
+            (m) => m.DesignationListPageComponent,
+          ),
+        canActivate: [permissionGuard],
+        data: { breadcrumb: 'Designations', permissions: ['designation:read'] },
+      },
     ],
   },
 ];

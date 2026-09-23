@@ -64,4 +64,14 @@ export const NAV_CONFIG: NavItem[] = [
     description: 'Manage department master data.',
     permissions: ['department:read'],
   },
+  {
+    // designation:read only - granted to all 3 roles server-side
+    // (docs/domain-designation.md ADR-DS06), so this link is visible to
+    // everyone; New/Edit/Delete are further gated in-page.
+    route: '/designations',
+    icon: ICON_NAMES.work,
+    label: 'Designations',
+    description: 'Manage job title master data.',
+    permissions: ['designation:read'],
+  },
 ];

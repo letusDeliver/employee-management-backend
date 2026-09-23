@@ -127,6 +127,8 @@ EmployeeListPageComponent` automatically — verified live during Feature
   domain-by-domain rollout (14 backend domains with no frontend yet)
 - [x] Feature 8 — Department: master-data CRUD, refetch-after-mutation Store,
   first real unit specs
+- [x] Feature 9 — Designation, and the shared master-data screen extracted from
+  Department (first abstract base class in the app)
 
 _(Feature 0 — Angular Project Initialization — completed, on the
 `frontend` branch. Scaffolded via `npx @angular/cli@21.2.19 new frontend`
@@ -1461,3 +1463,95 @@ inline (Branch identical); at 390px the shared `DataTableComponent` scrolls
 horizontally so the Edit/Delete icons are off-screen until scrolled (this
 screen's stated responsive decision: desktop-first, usable narrow via
 scroll). `ng build`/`ng lint`/`ng test` clean.)_
+
+_(Feature 9 — Designation, and the shared master-data screen — 2026-09-23,
+two commits directly on `main`: `d9ba294` "Extract shared master-data screen
+from Department" (behaviour-preserving refactor, done first) and the
+Designation commit on top. Third of the 14 backend domains with no frontend.
+Full write-up: `handbook/frontend-09-designation.md`; architectural record:
+blueprint v13 (extraction) and v14 (Designation).
+
+**Backend contract, verified by diff rather than assumed.** Before any code the
+Designation backend module was diffed against Department's with names
+normalised: routes, permissions and validation shape identical; service and
+repository differ only in comments and line wrapping. Same endpoints, same
+`{ designations, pagination }` / `{ designation }` keys, `designation:read` for
+all three roles with ADMIN-only mutations, mandatory `designationId` on Employee
+(so a used designation can never be deleted - deactivate is the real lifecycle
+action). Branch's and Department's dialogs also differed only by comments and a
+`.trim()`. That measured duplication is what made extraction right (Feature 8
+had deferred it until two genuinely identical instances existed).
+
+**Extraction (`shared/master-data/`, a domain-agnostic UI pattern, nothing in it
+imports `features/`)**: `MasterDataRecord` and its request/query/`MasterDataApi`
+types; an abstract `MasterDataStore` (list state, refetch after every mutation,
+step-back-a-page, cancellation of superseded requests, toasts from
+`store.labels`) - the app's first abstract base class, with the
+initialisation-order rule documented (base field initialisers run before the
+subclass's, so the base must not read `api`/`labels` in its constructor);
+`MasterDataListPageComponent`, `-TableComponent` (takes `canEdit`/`canDelete`,
+never injects `SessionStore`), `-ToolbarComponent`, `-FormDialogComponent`.
+Decisions: HTTP services stay per-domain (explicit contract boundary; each maps
+its own response key to a neutral `{ items, pagination }`); no config-only routes
+(each domain keeps a tiny explicit page component); base class over composition;
+Branch deliberately NOT migrated (its dialog will gain a Holiday Calendar
+select; tracked as its own follow-up, which would also fix its local-patching
+defects). Department shrank to models (aliases), its service, a ~10-line store
+subclass and a thin page; Designation is the same four files plus a wiring spec.
+Added a per-page `description` (Department: "The functional areas employees
+belong to."; Designation: "The job titles employees can hold.") and one icon,
+`work`.
+
+**Tests: 51 (was 24).** Shared behaviour is proven once: base store (11, against
+a fake API), dialog (7), table (5), toolbar (4), list page (13), plus a small
+wiring spec per domain (Department 4, Designation 5) and the 2 app specs.
+Mutation check repeated on the shared code: six deliberate breakages (the
+loading-order rule, the step-back condition, `null`-vs-`undefined` on a cleared
+code, `canDelete`, the permission prefix, the toolbar debounce) failed 11 specs,
+every one the intended guard; restored.
+
+**Real findings - and what turned out NOT to be bugs.** (1) The first live run
+of the refactored Department failed four checks, including a cleared code that
+stayed in the DB (audit trail: `before.code = after.code = ZZV-S`). Capturing
+the real PATCH body showed no `code` at all - `undefined` where the source
+sends `null` - exactly the mutation applied during the mutation check. The
+running `ng serve` had rebuilt with the mutated file and, because the restored
+files kept older timestamps, never rebuilt again. Touching them forced a
+rebuild; the same repro then sent `"code":null` and a clean re-run passed. NOT a
+regression. Lesson: force a rebuild after any mutation check and confirm a
+suspected regression from the real request before blaming or absolving the code.
+(2) **Pre-existing backend defect, not fixed**: a full page load within ~1s of
+logging in bounces to `/login` (`/branches` fails the same way). The backend
+error log shows `Unique constraint failed on ("tokenHash")` from
+`refreshTokenRepository.create()`: a refresh token is a JWT of `{ sub, roles }`
+plus a one-second `iat` with no unique id, so two issued for one user in the same
+second are identical -> `POST /auth/refresh` 500 then 401. A `jti` claim would
+fix it. After a realistic pause, deep links to `/branches`, `/employees`,
+`/departments` and `/designations` all restore the session and render. (3) An
+earlier claim of mine (Feature 8) that deep links "worked" had checked only that
+the URL stayed put; corrected in the handbook and above, and the check now
+asserts the heading and rows render. (4) Verifying "zero rows remain" found a gap
+in my own cleanup script (it deleted the fixture designation by id but not
+designations created through the UI); the one leftover row was listed, confirmed
+unreferenced and mine, then deleted.
+
+**Live verification (real backend, ADMIN + EMPLOYEE temporary accounts,
+entity-parameterised Playwright script): 35/35 checks for each of Designation and
+Department** - initial `GET` 200, heading/breadcrumb/description, create (201 +
+entity-named toast), duplicate name in a different case -> inline 409, blank name
+blocked client-side, edit with code cleared (`—`) and Inactive chip, hint
+measured not to overlap the dialog buttons, status/search filters with labelled
+empty state, re-activating under an Inactive filter removes the row (refetch),
+sort and paging requests, delete-unused, delete-in-use -> 409 "deactivate it
+instead" with the row kept, a `/branches` smoke test, EMPLOYEE read-only (no
+New/Edit/Delete in the DOM), and a deep-link full page load that renders.
+Screenshots reviewed (list with description and briefcase icon, edit dialog with
+the hint on one line, 409 banner). All test data removed and verified zero
+remaining; the ~70 pre-existing "Attendance Test …" rows were left alone.
+
+**Outside scope, not changed:** the shell's overlay drawer stays open after a nav
+tap at narrow widths; the global error toast duplicates inline errors; at 390px
+the shared table scrolls horizontally; backend name uniqueness is
+case-insensitive in the service but case-sensitive in the DB constraint;
+`BranchStore`/`EmployeeStore` still patch locally and Branch/Employees have no
+unit specs. `ng build`/`ng lint`/`ng test` clean.)_
