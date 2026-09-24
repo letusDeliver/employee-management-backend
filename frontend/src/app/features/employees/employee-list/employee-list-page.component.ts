@@ -9,6 +9,8 @@ import { RouterLink } from '@angular/router';
 import { finalize } from 'rxjs';
 
 import { SessionStore } from '../../../core/auth/session.store';
+import { DepartmentDirectoryService } from '../../../core/master-data-directory/department-directory.service';
+import { DesignationDirectoryService } from '../../../core/master-data-directory/designation-directory.service';
 import { ConfirmDialogComponent } from '../../../shared/components/confirm-dialog/confirm-dialog.component';
 import { EmptyStateComponent } from '../../../shared/components/empty-state/empty-state.component';
 import { InlineBannerComponent } from '../../../shared/components/inline-banner/inline-banner.component';
@@ -28,7 +30,13 @@ import { EmployeeTableComponent } from './employee-table.component';
  * just emitting intent) - mirrors `EmployeeDetailPageComponent`'s own
  * confirm-dialog + `deleteEmployee` pattern, but stays on the list page
  * afterwards instead of navigating away, since `EmployeeStore.deleteEmployee`
- * already patches the `employees` signal in place.
+ * refetches the list itself.
+ *
+ * Loads the department and designation directories on entry (names for the table,
+ * options for the toolbar's selects). A failed load is deliberately NOT surfaced
+ * here: on this page the names are display-only enrichment, so a failure degrades to
+ * "—" and empty filter lists - it must never stop the list from working. (The
+ * create/edit form, where those values are mandatory, is where a failed load blocks.)
  *
  * The permission-gated "New Employee" action lives here (in
  * `PageHeaderComponent`'s action slot), not in `EmployeeToolbarComponent` -
@@ -56,6 +64,8 @@ export class EmployeeListPageComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
   protected readonly employeeStore = inject(EmployeeStore);
   protected readonly sessionStore = inject(SessionStore);
+  protected readonly departmentDirectory = inject(DepartmentDirectoryService);
+  protected readonly designationDirectory = inject(DesignationDirectoryService);
   protected readonly icons = ICON_NAMES;
 
   protected readonly deleteError = signal<string | null>(null);
@@ -65,11 +75,14 @@ export class EmployeeListPageComponent implements OnInit {
   // matched nothing" - the two need different EmptyStateComponent copy.
   protected readonly hasActiveFilters = computed(() => {
     const query = this.employeeStore.query();
-    return Boolean(query.search || query.department || query.jobTitle || query.managerId);
+    return Boolean(query.search || query.departmentId || query.designationId || query.employmentType || query.managerId);
   });
 
   ngOnInit(): void {
     this.employeeStore.loadList();
+    // Errors are swallowed on purpose - see the class comment: names are display-only here.
+    this.departmentDirectory.refresh().subscribe({ error: () => undefined });
+    this.designationDirectory.refresh().subscribe({ error: () => undefined });
   }
 
   protected onFiltersChange(filters: EmployeeFilters): void {
@@ -94,7 +107,7 @@ export class EmployeeListPageComponent implements OnInit {
       .open(ConfirmDialogComponent, {
         data: {
           title: 'Delete employee',
-          message: `Delete the ${employee.jobTitle} record in ${employee.department}? This cannot be undone.`,
+          message: this.deleteMessage(employee),
           confirmLabel: 'Delete',
         },
       })
@@ -123,5 +136,13 @@ export class EmployeeListPageComponent implements OnInit {
             error: (error: unknown) => this.deleteError.set(extractErrorMessage(error)),
           });
       });
+  }
+
+  /** Names where they resolve, plain wording where they do not - never "undefined". */
+  private deleteMessage(employee: Employee): string {
+    const designation = this.designationDirectory.nameOf(employee.designationId);
+    const department = this.departmentDirectory.nameOf(employee.departmentId);
+    const subject = designation ? `the ${designation} record` : 'this employee record';
+    return `Delete ${subject}${department ? ` in ${department}` : ''}? This cannot be undone.`;
   }
 }

@@ -1,8 +1,9 @@
 import { Injectable, inject, signal } from '@angular/core';
-import { Observable, finalize, tap } from 'rxjs';
+import { Observable, Subscription, finalize, tap } from 'rxjs';
 
 import { NotificationService } from '../../../core/notifications/notification.service';
 import { extractErrorMessage } from '../../../shared/utils/extract-error-message.util';
+import { createListQueryState } from '../../../shared/utils/list-query-state.util';
 import { Paginated } from '../../../shared/models/paginated.model';
 import { EmployeeDocument } from './employee-document.model';
 import { EmployeeService } from './employee.service';
@@ -18,13 +19,15 @@ const DEFAULT_QUERY: EmployeeListQuery = {
 const DEFAULT_PAGINATION: Paginated = { page: 1, limit: 10, total: 0, totalPages: 0 };
 
 /**
- * Signal-based Store (blueprint §6) - orchestrates `EmployeeService` and
- * holds list/pagination/query state. Mutations never update local state
- * optimistically - `createEmployee`/`updateEmployee`/`deleteEmployee`
- * only patch `employees`/`selected` from the server's actual response,
- * after the request resolves (blueprint §6's explicit no-optimistic-UI
- * rule), matching the backend's own "mutation + audit log commit
- * together or not at all" guarantee in spirit.
+ * Signal-based Store (blueprint §6) - orchestrates `EmployeeService` and holds
+ * list/pagination/query state. List query state comes from the shared
+ * `createListQueryState` (Feature 6 predates it and hand-wrote the same signals).
+ *
+ * Mutations never update local state optimistically. Create and update touch no list
+ * state at all - both navigate to the detail page, and the list page reloads on entry
+ * - so a locally patched row could only ever be wrong (misplaced under the current
+ * sort/page, stale total). Delete is the one mutation that happens *on* the list, so it
+ * refetches, stepping back a page if it removed the only row on a later one.
  */
 @Injectable({ providedIn: 'root' })
 export class EmployeeStore {
@@ -33,9 +36,11 @@ export class EmployeeStore {
 
   readonly employees = signal<Employee[]>([]);
   readonly pagination = signal<Paginated>(DEFAULT_PAGINATION);
-  readonly query = signal<EmployeeListQuery>(DEFAULT_QUERY);
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
+
+  private readonly listQuery = createListQueryState<EmployeeListQuery>(DEFAULT_QUERY, () => this.loadList());
+  readonly query = this.listQuery.query;
 
   readonly selected = signal<Employee | null>(null);
   readonly selectedLoading = signal(false);
@@ -51,11 +56,18 @@ export class EmployeeStore {
   // redundant DELETE for the same id.
   readonly deletingDocumentIds = signal<ReadonlySet<string>>(new Set());
 
+  // Only the latest list request may write state - a slow earlier response
+  // (an older filter) must not overwrite a newer one.
+  private listSubscription: Subscription | null = null;
+
   loadList(): void {
+    // Unsubscribe FIRST: it runs the old request's finalize(), which would
+    // otherwise flip `loading` back to false right after the new one set it.
+    this.listSubscription?.unsubscribe();
     this.error.set(null);
     this.loading.set(true);
 
-    this.employeeService
+    this.listSubscription = this.employeeService
       .list(this.query())
       .pipe(finalize(() => this.loading.set(false)))
       .subscribe({
@@ -68,18 +80,17 @@ export class EmployeeStore {
   }
 
   setPage(page: number, limit: number): void {
-    this.query.update((current) => ({ ...current, page, limit }));
-    this.loadList();
+    this.listQuery.setPage(page, limit);
   }
 
   setSort(sortBy: EmployeeListQuery['sortBy'], order: EmployeeListQuery['order']): void {
-    this.query.update((current) => ({ ...current, sortBy, order, page: 1 }));
-    this.loadList();
+    this.listQuery.setSort(sortBy, order);
   }
 
-  setFilters(filters: Partial<Pick<EmployeeListQuery, 'search' | 'department' | 'jobTitle' | 'managerId'>>): void {
-    this.query.update((current) => ({ ...current, ...filters, page: 1 }));
-    this.loadList();
+  setFilters(
+    filters: Partial<Pick<EmployeeListQuery, 'search' | 'departmentId' | 'designationId' | 'employmentType' | 'managerId'>>,
+  ): void {
+    this.listQuery.setFilters(filters);
   }
 
   loadOne(id: string): void {
@@ -97,17 +108,13 @@ export class EmployeeStore {
 
   createEmployee(request: CreateEmployeeRequest): Observable<Employee> {
     return this.employeeService.create(request).pipe(
-      tap((employee) => {
-        this.employees.update((current) => [employee, ...current]);
-        this.notificationService.showSuccess('Employee created successfully.');
-      }),
+      tap(() => this.notificationService.showSuccess('Employee created successfully.')),
     );
   }
 
   updateEmployee(id: string, request: UpdateEmployeeRequest): Observable<Employee> {
     return this.employeeService.update(id, request).pipe(
       tap((employee) => {
-        this.employees.update((current) => current.map((existing) => (existing.id === id ? employee : existing)));
         if (this.selected()?.id === id) {
           this.selected.set(employee);
         }
@@ -119,8 +126,22 @@ export class EmployeeStore {
   deleteEmployee(id: string): Observable<void> {
     return this.employeeService.delete(id).pipe(
       tap(() => {
-        this.employees.update((current) => current.filter((existing) => existing.id !== id));
         this.notificationService.showSuccess('Employee deleted successfully.');
+
+        // Only when the deleted row is in the list currently held - a delete from the
+        // detail page needs no refetch (the list reloads on entry).
+        if (!this.employees().some((employee) => employee.id === id)) {
+          return;
+        }
+
+        // Deleting the only row on a later page would leave that page empty
+        // (the server has one fewer page now) - step back one page instead.
+        const { page, limit } = this.query();
+        if (page > 1 && this.employees().length === 1) {
+          this.listQuery.setPage(page - 1, limit);
+        } else {
+          this.loadList();
+        }
       }),
     );
   }

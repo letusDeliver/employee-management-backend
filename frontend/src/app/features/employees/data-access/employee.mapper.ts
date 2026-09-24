@@ -2,6 +2,21 @@ import { CreateEmployeeRequestDto, EmployeeDto, UpdateEmployeeRequestDto } from 
 import { CreateEmployeeRequest, Employee, UpdateEmployeeRequest } from './employee.model';
 
 /**
+ * Parses a date-only value as a LOCAL calendar date. The API returns
+ * `dateOfJoining` as an ISO instant at UTC midnight (`2024-01-01T00:00:00.000Z`),
+ * and `new Date(thatString)` in a timezone BEHIND UTC is the previous evening
+ * locally - so the UI showed the day before, and because an edit re-sent the
+ * displayed date, each save drifted it a further day earlier (verified:
+ * `America/New_York` and `America/Los_Angeles` gave 2023-12-31 for 2024-01-01;
+ * `Asia/Kolkata` and `UTC` happened to be fine). A date of joining has no
+ * time-of-day meaning, so only its `YYYY-MM-DD` part is read.
+ */
+const fromDateOnlyString = (value: string): Date => {
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number);
+  return new Date(year, month - 1, day);
+};
+
+/**
  * The one place `salary` (string <-> number) and `dateOfJoining`/
  * `createdAt`/`updatedAt` (ISO string <-> `Date`) conversions happen -
  * mirrors the backend's own `normalizeForAudit()` isolation of the same
@@ -11,11 +26,14 @@ export function toEmployeeModel(dto: EmployeeDto): Employee {
   return {
     id: dto.id,
     userId: dto.userId,
-    department: dto.department,
-    jobTitle: dto.jobTitle,
+    departmentId: dto.departmentId,
+    designationId: dto.designationId,
+    employmentType: dto.employmentType,
     salary: Number(dto.salary),
-    dateOfJoining: new Date(dto.dateOfJoining),
+    dateOfJoining: fromDateOnlyString(dto.dateOfJoining),
     managerId: dto.managerId,
+    branchId: dto.branchId,
+    shiftId: dto.shiftId,
     createdAt: new Date(dto.createdAt),
     updatedAt: new Date(dto.updatedAt),
   };
@@ -29,7 +47,7 @@ export function toEmployeeModel(dto: EmployeeDto): Employee {
  * timezone ahead of UTC, local midnight is still the *previous* day in
  * UTC, silently shifting a freshly-picked date back by one.
  */
-const toDateOnlyString = (date: Date): string => {
+export const toDateOnlyString = (date: Date): string => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
@@ -39,11 +57,13 @@ const toDateOnlyString = (date: Date): string => {
 export function toCreateEmployeeRequestDto(request: CreateEmployeeRequest): CreateEmployeeRequestDto {
   return {
     userId: request.userId,
-    department: request.department,
-    jobTitle: request.jobTitle,
+    departmentId: request.departmentId,
+    designationId: request.designationId,
+    employmentType: request.employmentType,
     salary: request.salary,
     dateOfJoining: toDateOnlyString(request.dateOfJoining),
     managerId: request.managerId,
+    branchId: request.branchId,
   };
 }
 

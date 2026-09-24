@@ -8,6 +8,18 @@
   (pageChange)="pageChange.emit($event)"
   (sortChange)="sortChange.emit($event)"
 >
+  <ng-template appDataTableCell="department" let-row>
+    {{ departmentName(row) ?? '—' }}
+  </ng-template>
+
+  <ng-template appDataTableCell="designation" let-row>
+    {{ designationName(row) ?? '—' }}
+  </ng-template>
+
+  <ng-template appDataTableCell="employmentType" let-row>
+    {{ employmentTypeLabel(row) }}
+  </ng-template>
+
   <ng-template appDataTableCell="employee" let-row>
     {{ displayName(row.userId) ?? '—' }}
   </ng-template>
@@ -22,10 +34,12 @@
   </ng-template>
 
   <ng-template appDataTableCell="actions" let-row>
+    <!-- nowrap: with seven columns the cell is narrow, and the three icon buttons would otherwise stack vertically and make every row tall. -->
+    <div class="flex items-center whitespace-nowrap">
     <a
       mat-icon-button
       [routerLink]="['/employees', row.id]"
-      [attr.aria-label]="'View ' + row.jobTitle"
+      [attr.aria-label]="'View ' + rowLabel(row)"
       matTooltip="View details"
     >
       <mat-icon>{{ icons.description }}</mat-icon>
@@ -34,7 +48,7 @@
       <a
         mat-icon-button
         [routerLink]="['/employees', row.id, 'edit']"
-        [attr.aria-label]="'Edit ' + row.jobTitle"
+        [attr.aria-label]="'Edit ' + rowLabel(row)"
         matTooltip="Edit"
       >
         <mat-icon>{{ icons.edit }}</mat-icon>
@@ -42,12 +56,12 @@
     }
     @if (sessionStore.hasAnyPermission('employee:delete:any')) {
       @if (deletingIds().has(row.id)) {
-        <mat-progress-spinner diameter="20" mode="indeterminate" [attr.aria-label]="'Deleting ' + row.jobTitle" />
+        <mat-progress-spinner diameter="20" mode="indeterminate" [attr.aria-label]="'Deleting ' + rowLabel(row)" />
       } @else {
         <button
           mat-icon-button
           type="button"
-          [attr.aria-label]="'Delete ' + row.jobTitle"
+          [attr.aria-label]="'Delete ' + rowLabel(row)"
           matTooltip="Delete"
           (click)="deleteRequested.emit(row)"
         >
@@ -55,5 +69,6 @@
         </button>
       }
     }
+    </div>
   </ng-template>
 </app-data-table>

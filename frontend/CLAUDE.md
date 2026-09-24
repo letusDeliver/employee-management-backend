@@ -129,6 +129,8 @@ EmployeeListPageComponent` automatically — verified live during Feature
   first real unit specs
 - [x] Feature 9 — Designation, and the shared master-data screen extracted from
   Department (first abstract base class in the app)
+- [x] Feature 10 — Employees capstone: rebuilt against the real backend contract
+  (core lookup directory, changed-fields-only edit, date-of-joining timezone fix)
 
 _(Feature 0 — Angular Project Initialization — completed, on the
 `frontend` branch. Scaffolded via `npx @angular/cli@21.2.19 new frontend`
@@ -1558,3 +1560,120 @@ the shared table scrolls horizontally; backend name uniqueness is
 case-insensitive in the service but case-sensitive in the DB constraint;
 `BranchStore`/`EmployeeStore` still patch locally and Branch/Employees have no
 unit specs. `ng build`/`ng lint`/`ng test` clean.)_
+
+_(Feature 10 — Employees capstone: fixing the screen against the real backend
+contract — 2026-09-24, two commits directly on `main` (a small breadcrumb fix first,
+then the capstone). This is the "capstone" step the master-data wave (Branch,
+Department, Designation) existed to unblock. Full write-up:
+`handbook/frontend-10-employees-capstone.md`; architectural record: blueprint v15.
+
+**The problem was far larger than "create/edit is broken".** Probed live against the
+real API (temporary admin, real data) and screenshotted: the list's Department and Job
+Title columns rendered blank and row buttons were labelled "View undefined"; the detail
+page heading was empty; clicking the Job Title header sent `sortBy=jobTitle` -> 400
+(valid keys: department|designation|employmentType|salary|dateOfJoining|createdAt|shift);
+the Department/Job title text filters were silently ignored (the API accepted them and
+returned everyone); Create sent `{department, jobTitle, ...}` -> 400 shown as a raw
+validation dump. One cause: `GET /employees` now returns bare `departmentId`,
+`designationId`, `employmentType`, `branchId`, `shiftId` and no nested objects.
+Also CONFIRMED live: `PATCH /employees/:id` re-validates any FK PRESENT in the body even
+if unchanged - `{salary}` on an employee whose department was deactivated is 200, but
+`{departmentId: <same>, salary}` is 400 "not active and cannot be assigned"; and the
+master-data list `limit` caps at 100 (101 -> 400) while the dev data already holds 69
+departments and 74 active designations.
+
+**What was built.** `core/master-data-directory/` - a generic lookup that PAGES THROUGH
+EVERY PAGE (limit=100), holds NO long-lived cache (each consuming page calls `refresh()`
+on entry; concurrent calls share one load), and exposes `entries()` (all records, for
+names and filters - an employee keeps a department after it is deactivated), `active()`
+(assignable only - a positive allowlist) and `optionsFor(currentId)` (active plus the
+CURRENT value first, flagged inactive, or "Unknown"); three tiny providers (Department,
+Designation, Branch); it lives in `core/` because features may not import each other.
+Employees rebuilt: real DTO/Model/Mapper (+ `shiftId` round-tripped but never sent),
+`employment-type.ts` (the closed enum + labels, no screen), `employee-update.ts` with pure
+`buildEmployeeCreate`/`buildEmployeeUpdate`, `EmployeeStore` on `createListQueryState` with
+request cancellation, and the toolbar (department/designation/employment-type SELECTS
+sending `departmentId`/`designationId`/`employmentType`), table (names, "—" fallbacks, sort
+keys = the backend's own), detail page (names, title = designation) and form (required
+Department/Designation/Employment type selects, optional Branch, active-plus-current
+options).
+
+**Decisions, made explicit.** (1) Whether a failed lookup is fatal is the CONSUMER's
+decision: on the list names are display-only enrichment, so a failure degrades to "—" and
+never stops the list; on the form Department/Designation are mandatory FKs, so a failure
+BLOCKS it with a Retry; Branch is optional, so a branch-only failure just disables that
+select. (2) THE CRUX - the edit form sends ONLY what changed; an unchanged FK is never
+resent, so a since-deactivated department cannot fail an unrelated edit; optional links are
+a new id, `null` (clear), or absent (leave); a form with no changes sends no request at all
+(a no-op PATCH still writes an audit row and bumps `updatedAt`). (3) Shift select deferred
+(zero shifts, no UI to create one). (4) Create and update touch no list state (both
+navigate away and the list reloads on entry); delete refetches, stepping back a page, but
+only when the deleted row is in the list currently held.
+
+**A latent defect nobody had reported, found in the mapper rewrite:** the API returns a
+date-only `dateOfJoining` as an ISO instant at UTC midnight, and `new Date(that)` in a
+timezone BEHIND UTC is the previous evening locally - the UI showed the day before, and
+because an edit re-sent the displayed date each save drifted it a further day (measured:
+America/New_York and America/Los_Angeles gave 2023-12-31 for 2024-01-01; Asia/Kolkata and
+UTC were fine, which is why it went unnoticed). Fixed by parsing only the `YYYY-MM-DD` part
+as a local calendar date, with a per-timezone test.
+
+**Breadcrumb (commit A).** The list showed "Employees > Employees": an empty-path child
+route INHERITS its parent's `data` (Angular's default `emptyOnly` strategy) and
+`BreadcrumbsComponent` read the inherited `snapshot.data`. Fixed by reading
+`routeConfig.data`. Proven test-first: the new spec was run against the unfixed code and
+exactly one test failed (`['Employees','Employees']`), then the one-line fix turned it
+green; every route declares its own breadcrumb, so none relied on inheritance.
+
+**Tests: 175 (was 51); 124 new** - directory 16, mapper 16, update-builder 14, store 17,
+toolbar 5, table 7, detail 7, list page 13, form 23, breadcrumbs 6. The form spec uses the
+REAL directory services against a fake HTTP backend. The mapper spec includes a
+timezone-parameterised test that first proves the runtime honoured the zone change (and skips
+honestly if not). **Mutation check found a real gap:** eight deliberate breakages, seven
+caught (23 failures); the EIGHTH SURVIVED - letting the form submit after a failed lookup -
+because no test covered a lookup that fails AFTER the singleton directories were already
+loaded earlier in the session (the existing blocking tests only covered a first-time failure,
+where nothing is loaded anyway). A test for exactly that was added, confirmed to pass on the
+correct code and fail under the mutation.
+
+**Live verification: 59/59** against the real backend (temporary ADMIN + EMPLOYEE accounts;
+fixtures via API including an employee whose department is then DEACTIVATED): single
+breadcrumb; names on every row (no blank/"—"/"undefined"), employment labels, no "undefined"
+in the table markup; the list requests the department + designation directories at limit=100;
+every sortable header sends its real key and none is a 400, and Department sort genuinely
+orders by name; department filter lists an INACTIVE department marked "(inactive)" and sends
+`departmentId`, never the retired `department`; designation and employment-type filters;
+search by department name; pagination; detail shows names/labels, salary and the date with no
+drift; the Documents dialog still opens; the edit form shows the CURRENT inactive department
+flagged (not blank), offers it first then only ACTIVE ones; **changing only the salary sends
+exactly `{salary}` and succeeds**; changing the designation and clearing the branch sends
+`{designationId, branchId: null}` only and the date does not drift across saves; saving with no
+changes sends no PATCH; create omits the inactive department, shows every required error on an
+empty submit, and POSTs ids + enum with NO free-text fields and a plain `2024-03-10`; a
+simulated department outage BLOCKS the form even with a warm singleton cache (error with the
+backend message, Retry, Create disabled) and Retry recovers; list and detail delete
+confirmations NAME the designation and department, the list refetches; a hard reload and a
+reload IMMEDIATELY after login both render (the refresh-token fix); an EMPLOYEE has no
+Employees link and cannot open the list; the form fits one column at 390px. Screenshots
+reviewed. All test data removed and verified zero remaining (17 live + 13 soft-deleted
+historical employees, none from this session).
+
+**What went wrong on the way, and how it was told apart.** THREE real visual defects found
+only by looking: the Branch select rendered taller than its neighbours (fixed: `items-start`
+on the grid) and, with a seventh column, the View/Edit/Delete icons stacked vertically making
+every row three icons tall (fixed: `whitespace-nowrap` flex row; row height 44px, measured);
+and the first live run failed 3 of 54 checks, all of them MY SCRIPT - two read a dialog mid
+fade-in, one asserted "every row is Contract" over ZERO rows (a vacuous pass; now requires
+>=1 row and a later check finds the just-created Contract employee). Playwright also reported
+the Employment type select's own floating label as "intercepting pointer events" - tested with
+a REAL mouse click at that exact point and every select opened (the label really has
+`pointer-events: all`, but the click still reaches the field), so it is a Playwright
+actionability quirk, not a user problem; and a forced click during a dropdown's close animation
+landed on the backdrop, so the helper now waits for the panel to detach. Red labels in one
+screenshot were a race (no field invalid after 1s, Create enabled).
+
+**Outside scope, not changed:** the submit button is disabled while `form.invalid &&
+form.touched` (shared with the Branch dialog - only the first click on an untouched form shows
+every required error); at 1280px the toolbar's third select wraps; `managerId`/`userId` remain
+pasted UUIDs; the global error toast still duplicates inline errors; the shell's overlay drawer
+stays open after a nav tap at narrow widths. `ng build`/`ng lint`/`ng test` clean.)_

@@ -6,13 +6,25 @@
 } @else if (employeeStore.selectedError(); as message) {
   <app-inline-banner tone="error" [message]="message" />
 } @else if (employeeStore.selected(); as employee) {
-  <app-page-header [title]="employee.jobTitle" />
+  <app-page-header [title]="designationDirectory.nameOf(employee.designationId) ?? 'Employee'" />
 
   <div class="surface-card mx-auto max-w-lg p-6">
     <dl class="flex flex-col gap-2">
       <div>
         <dt class="ds-label">Department</dt>
-        <dd class="ds-body">{{ employee.department }}</dd>
+        <dd class="ds-body">{{ departmentDirectory.nameOf(employee.departmentId) ?? '—' }}</dd>
+      </div>
+      <div>
+        <dt class="ds-label">Designation</dt>
+        <dd class="ds-body">{{ designationDirectory.nameOf(employee.designationId) ?? '—' }}</dd>
+      </div>
+      <div>
+        <dt class="ds-label">Employment type</dt>
+        <dd class="ds-body">{{ employmentTypeLabel(employee.employmentType) }}</dd>
+      </div>
+      <div>
+        <dt class="ds-label">Branch</dt>
+        <dd class="ds-body">{{ branchDirectory.nameOf(employee.branchId) ?? '—' }}</dd>
       </div>
       <div>
         <dt class="ds-label">Employee</dt>

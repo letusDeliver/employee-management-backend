@@ -9,6 +9,8 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
 
 import { SessionStore } from '../../../core/auth/session.store';
+import { DepartmentDirectoryService } from '../../../core/master-data-directory/department-directory.service';
+import { DesignationDirectoryService } from '../../../core/master-data-directory/designation-directory.service';
 import { UserDirectoryService } from '../../../core/users/user-directory.service';
 import { ColumnDef } from '../../../shared/components/data-table/column-def';
 import { DataTableCellDirective } from '../../../shared/components/data-table/data-table-cell.directive';
@@ -16,15 +18,20 @@ import { DataTableComponent } from '../../../shared/components/data-table/data-t
 import { ICON_NAMES } from '../../../shared/icon-names';
 import { Paginated } from '../../../shared/models/paginated.model';
 import { Employee } from '../data-access/employee.model';
+import { EMPLOYMENT_TYPE_LABELS } from '../data-access/employment-type';
 
 /**
- * Presentational, domain-scoped (§10) - configures `DataTableComponent`
- * with Employees' real columns; the shared component itself knows
- * nothing about Employees. Resolves an "Employee" column via
- * `UserDirectoryService` (core, Feature 6) - never a raw `userId`, and
- * a plain "—" whenever it isn't resolvable (no permission, unlinked, or
- * not-yet-loaded), per the enrichment principle: this feature must work
- * correctly with zero enrichment data present.
+ * Presentational, domain-scoped (§10) - configures `DataTableComponent` with
+ * Employees' real columns; the shared component itself knows nothing about Employees.
+ *
+ * The API returns bare `departmentId`/`designationId`, so names are resolved through the
+ * `core/` directories (the page is responsible for loading them) - and only ever as
+ * display: a name that cannot be resolved is a plain "—", never a raw id, per the
+ * enrichment principle (this list must be correct with zero enrichment present). The
+ * "Employee" column resolves the linked user the same way, via `UserDirectoryService`.
+ *
+ * Column keys for the sortable columns are the backend's own sort keys
+ * (`department`/`designation`/`employmentType`), which sort by the related record's name.
  */
 @Component({
   selector: 'app-employee-table',
@@ -45,6 +52,8 @@ import { Employee } from '../data-access/employee.model';
 export class EmployeeTableComponent {
   protected readonly sessionStore = inject(SessionStore);
   protected readonly userDirectory = inject(UserDirectoryService);
+  private readonly departments = inject(DepartmentDirectoryService);
+  private readonly designations = inject(DesignationDirectoryService);
   protected readonly icons = ICON_NAMES;
 
   readonly rows = input.required<Employee[]>();
@@ -58,7 +67,8 @@ export class EmployeeTableComponent {
 
   protected readonly columns: ColumnDef[] = [
     { key: 'department', header: 'Department', sortable: true },
-    { key: 'jobTitle', header: 'Job Title', sortable: true },
+    { key: 'designation', header: 'Designation', sortable: true },
+    { key: 'employmentType', header: 'Employment type', sortable: true },
     { key: 'employee', header: 'Employee' },
     { key: 'salary', header: 'Salary', sortable: true },
     { key: 'dateOfJoining', header: 'Date of Joining', sortable: true },
@@ -74,5 +84,22 @@ export class EmployeeTableComponent {
 
   protected displayName(userId: string | null): string | null {
     return this.userDirectory.resolveDisplayName(userId);
+  }
+
+  protected departmentName(row: Employee): string | null {
+    return this.departments.nameOf(row.departmentId);
+  }
+
+  protected designationName(row: Employee): string | null {
+    return this.designations.nameOf(row.designationId);
+  }
+
+  protected employmentTypeLabel(row: Employee): string {
+    return EMPLOYMENT_TYPE_LABELS[row.employmentType] ?? '—';
+  }
+
+  /** What an icon-only button says about its row - a name, never "undefined". */
+  protected rowLabel(row: Employee): string {
+    return this.designationName(row) ?? 'employee';
   }
 }

@@ -7,7 +7,11 @@
   }
 </app-page-header>
 
-<app-employee-toolbar (filtersChange)="onFiltersChange($event)" />
+<app-employee-toolbar
+  [departments]="departmentDirectory.entries()"
+  [designations]="designationDirectory.entries()"
+  (filtersChange)="onFiltersChange($event)"
+/>
 
 @if (deleteError(); as message) {
   <app-inline-banner tone="error" [message]="message" />

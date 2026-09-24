@@ -8,6 +8,9 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 
 import { SessionStore } from '../../../core/auth/session.store';
+import { BranchDirectoryService } from '../../../core/master-data-directory/branch-directory.service';
+import { DepartmentDirectoryService } from '../../../core/master-data-directory/department-directory.service';
+import { DesignationDirectoryService } from '../../../core/master-data-directory/designation-directory.service';
 import { UserDirectoryService } from '../../../core/users/user-directory.service';
 import { ConfirmDialogComponent } from '../../../shared/components/confirm-dialog/confirm-dialog.component';
 import { InlineBannerComponent } from '../../../shared/components/inline-banner/inline-banner.component';
@@ -16,12 +19,16 @@ import { ICON_NAMES } from '../../../shared/icon-names';
 import { extractErrorMessage } from '../../../shared/utils/extract-error-message.util';
 import { EmployeeDocumentsDialogComponent } from '../employee-documents/employee-documents-dialog.component';
 import { EmployeeStore } from '../data-access/employee.store';
+import { EMPLOYMENT_TYPE_LABELS } from '../data-access/employment-type';
 
 /**
  * Read-only detail + permission-gated edit/delete entry points. Reuses
  * the shared `ConfirmDialogComponent` (this feature's first real
- * consumer) for the soft-delete confirmation, and `UserDirectoryService`
- * for the same honest name-resolution the list table uses.
+ * consumer) for the soft-delete confirmation, and the `core/` directories
+ * (`UserDirectoryService`, department, designation, branch) for the same honest
+ * name-resolution the list table uses - the API returns only bare ids, and a name
+ * that cannot be resolved is a plain "—", never a raw id or "undefined". The
+ * directory loads are display-only enrichment here, so their failures are swallowed.
  */
 @Component({
   selector: 'app-employee-detail-page',
@@ -45,6 +52,9 @@ export class EmployeeDetailPageComponent implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
   protected readonly sessionStore = inject(SessionStore);
   protected readonly userDirectory = inject(UserDirectoryService);
+  protected readonly departmentDirectory = inject(DepartmentDirectoryService);
+  protected readonly designationDirectory = inject(DesignationDirectoryService);
+  protected readonly branchDirectory = inject(BranchDirectoryService);
   protected readonly employeeStore = inject(EmployeeStore);
   protected readonly icons = ICON_NAMES;
 
@@ -56,7 +66,15 @@ export class EmployeeDetailPageComponent implements OnInit {
     if (id) {
       this.employeeStore.loadOne(id);
       this.userDirectory.ensureLoaded().subscribe({ error: () => undefined });
+      this.departmentDirectory.refresh().subscribe({ error: () => undefined });
+      this.designationDirectory.refresh().subscribe({ error: () => undefined });
+      this.branchDirectory.refresh().subscribe({ error: () => undefined });
     }
+  }
+
+  /** A method, not a template lookup: a value the backend adds later must render "—", not blank. */
+  protected employmentTypeLabel(type: string): string {
+    return (EMPLOYMENT_TYPE_LABELS as Record<string, string>)[type] ?? '—';
   }
 
   protected displayName(userId: string | null): string | null {
@@ -85,7 +103,7 @@ export class EmployeeDetailPageComponent implements OnInit {
       .open(ConfirmDialogComponent, {
         data: {
           title: 'Delete employee',
-          message: `Delete the ${employee.jobTitle} record in ${employee.department}? This cannot be undone.`,
+          message: this.deleteMessage(employee),
           confirmLabel: 'Delete',
         },
       })
@@ -107,5 +125,13 @@ export class EmployeeDetailPageComponent implements OnInit {
             });
         }
       });
+  }
+
+  /** Names where they resolve, plain wording where they do not - never "undefined". */
+  private deleteMessage(employee: { designationId: string; departmentId: string }): string {
+    const designation = this.designationDirectory.nameOf(employee.designationId);
+    const department = this.departmentDirectory.nameOf(employee.departmentId);
+    const subject = designation ? `the ${designation} record` : 'this employee record';
+    return `Delete ${subject}${department ? ` in ${department}` : ''}? This cannot be undone.`;
   }
 }

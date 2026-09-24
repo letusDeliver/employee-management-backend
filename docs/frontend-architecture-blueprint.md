@@ -369,6 +369,45 @@ handbook kept in sync, one commit per feature).
   that the page rendered - both corrected. The Department and Designation
   screens are verified by one entity-parameterised live script (35/35 checks
   each); 51 unit tests in total.
+- v15 (this revision) — **Employees capstone**: the Employee screens rebuilt against
+  the real backend contract (`features/employees/`, `core/master-data-directory/`). Closes
+  the "contract drift" recorded since v11. Establishes or amends: (1) **§12 - `core/`
+  gains `master-data-directory/`**: a generic lookup (`MasterDataDirectory`, subclassed
+  once per domain to supply its path and response key) for features that must *reference*
+  master data without owning it. It differs from `UserDirectoryService` deliberately: it
+  **pages through every page** (the list endpoints cap `limit` at 100 and dev data already
+  exceeds one page), it holds **no long-lived cache** (master data changes; the screens that
+  change it should not have to know who caches it - each consuming page calls `refresh()` on
+  entry, concurrent calls share one load), and it exposes `entries()` (every record - display
+  names and filters), `active()` (assignable only - a positive allowlist) and
+  `optionsFor(currentId)` (active plus the CURRENT value, first, flagged inactive). (2)
+  **Whether a failed lookup is fatal is the CONSUMER's decision** (extends v9's enrichment
+  principle): display-only names degrade to "-" and never stop a list; a mandatory FK's options
+  BLOCK their form with a Retry (including when a warm singleton cache masks the failure); an
+  optional FK's lookup failure disables only its own select. (3) **§8 - send only what
+  changed when the server re-validates what you send.** `PATCH /employees/:id` re-validates
+  any foreign key PRESENT in the body even if unchanged, so `buildEmployeeUpdate` omits
+  unchanged FKs; optional links are a new id, `null` (clear) or absent (leave); a form with no
+  changes sends no request (a no-op PATCH still writes an audit row). (4) **§6 - refined**:
+  v12's "refetch after every mutation" applies where the mutated list is ON SCREEN. Employee
+  create/update navigate away and the list reloads on entry, so they touch no list state at
+  all; delete happens on the list, so it refetches (with the step-back rule) - but only when
+  the deleted row is in the list currently held. (5) **§8 - a date-only value is a calendar
+  date, not an instant**: the API returns it as an ISO instant at UTC midnight, and
+  `new Date(...)` in a zone behind UTC is the previous evening (verified: America/New_York and
+  America/Los_Angeles give the day before; Asia/Kolkata and UTC do not, which is why it went
+  unnoticed) - and an edit re-sent the displayed date, so each save drifted it further. The
+  mapper now parses only `YYYY-MM-DD` as a local date. (6) **Breadcrumb fix** - an empty-path
+  child route INHERITS its parent's `data` (Angular's default `emptyOnly` strategy), so
+  `BreadcrumbsComponent` now reads `routeConfig.data`, not `snapshot.data`. (7) **§13/§15
+  layout**: a `mat-form-field` with `subscriptSizing="dynamic"` stretches to its grid row's
+  height unless the grid is `items-start`; a table actions cell that can go narrow needs a
+  `whitespace-nowrap` flex row or its icon buttons stack vertically. (8) **Testing**: 175
+  tests (124 new); a timezone-parameterised mapper test that first proves the runtime honoured
+  the zone change (and skips honestly if not); a bug proven test-first; and a mutation check
+  whose SURVIVING mutant exposed a real coverage gap (a lookup failing after a successful
+  earlier load). (9) **Shift** is deferred - `shiftId` round-trips through the model but is
+  never sent; the select arrives with the Shift domain.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:

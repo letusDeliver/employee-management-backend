@@ -7,11 +7,34 @@
     </mat-form-field>
     <mat-form-field subscriptSizing="dynamic">
       <mat-label>Department</mat-label>
-      <input matInput formControlName="department" />
+      <mat-select formControlName="departmentId">
+        <mat-option value="">All</mat-option>
+        @for (department of departments(); track department.id) {
+          <mat-option [value]="department.id">
+            {{ department.name }}{{ department.status === 'INACTIVE' ? ' (inactive)' : '' }}
+          </mat-option>
+        }
+      </mat-select>
     </mat-form-field>
     <mat-form-field subscriptSizing="dynamic">
-      <mat-label>Job title</mat-label>
-      <input matInput formControlName="jobTitle" />
+      <mat-label>Designation</mat-label>
+      <mat-select formControlName="designationId">
+        <mat-option value="">All</mat-option>
+        @for (designation of designations(); track designation.id) {
+          <mat-option [value]="designation.id">
+            {{ designation.name }}{{ designation.status === 'INACTIVE' ? ' (inactive)' : '' }}
+          </mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+    <mat-form-field subscriptSizing="dynamic">
+      <mat-label>Employment type</mat-label>
+      <mat-select formControlName="employmentType">
+        <mat-option value="">All</mat-option>
+        @for (type of employmentTypes; track type.value) {
+          <mat-option [value]="type.value">{{ type.label }}</mat-option>
+        }
+      </mat-select>
     </mat-form-field>
   </form>
 </div>

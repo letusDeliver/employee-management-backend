@@ -7,21 +7,79 @@
   </div>
 } @else {
   <div class="surface-card mx-auto max-w-2xl p-6">
+    @if (isEditMode && employeeStore.selectedError(); as message) {
+      <div class="mb-2">
+        <app-inline-banner tone="error" [message]="message" />
+      </div>
+    }
+
+    <!-- The department/designation lookups are mandatory, so a failure BLOCKS the form (submit is disabled) and offers a retry. -->
+    @if (mandatoryLookupsError(); as message) {
+      <div class="mb-2 flex flex-wrap items-center gap-2">
+        <div class="min-w-0 flex-1">
+          <app-inline-banner tone="error" [message]="'Could not load the department and designation options: ' + message" />
+        </div>
+        <button mat-stroked-button type="button" [disabled]="lookupsLoading()" (click)="reloadLookups()">
+          <mat-icon>{{ icons.refresh }}</mat-icon>
+          Retry
+        </button>
+      </div>
+    } @else if (lookupsLoading() && !mandatoryLookupsLoaded()) {
+      <div class="mb-2 flex items-center gap-2">
+        <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Loading form options" />
+        <span>Loading form options...</span>
+      </div>
+    }
+
     <form [formGroup]="form" (ngSubmit)="submit()" class="flex flex-col gap-2">
-        <div class="grid gap-x-4 gap-y-1 sm:grid-cols-2">
+        <!-- items-start: a field with no reserved error line (Branch) must not stretch to its row-mate's height. -->
+        <div class="grid items-start gap-x-4 gap-y-1 sm:grid-cols-2">
           <mat-form-field class="w-full">
             <mat-label>Department</mat-label>
-            <input matInput formControlName="department" />
-            @if (form.controls.department.invalid && form.controls.department.touched) {
+            <mat-select formControlName="departmentId" required>
+              @for (option of departmentOptions(); track option.id) {
+                <mat-option [value]="option.id">{{ option.label }}{{ option.inactive ? ' (inactive)' : '' }}</mat-option>
+              }
+            </mat-select>
+            @if (form.controls.departmentId.invalid && form.controls.departmentId.touched) {
               <mat-error>Department is required.</mat-error>
             }
           </mat-form-field>
 
           <mat-form-field class="w-full">
-            <mat-label>Job Title</mat-label>
-            <input matInput formControlName="jobTitle" />
-            @if (form.controls.jobTitle.invalid && form.controls.jobTitle.touched) {
-              <mat-error>Job title is required.</mat-error>
+            <mat-label>Designation</mat-label>
+            <mat-select formControlName="designationId" required>
+              @for (option of designationOptions(); track option.id) {
+                <mat-option [value]="option.id">{{ option.label }}{{ option.inactive ? ' (inactive)' : '' }}</mat-option>
+              }
+            </mat-select>
+            @if (form.controls.designationId.invalid && form.controls.designationId.touched) {
+              <mat-error>Designation is required.</mat-error>
+            }
+          </mat-form-field>
+
+          <mat-form-field class="w-full">
+            <mat-label>Employment type</mat-label>
+            <mat-select formControlName="employmentType" required>
+              @for (type of employmentTypes; track type.value) {
+                <mat-option [value]="type.value">{{ type.label }}</mat-option>
+              }
+            </mat-select>
+            @if (form.controls.employmentType.invalid && form.controls.employmentType.touched) {
+              <mat-error>Employment type is required.</mat-error>
+            }
+          </mat-form-field>
+
+          <mat-form-field class="w-full" subscriptSizing="dynamic">
+            <mat-label>Branch (optional)</mat-label>
+            <mat-select formControlName="branchId">
+              <mat-option value="">No branch</mat-option>
+              @for (option of branchOptions(); track option.id) {
+                <mat-option [value]="option.id">{{ option.label }}{{ option.inactive ? ' (inactive)' : '' }}</mat-option>
+              }
+            </mat-select>
+            @if (branchUnavailable()) {
+              <mat-hint>Branches could not be loaded - the current branch is left unchanged.</mat-hint>
             }
           </mat-form-field>
 
@@ -87,7 +145,7 @@
             mat-flat-button
             color="primary"
             type="submit"
-            [disabled]="submitting() || (form.invalid && form.touched)"
+            [disabled]="!canSubmit() || (form.invalid && form.touched)"
           >
             {{ isEditMode ? 'Save Changes' : 'Create Employee' }}
           </button>

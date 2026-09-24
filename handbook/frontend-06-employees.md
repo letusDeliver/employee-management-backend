@@ -1,5 +1,13 @@
 # Frontend Chapter 6 — Employees
 
+> **Update (2026-09-24) — this chapter describes the screen as first built, against the
+> contract of that day.** The backend later replaced the free-text `department`/`jobTitle`
+> with governed master data (`departmentId`, `designationId`, `employmentType`, optional
+> `branchId`/`shiftId`), which left the list, filters, sorts, detail page and create/edit
+> form broken. They were rebuilt in Chapter 10. The architecture, the DTO/Model/Mapper
+> split, `DataTableComponent` and `UserDirectoryService` decisions below still hold; the
+> field names and the "text inputs for department and job title" description do not.
+
 ## Theory
 
 Employees is full CRUD over the HR employee record — the largest
