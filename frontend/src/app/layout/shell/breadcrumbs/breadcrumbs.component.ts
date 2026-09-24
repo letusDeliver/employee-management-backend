@@ -55,7 +55,13 @@ export class BreadcrumbsComponent {
         url += `/${routePath}`;
       }
 
-      const label = child.snapshot.data['breadcrumb'] as string | undefined;
+      // The route's OWN declared data, not `snapshot.data`: Angular's default
+      // `paramsInheritanceStrategy: 'emptyOnly'` lets an empty-path child inherit
+      // its parent's `data`, so a list route that deliberately declares no
+      // breadcrumb (e.g. `employees` -> `''`) would repeat its parent's crumb
+      // ("Employees > Employees"). `routeConfig.data` is exactly what the route
+      // table declares, with no inheritance.
+      const label = child.routeConfig?.data?.['breadcrumb'] as string | undefined;
 
       if (label) {
         crumbs.push({ label, url });
