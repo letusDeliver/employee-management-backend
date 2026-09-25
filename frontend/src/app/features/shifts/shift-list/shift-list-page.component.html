@@ -1,0 +1,39 @@
+<app-page-header title="Shifts" description="The working hours and days employees can be assigned to.">
+  @if (canCreate()) {
+    <button pageHeaderActions mat-flat-button color="primary" type="button" (click)="openCreateDialog()">
+      <mat-icon>{{ icons.add }}</mat-icon>
+      New Shift
+    </button>
+  }
+</app-page-header>
+
+<app-master-data-toolbar (filtersChange)="onFiltersChange($event)" />
+
+@if (deleteError(); as message) {
+  <app-inline-banner tone="error" [message]="message" />
+}
+
+@if (store.error(); as message) {
+  <app-inline-banner tone="error" [message]="message" />
+} @else if (!store.loading() && store.items().length === 0) {
+  <app-empty-state
+    [icon]="icons.schedule"
+    [title]="hasActiveFilters() ? 'No shifts match your filters' : 'No shifts yet'"
+    [description]="
+      hasActiveFilters() ? 'Try a different search or clear your filters.' : 'Shift records will appear here once you add one.'
+    "
+  />
+} @else {
+  <app-shift-table
+    [rows]="store.items()"
+    [loading]="store.loading()"
+    [pagination]="store.pagination()"
+    [deletingIds]="deletingIds()"
+    [canEdit]="canEdit()"
+    [canDelete]="canDelete()"
+    (pageChange)="onPageChange($event)"
+    (sortChange)="onSortChange($event)"
+    (editRequested)="openEditDialog($event)"
+    (deleteRequested)="onDeleteRequested($event)"
+  />
+}

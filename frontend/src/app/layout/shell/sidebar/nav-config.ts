@@ -74,4 +74,13 @@ export const NAV_CONFIG: NavItem[] = [
     description: 'Manage job title master data.',
     permissions: ['designation:read'],
   },
+  {
+    // shift:read only - granted to all 3 roles server-side (docs/domain-shift.md), so this
+    // link is visible to everyone; New/Edit/Delete are ADMIN-only and gated in-page.
+    route: '/shifts',
+    icon: ICON_NAMES.schedule,
+    label: 'Shifts',
+    description: 'Manage working hours and days.',
+    permissions: ['shift:read'],
+  },
 ];

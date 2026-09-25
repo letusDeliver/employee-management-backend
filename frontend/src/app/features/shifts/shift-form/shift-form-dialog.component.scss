@@ -1,0 +1,43 @@
+:host {
+  display: block;
+}
+
+.schedule-hint {
+  margin: 0 0 12px;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.days-error {
+  margin: 4px 0 0;
+  color: var(--mat-sys-error);
+}
+
+// Seven toggles must fit the 480px dialog - and a 320px phone - without a horizontal
+// scrollbar, so they share the row equally instead of sizing to their labels.
+.working-days {
+  display: flex;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.working-days .mat-button-toggle {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+// The default checkmark inside each toggle needs ~26px the 1/7-wide buttons do not have (on a
+// 360px phone each is ~42px): it clipped "Mon" to "Mo" and made neighbours overlap, so it is
+// hidden (`hideMultipleSelectionIndicator`). Selection stays readable without colour alone:
+// the fill AND a bolder label mark it, and `aria-pressed` carries it for assistive tech.
+.working-days .mat-button-toggle-checked {
+  font-weight: 600;
+}
+
+// Material pads each toggle label 12px per side and exposes NO token for it (unlike colours and
+// sizes, which the sidebar overrides through custom properties instead of ::ng-deep). At a 360px
+// phone each toggle is ~41px wide, so 24px of padding leaves ~17px for a "Mon" that needs ~30px
+// and the label spills over its neighbour. The one rule is scoped under `.working-days` so it
+// reaches nothing else.
+.working-days ::ng-deep .mat-button-toggle-label-content {
+  padding: 0 2px;
+}

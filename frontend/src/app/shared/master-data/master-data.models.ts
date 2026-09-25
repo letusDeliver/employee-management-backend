@@ -15,24 +15,40 @@ import { Paginated } from '../models/paginated.model';
  */
 export type MasterDataStatus = 'ACTIVE' | 'INACTIVE';
 
-export interface MasterDataRecord {
+/**
+ * The least `MasterDataStore` needs from a record: it never reads `code`. Shift
+ * (`id / name / status` plus its own schedule fields, no `code`) is the first
+ * domain that fits this but not `MasterDataRecord`.
+ */
+export interface MasterDataBase {
   id: string;
   name: string;
-  code: string | null;
   status: MasterDataStatus;
+}
+
+export interface MasterDataRecord extends MasterDataBase {
+  code: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export type MasterDataSortField = 'name' | 'code' | 'status' | 'createdAt';
 
-export interface MasterDataListQuery {
+/**
+ * What every master-data list query has in common. A domain with its own sortable
+ * columns (Shift: `startTime`, `endTime`) extends this with a narrower `sortBy`.
+ */
+export interface MasterDataQueryBase {
   page: number;
   limit: number;
   search?: string;
   status?: MasterDataStatus;
-  sortBy: MasterDataSortField;
+  sortBy: string;
   order: 'asc' | 'desc';
+}
+
+export interface MasterDataListQuery extends MasterDataQueryBase {
+  sortBy: MasterDataSortField;
 }
 
 export interface CreateMasterDataRequest {
@@ -46,7 +62,7 @@ export interface UpdateMasterDataRequest {
   status?: MasterDataStatus;
 }
 
-export interface MasterDataPage<T extends MasterDataRecord> {
+export interface MasterDataPage<T extends MasterDataBase> {
   items: T[];
   pagination: Paginated;
 }
@@ -59,11 +75,12 @@ export interface MasterDataPage<T extends MasterDataRecord> {
  * one domain's wire shape never touches `shared/`.
  */
 export interface MasterDataApi<
-  T extends MasterDataRecord,
+  T extends MasterDataBase,
   C extends CreateMasterDataRequest = CreateMasterDataRequest,
   U extends UpdateMasterDataRequest = UpdateMasterDataRequest,
+  Q extends MasterDataQueryBase = MasterDataListQuery,
 > {
-  list(query: MasterDataListQuery): Observable<MasterDataPage<T>>;
+  list(query: Q): Observable<MasterDataPage<T>>;
   create(request: C): Observable<T>;
   update(id: string, request: U): Observable<T>;
   delete(id: string): Observable<void>;

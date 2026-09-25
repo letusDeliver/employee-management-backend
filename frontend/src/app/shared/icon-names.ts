@@ -30,6 +30,7 @@ export const ICON_NAMES = {
   apartment: 'apartment',
   work: 'work',
   refresh: 'refresh',
+  schedule: 'schedule',
 } as const satisfies Record<string, string>;
 
 export type IconName = keyof typeof ICON_NAMES;

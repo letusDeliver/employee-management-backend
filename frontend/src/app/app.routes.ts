@@ -95,6 +95,14 @@ export const routes: Routes = [
         canActivate: [permissionGuard],
         data: { breadcrumb: 'Designations', permissions: ['designation:read'] },
       },
+      {
+        // Flat, same as 'designations' - create/edit is a dialog, not a routed sub-page.
+        path: 'shifts',
+        loadComponent: () =>
+          import('./features/shifts/shift-list/shift-list-page.component').then((m) => m.ShiftListPageComponent),
+        canActivate: [permissionGuard],
+        data: { breadcrumb: 'Shifts', permissions: ['shift:read'] },
+      },
     ],
   },
 ];
