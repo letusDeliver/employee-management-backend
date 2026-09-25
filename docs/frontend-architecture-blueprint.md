@@ -408,7 +408,7 @@ handbook kept in sync, one commit per feature).
   whose SURVIVING mutant exposed a real coverage gap (a lookup failing after a successful
   earlier load). (9) **Shift** is deferred - `shiftId` round-trips through the model but is
   never sent; the select arrives with the Shift domain.
-- v16 (this revision) — **Shift** (item 6 of the rollout; the first master-data domain whose
+- v16 — **Shift** (item 6 of the rollout; the first master-data domain whose
   shape is NOT `id / name / code`), plus the deferred Shift integration on the Employee form.
   `features/shifts/` and `core/master-data-directory/shift-directory.service.ts`. Establishes or
   amends: (1) **§9/§11 - when a domain almost fits a shared abstraction, widen its TYPES, not
@@ -449,6 +449,53 @@ handbook kept in sync, one commit per feature).
   the Employee form (extends v15's per-consumer fatality rule). (9) **Tests: 252 (was 175; 77
   new)**; live 60/60 (Shift screens) and 28/28 (Employee integration) against the real backend,
   with all test data removed and verified (0 shifts, 30 employees = the dev baseline).
+- v17 (this revision) — **Holiday Calendar** (item 7 of the rollout; the first PARENT -> CHILD
+  domain: `HolidayCalendar -> Holiday`), plus the deferred calendar select on the Branch dialog.
+  `features/holiday-calendars/`, `core/master-data-directory/holiday-calendar-directory.service.ts`,
+  `features/branches/data-access/branch-calendar.ts`. Establishes or amends: (1) **§9/§11 - extract
+  at the THIRD identical consumer.** v16 left the confirm -> delete -> report-failure flow
+  duplicated in Shift and said to decide here; Holiday Calendar made three, so
+  `shared/master-data/confirm-delete.ts` (`createConfirmDelete`, an injecting helper called from a
+  field initialiser, `deleteById` read lazily) now serves the shared list page, Shift and both
+  Holiday Calendar pages. The date-only parse/format that lived privately in the Employee mapper
+  moved to `shared/utils/date-only.util.ts`; the mapper keeps `toDateOnlyString` as an alias
+  (`= formatDateOnly`) so nothing that used it changed. (2) **§8 - a calendar date is a
+  `YYYY-MM-DD` string until the very edge of the UI.** A holiday's `date` arrives as an ISO instant
+  at UTC midnight; it is read only via `parseDateOnly`, written via `formatDateOnly` from LOCAL
+  parts (never `toISOString()`), and an edit diff compares the strings, not `Date` objects.
+  Verified live with the browser in `America/Los_Angeles` and `Pacific/Auckland` (2026-08-15 renders
+  as Sat 15 Aug; an untouched edit sends nothing). (3) **§6/§9 - per-visit state for a hierarchy's
+  child list**: `HolidayListStore` is provided by the DETAIL PAGE component, not `root`, so each
+  visit starts empty and nothing leaks between calendars; it loads calendar + holidays with one
+  `forkJoin` and, like `MasterDataStore`, REFETCHES after every mutation (the server owns the date
+  order). The un-paginated holiday list is filtered by year in the browser; the year defaults to the
+  current year if it has entries, else the newest, else "All", and after saving a holiday the select
+  JUMPS to that holiday's year so the result is visible. A 404 is its own state ("not found" with a
+  way back), distinct from a load error (banner + Retry). (4) **§5 - a list and a detail route as
+  flat siblings under one wrapper route** that carries the parent crumb (the list carries none of
+  its own), as `employees` does. (5) **§8 - "send only what changed" now covers a THIRD foreign
+  key**, `Branch.holidayCalendarId`: `calendarChangeForUpdate` returns `{}` (unchanged),
+  `{holidayCalendarId: null}` (clear) or the new id; create omits the key for "No calendar". Proven
+  live: a branch whose calendar was deactivated after it was assigned saves an unrelated change with
+  no `holidayCalendarId` in the PATCH and a 200. The optional lookup stays optional: a failed
+  `/holiday-calendars` load disables only that select with a hint (v15/v16 fatality rule). (6)
+  **§8 - permissions are not always symmetrical**: the backend gates HOLIDAY add/edit/delete on
+  `holidayCalendar:update` and only deleting the whole CALENDAR on `:delete`; the UI mirrors that
+  exactly. (7) **§13/§15 - layout guards, measured in EVERY state.** A banner directly above a
+  form field needs its own bottom margin (the inactive-calendar banner touched the Year field); a
+  `subscriptSizing="dynamic"` field has no fixed subscript area, so it needs a fixed `mb-5` to keep
+  the gap its siblings get (the Branch dialog's new select sat flush against Status, its label
+  overlapping the box). The first measured check ran only in the outage state - where the hint
+  supplies the gap - and PASSED; the screenshot of the normal state showed the defect. A measurement
+  covers only the states it ran in. (8) **Backend facts recorded, not changed**: calendar-name
+  uniqueness is exact-case (Shift's is case-insensitive), and both DELETEs answer 200 + a message
+  (not 204). (9) **Testing / tooling**: 366 tests (was 252; 114 new); live 60/60 (Holiday Calendar
+  screens, stable over three runs) and 25/25 (Branch integration) against the real backend, all data
+  removed and verified (0 calendars, 0 holidays, 1 branch, 30 employees). Environment: running
+  `ng build`/`ng test` alongside `ng serve` can fail a Vite dependency-cache rename with `EPERM` on
+  Windows and leave the login page blank (504 "Outdated Optimize Dep") - stop `ng serve`, delete
+  `frontend/.angular/cache/<ver>/frontend/vite`, restart, and confirm the login form renders before
+  running a verifier.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:

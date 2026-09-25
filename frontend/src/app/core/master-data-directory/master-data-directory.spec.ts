@@ -6,6 +6,7 @@ import { BranchDirectoryService } from './branch-directory.service';
 import { DepartmentDirectoryService } from './department-directory.service';
 import { DesignationDirectoryService } from './designation-directory.service';
 import { DirectoryEntry } from './master-data-directory';
+import { HolidayCalendarDirectoryService } from './holiday-calendar-directory.service';
 import { ShiftDirectoryService } from './shift-directory.service';
 
 const entry = (id: string, name: string, status: DirectoryEntry['status'] = 'ACTIVE'): DirectoryEntry => ({ id, name, status });
@@ -171,6 +172,7 @@ describe('directory providers', () => {
     ['designation', () => TestBed.inject(DesignationDirectoryService), '/designations', 'designations'],
     ['branch', () => TestBed.inject(BranchDirectoryService), '/branches', 'branches'],
     ['shift', () => TestBed.inject(ShiftDirectoryService), '/shifts', 'shifts'],
+    ['holiday calendar', () => TestBed.inject(HolidayCalendarDirectoryService), '/holiday-calendars', 'holidayCalendars'],
   ])('%s directory reads its own endpoint and response key', (_name, factory, path, key) => {
     const directory = factory();
     directory.refresh();

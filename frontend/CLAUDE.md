@@ -133,8 +133,11 @@ EmployeeListPageComponent` automatically — verified live during Feature
   (core lookup directory, changed-fields-only edit, date-of-joining timezone fix)
 - [x] Feature 11 — Shift: first master-data domain without a `code`; `MasterDataStore` types widened,
   own table/dialog/page; Shift select + detail row on the Employee form (`shiftId` sent only when changed)
-- [ ] Feature 12 — Holiday Calendar: NEXT (the first hierarchical domain: Branch -> HolidayCalendar -> Holiday;
-  Branch's dialog then gains a calendar select). Not started - Phase 1 (Theory) has not been presented.
+- [x] Feature 12 — Holiday Calendar: first parent -> child domain (calendar list + a detail page of holidays with a
+  year filter); `createConfirmDelete` and `date-only.util` extracted at the third consumer; optional calendar select on
+  the Branch dialog (`holidayCalendarId` sent only when changed)
+- [ ] Feature 13 — Attendance: NEXT (first transactional/workflow domain; consumes Shift + Holiday Calendar). Not started -
+  Phase 1 (Theory) has not been presented.
 
 _(Feature 0 — Angular Project Initialization — completed, on the
 `frontend` branch. Scaffolded via `npx @angular/cli@21.2.19 new frontend`
@@ -1747,3 +1750,57 @@ already supports both); a failed optional lookup still raises the global "Someth
 toast on top of the inline hint; Prettier is configured but not enforced (every pre-existing file
 fails `prettier --check`); Branch is still not on the shared screen and still patches its list
 locally.)_
+
+_(Feature 12 - Holiday Calendar: the first PARENT -> CHILD domain (`HolidayCalendar -> Holiday`) -
+2026-09-25, directly on `main`. Full write-up: `handbook/frontend-12-holiday-calendar.md`;
+architectural record: blueprint v17.
+
+**Contract (read from `backend/src/modules/holidayCalendars/*` + `docs/domain-holiday-calendar.md`,
+then exercised live).** Calendar `id, name, status, createdAt, updatedAt` - NO `code`; sorts
+`name|status|createdAt`. Holiday `id, holidayCalendarId, date, name, isOptional, ...` where `date` is a
+CALENDAR DATE returned as an ISO instant at UTC midnight; a date is unique within a calendar (409); the
+holiday list is un-paginated. `holidayCalendar:read` for every role, every mutation ADMIN-only - and the
+backend gates HOLIDAY add/edit/delete on `:update`, only deleting the whole calendar on `:delete`. Deleting a
+calendar is a 409 while any branch uses it (its holidays cascade). Only an ACTIVE calendar is assignable to a
+branch; `Branch.holidayCalendarId` is re-validated when PRESENT, `null` clears, absent leaves alone. Backend
+quirks found, NOT changed: calendar-name uniqueness is EXACT-case (Shift's is case-insensitive); both DELETEs
+answer 200 + a message, not 204.
+
+**What was built.** (A) `features/holiday-calendars/`: `HolidayCalendarStore` (a ~10-line `MasterDataStore`
+subclass), a calendar list page/table/dialog of its own (no `code`; a row links to the detail), and a DETAIL page
+`/holiday-calendars/:id` with a `HolidayListStore` PROVIDED BY THE PAGE (per-visit state, refetch after every
+mutation, one `forkJoin` for calendar + holidays), a Holiday table, an add/edit dialog with a `MatDatepicker`,
+and a year filter (defaults to the current year if it has entries, else the newest, else "All"; it JUMPS to the
+saved holiday's year). Pure tested modules `holiday-date.ts` and `holiday-update.ts`. (B) Two extractions at
+the THIRD consumer: `shared/master-data/confirm-delete.ts` (`createConfirmDelete`; used by the shared list page,
+Shift, and both new pages) and `shared/utils/date-only.util.ts` (`parseDateOnly`/`formatDateOnly`; the Employee
+mapper keeps `toDateOnlyString` as an alias). (C) Branch integration: `HolidayCalendarDirectoryService`, an
+optional "Holiday calendar" select in the Branch dialog (options = ACTIVE + the current one flagged "(inactive)"),
+and `branch-calendar.ts` (`calendarChangeForUpdate`: unchanged -> `{}`, clear -> `null`, else the id; create omits
+"No calendar"). A failed lookup disables only that select with a hint.
+
+**Tests: 366 (was 252; 114 new).** `ng build`/`ng lint`/`ng test` clean. **Live verification against the real
+backend (temporary ADMIN + EMPLOYEE accounts): Holiday Calendar screens 60/60 (stable over three runs), Branch
+integration 25/25**, including the browser in `America/Los_Angeles` and `Pacific/Auckland` (no date drift), a 360px
+table and dialog, and a deactivated current calendar saved WITHOUT being resent. Data removed and verified
+(0 calendars, 0 holidays, 1 branch, 30 employees). Harness: `setup-holiday.mjs`, `verify-holiday.mjs`,
+`verify-branch-calendar.mjs`, `cleanup-holiday.mjs`.
+
+**What went wrong on the way, and how it was told apart.** Real defects, none from the backend, none caught by a
+unit test: (1) the inactive-calendar banner touched the Year field; (2) the Branch dialog's new select sat flush
+against Status (a `subscriptSizing="dynamic"` field loses the fixed subscript gap) - my first measured check ran
+only in the OUTAGE state, where the hint supplies the gap, and passed; the screenshot of the normal state showed
+it, so the check now runs in every state; (3) the not-found page's Back link was left-aligned under a centred
+message. NOT app bugs: "duplicate name (different case)" did not 409 and DELETE was not 204 (both my wrong
+assumptions about the backend, now recorded above); a failed step left a dialog open and failed every later step
+(the script clicked a correctly-disabled button - fresh dialog per blank-field check now, and the verifier
+screenshots on failure); intermittent text checks read a dialog/table before it rendered (they wait now; three
+clean runs); a login page that did not render was a Vite `EPERM` dependency-cache rename after running `ng build`/
+`ng test` beside `ng serve` (environment - the overlay check did NOT show it; confirm the login form renders); an
+earlier run had left a `ZZV Calendar` fixture and two `zzv-` users in the dev DB (cleanup now matches `zzv`
+case-insensitively and removes every `zzv-` user).
+
+**Outside scope, not changed:** backend name-uniqueness case sensitivity; every dialog keeps a stale server-error
+banner until the next submit; a 404 and a failed lookup still raise the global error toast on top of the inline
+state; the Branch list has no calendar column; Prettier is configured but not enforced; Branch is still not on the
+shared screen and still patches its list locally.)_

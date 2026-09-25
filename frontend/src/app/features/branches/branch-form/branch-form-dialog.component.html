@@ -14,6 +14,20 @@
       <input matInput formControlName="code" />
     </mat-form-field>
 
+    <!-- dynamic sizing so the two-line "could not be loaded" hint has room; mb-5 restores the gap the fixed subscript area gives the sibling fields. -->
+    <mat-form-field class="w-full mb-5" subscriptSizing="dynamic">
+      <mat-label>Holiday calendar (optional)</mat-label>
+      <mat-select formControlName="holidayCalendarId">
+        <mat-option value="">No calendar</mat-option>
+        @for (option of calendarOptions(); track option.id) {
+          <mat-option [value]="option.id">{{ option.label }}{{ option.inactive ? ' (inactive)' : '' }}</mat-option>
+        }
+      </mat-select>
+      @if (calendarUnavailable()) {
+        <mat-hint>Holiday calendars could not be loaded - the current calendar is left unchanged.</mat-hint>
+      }
+    </mat-form-field>
+
     @if (isEditMode) {
       <mat-form-field class="w-full">
         <mat-label>Status</mat-label>

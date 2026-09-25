@@ -14,9 +14,7 @@ export interface Branch {
   name: string;
   code: string | null;
   status: BranchStatus;
-  // Always present on the model even though Holiday Calendar (domain 7) has
-  // no frontend yet - the form deliberately doesn't expose it, but the field
-  // still round-trips from the real backend response.
+  // The branch's holiday calendar (ADR-HC03), chosen in the Branch form; `null` = "no holidays applied".
   holidayCalendarId: string | null;
   createdAt: string;
   updatedAt: string;
