@@ -1,0 +1,75 @@
+@if (store.loading() && !store.calendar()) {
+  <div class="flex items-center gap-2">
+    <mat-progress-spinner diameter="24" mode="indeterminate" aria-label="Loading holiday calendar" />
+    <span>Loading...</span>
+  </div>
+} @else if (store.notFound()) {
+  <app-empty-state
+    [icon]="icons.event"
+    title="Holiday calendar not found"
+    description="It may have been deleted. Go back to the list to pick another."
+  />
+  <div class="mt-4 flex justify-center">
+    <a mat-button routerLink="/holiday-calendars">Back to holiday calendars</a>
+  </div>
+} @else if (store.error(); as message) {
+  <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="reload()" />
+} @else if (store.calendar(); as calendar) {
+  <app-page-header
+    [title]="calendar.name"
+    description="The dates branches that follow this calendar treat as holidays."
+  >
+    @if (canEdit()) {
+      <button pageHeaderActions mat-flat-button color="primary" type="button" (click)="openAddDialog()">
+        <mat-icon>{{ icons.add }}</mat-icon>
+        Add Holiday
+      </button>
+    }
+  </app-page-header>
+
+  <div class="mb-4 flex flex-wrap items-center gap-3">
+    <mat-chip-set aria-label="Calendar status">
+      <mat-chip>{{ calendar.status === 'ACTIVE' ? 'Active' : 'Inactive' }}</mat-chip>
+    </mat-chip-set>
+    <a mat-button class="whitespace-nowrap" routerLink="/holiday-calendars">Back to holiday calendars</a>
+  </div>
+
+  @if (calendar.status === 'INACTIVE') {
+    <app-inline-banner
+      tone="warning"
+      message="This calendar is inactive. It can't be assigned to new branches; branches already using it keep it."
+    />
+  }
+
+  @if (deleteError(); as message) {
+    <app-inline-banner tone="error" [message]="message" />
+  }
+
+  @if (store.holidays().length === 0) {
+    <app-empty-state
+      [icon]="icons.event"
+      title="No holidays yet"
+      [description]="
+        canEdit() ? 'Add the first holiday to this calendar.' : 'Nothing has been added to this calendar yet.'
+      "
+    />
+  } @else {
+    <mat-form-field class="year-field" subscriptSizing="dynamic">
+      <mat-label>Year</mat-label>
+      <mat-select [value]="store.selectedYear()" (selectionChange)="onYearChange($event.value)">
+        @for (year of store.years(); track year) {
+          <mat-option [value]="year">{{ year }}</mat-option>
+        }
+        <mat-option value="ALL">All years</mat-option>
+      </mat-select>
+    </mat-form-field>
+
+    <app-holiday-table
+      [rows]="store.visibleHolidays()"
+      [deletingIds]="deletingIds()"
+      [canEdit]="canEdit()"
+      (editRequested)="openEditDialog($event)"
+      (deleteRequested)="onDeleteRequested($event)"
+    />
+  }
+}

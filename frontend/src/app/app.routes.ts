@@ -103,6 +103,14 @@ export const routes: Routes = [
         canActivate: [permissionGuard],
         data: { breadcrumb: 'Shifts', permissions: ['shift:read'] },
       },
+      {
+        path: 'holiday-calendars',
+        loadChildren: () =>
+          import('./features/holiday-calendars/holiday-calendars.routes').then((m) => m.HOLIDAY_CALENDARS_ROUTES),
+        // Same reason as 'employees': the list ('') and the detail (':id') are flat siblings, so this
+        // wrapper is the one ancestor that can carry the parent crumb for the detail page.
+        data: { breadcrumb: 'Holiday calendars' },
+      },
     ],
   },
 ];

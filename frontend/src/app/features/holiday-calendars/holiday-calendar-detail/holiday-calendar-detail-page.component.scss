@@ -1,0 +1,14 @@
+:host {
+  display: block;
+}
+
+.year-field {
+  width: 160px;
+  margin-bottom: 8px;
+}
+
+// The banner has no bottom margin of its own; without this the Year label touches it (seen in a screenshot).
+app-inline-banner {
+  display: block;
+  margin-bottom: 16px;
+}

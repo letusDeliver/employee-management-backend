@@ -1,20 +1,17 @@
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { LowerCasePipe } from '@angular/common';
-import { Component, DestroyRef, OnInit, computed, inject, input, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, input } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { PageEvent } from '@angular/material/paginator';
 import { Sort } from '@angular/material/sort';
-import { finalize } from 'rxjs';
 
 import { SessionStore } from '../../core/auth/session.store';
-import { ConfirmDialogComponent } from '../components/confirm-dialog/confirm-dialog.component';
 import { EmptyStateComponent } from '../components/empty-state/empty-state.component';
 import { InlineBannerComponent } from '../components/inline-banner/inline-banner.component';
 import { PageHeaderComponent } from '../components/page-header/page-header.component';
 import { ICON_NAMES } from '../icon-names';
-import { extractErrorMessage } from '../utils/extract-error-message.util';
+import { createConfirmDelete } from './confirm-delete';
 import {
   MasterDataFormDialogComponent,
   MasterDataFormDialogData,
@@ -58,7 +55,6 @@ import { MasterDataTableComponent } from './master-data-table.component';
 })
 export class MasterDataListPageComponent implements OnInit {
   private readonly dialog = inject(MatDialog);
-  private readonly destroyRef = inject(DestroyRef);
   private readonly sessionStore = inject(SessionStore);
   protected readonly icons = ICON_NAMES;
 
@@ -73,8 +69,9 @@ export class MasterDataListPageComponent implements OnInit {
   protected readonly canEdit = computed(() => this.sessionStore.hasAnyPermission(`${this.permissionPrefix()}:update`));
   protected readonly canDelete = computed(() => this.sessionStore.hasAnyPermission(`${this.permissionPrefix()}:delete`));
 
-  protected readonly deleteError = signal<string | null>(null);
-  protected readonly deletingIds = signal<ReadonlySet<string>>(new Set());
+  private readonly confirmDelete = createConfirmDelete((id) => this.store().deleteRecord(id));
+  protected readonly deleteError = this.confirmDelete.deleteError;
+  protected readonly deletingIds = this.confirmDelete.deletingIds;
 
   // Distinguishes "none exist at all" from "this filter/search matched
   // nothing" - the two need different EmptyStateComponent copy.
@@ -122,41 +119,12 @@ export class MasterDataListPageComponent implements OnInit {
   protected onDeleteRequested(record: MasterDataRecord): void {
     const { singular } = this.labels();
 
-    this.dialog
-      .open(ConfirmDialogComponent, {
-        data: {
-          title: `Delete ${singular.toLowerCase()}`,
-          // A mandatory-FK record that has ever had an employee assigned can
-          // never be deleted (soft-deleted employees count too), so the copy
-          // points at the real alternative up front.
-          message: `Delete "${record.name}"? This cannot be undone. If employees have ever been assigned to it, deactivate it instead (Edit → Status).`,
-          confirmLabel: 'Delete',
-        },
-      })
-      .afterClosed()
-      .subscribe((confirmed: boolean | undefined) => {
-        if (!confirmed) {
-          return;
-        }
-
-        this.deleteError.set(null);
-        this.deletingIds.update((current) => new Set(current).add(record.id));
-
-        this.store()
-          .deleteRecord(record.id)
-          .pipe(
-            takeUntilDestroyed(this.destroyRef),
-            finalize(() =>
-              this.deletingIds.update((current) => {
-                const next = new Set(current);
-                next.delete(record.id);
-                return next;
-              }),
-            ),
-          )
-          .subscribe({
-            error: (error: unknown) => this.deleteError.set(extractErrorMessage(error)),
-          });
-      });
+    this.confirmDelete.request(record.id, {
+      title: `Delete ${singular.toLowerCase()}`,
+      // A mandatory-FK record that has ever had an employee assigned can
+      // never be deleted (soft-deleted employees count too), so the copy
+      // points at the real alternative up front.
+      message: `Delete "${record.name}"? This cannot be undone. If employees have ever been assigned to it, deactivate it instead (Edit → Status).`,
+    });
   }
 }

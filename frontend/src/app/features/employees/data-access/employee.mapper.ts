@@ -1,20 +1,6 @@
 import { CreateEmployeeRequestDto, EmployeeDto, UpdateEmployeeRequestDto } from './employee.dto';
 import { CreateEmployeeRequest, Employee, UpdateEmployeeRequest } from './employee.model';
-
-/**
- * Parses a date-only value as a LOCAL calendar date. The API returns
- * `dateOfJoining` as an ISO instant at UTC midnight (`2024-01-01T00:00:00.000Z`),
- * and `new Date(thatString)` in a timezone BEHIND UTC is the previous evening
- * locally - so the UI showed the day before, and because an edit re-sent the
- * displayed date, each save drifted it a further day earlier (verified:
- * `America/New_York` and `America/Los_Angeles` gave 2023-12-31 for 2024-01-01;
- * `Asia/Kolkata` and `UTC` happened to be fine). A date of joining has no
- * time-of-day meaning, so only its `YYYY-MM-DD` part is read.
- */
-const fromDateOnlyString = (value: string): Date => {
-  const [year, month, day] = value.slice(0, 10).split('-').map(Number);
-  return new Date(year, month - 1, day);
-};
+import { formatDateOnly, parseDateOnly } from '../../../shared/utils/date-only.util';
 
 /**
  * The one place `salary` (string <-> number) and `dateOfJoining`/
@@ -30,7 +16,7 @@ export function toEmployeeModel(dto: EmployeeDto): Employee {
     designationId: dto.designationId,
     employmentType: dto.employmentType,
     salary: Number(dto.salary),
-    dateOfJoining: fromDateOnlyString(dto.dateOfJoining),
+    dateOfJoining: parseDateOnly(dto.dateOfJoining),
     managerId: dto.managerId,
     branchId: dto.branchId,
     shiftId: dto.shiftId,
@@ -40,19 +26,10 @@ export function toEmployeeModel(dto: EmployeeDto): Employee {
 }
 
 /**
- * Date-only (`YYYY-MM-DD`) - `dateOfJoining` has no time-of-day meaning,
- * matching the backend's own example (`2024-01-15`). Deliberately reads
- * local date parts, not `toISOString()`: `MatDatepicker` produces a `Date`
- * at local midnight, and `toISOString()` converts to UTC first - for any
- * timezone ahead of UTC, local midnight is still the *previous* day in
- * UTC, silently shifting a freshly-picked date back by one.
+ * Date-only (`YYYY-MM-DD`) from local date parts - see `shared/utils/date-only.util.ts` for why
+ * never `toISOString()`. Kept under this name because Employees' update diff and specs use it.
  */
-export const toDateOnlyString = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
+export const toDateOnlyString = formatDateOnly;
 
 export function toCreateEmployeeRequestDto(request: CreateEmployeeRequest): CreateEmployeeRequestDto {
   return {

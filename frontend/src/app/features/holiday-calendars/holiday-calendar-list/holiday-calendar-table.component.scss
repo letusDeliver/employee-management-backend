@@ -1,0 +1,14 @@
+:host {
+  display: block;
+}
+
+.calendar-link {
+  color: var(--mat-sys-primary);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.calendar-link:hover,
+.calendar-link:focus-visible {
+  text-decoration: underline;
+}

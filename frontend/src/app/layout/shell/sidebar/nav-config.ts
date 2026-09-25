@@ -83,4 +83,13 @@ export const NAV_CONFIG: NavItem[] = [
     description: 'Manage working hours and days.',
     permissions: ['shift:read'],
   },
+  {
+    // holidayCalendar:read only - granted to all 3 roles server-side (docs/domain-holiday-calendar.md
+    // ADR-HC06), so this link is visible to everyone; every mutation is ADMIN-only and gated in-page.
+    route: '/holiday-calendars',
+    icon: ICON_NAMES.event,
+    label: 'Holiday calendars',
+    description: 'Manage holiday dates for branches.',
+    permissions: ['holidayCalendar:read'],
+  },
 ];

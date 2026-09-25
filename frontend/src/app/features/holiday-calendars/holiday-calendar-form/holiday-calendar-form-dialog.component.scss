@@ -1,0 +1,10 @@
+:host {
+  display: block;
+}
+
+// An optional field with a two-line hint (`subscriptSizing="dynamic"`) needs room below it or its
+// hint runs into the next row's label.
+.status-field {
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
