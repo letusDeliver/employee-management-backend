@@ -408,6 +408,47 @@ handbook kept in sync, one commit per feature).
   whose SURVIVING mutant exposed a real coverage gap (a lookup failing after a successful
   earlier load). (9) **Shift** is deferred - `shiftId` round-trips through the model but is
   never sent; the select arrives with the Shift domain.
+- v16 (this revision) — **Shift** (item 6 of the rollout; the first master-data domain whose
+  shape is NOT `id / name / code`), plus the deferred Shift integration on the Employee form.
+  `features/shifts/` and `core/master-data-directory/shift-directory.service.ts`. Establishes or
+  amends: (1) **§9/§11 - when a domain almost fits a shared abstraction, widen its TYPES, not
+  bend its screens.** `MasterDataStore` gained a fourth type parameter `Q` (the domain's own
+  list query, defaulting to the `code`-based one) and its record constraint loosened from
+  `MasterDataRecord` to `MasterDataBase` (`id / name / status`); Department, Designation and
+  Branch compile and pass their specs UNEDITED, which is the regression proof. Shift keeps its
+  own table, dialog and page (it has no `code`, two times and a set of weekdays). Accepted
+  cost: the ~40-line delete-confirm flow is duplicated in `ShiftListPage`; decide at Holiday
+  Calendar (the next differently-shaped domain) whether it becomes a shared helper. (2) **§8 -
+  be exactly as strict as the backend.** An overnight shift (`endTime < startTime`, ADR-SH03) and
+  a zero-length one are both accepted server-side, so the UI explains them (`role="status"`) and
+  never blocks; the overnight comparison is ONE tested pure function with a comment pointing
+  at the ADR. Times use the native `<input type="time">` (its value is already the `"HH:mm"`
+  wire format and carries no timezone) rather than a `Date`-valued picker. (3) **§8 - the
+  "send only what changed" rule (v15) now covers a second foreign key**, `shiftId`, and a set
+  is compared as a set (working days in calendar order, so click order is not a change); an
+  edit that changes nothing sends no request. Proven live: PATCHing a deactivated shift's id
+  directly is a 400, while the form's salary-only edit omits it and succeeds. (4) **§6/§9 -
+  a `computed()` over reactive-forms state is a bug.** `control.invalid`/`touched` are plain
+  properties, not signals, so the computed caches its first value forever (the "select at least
+  one day" error never showed - caught by a component spec). Signals for signals; methods for
+  form state. (5) **§13/§15 - Material button-toggle, seven across.** The selected checkmark
+  (~26px) clips labels at 61px per toggle (dialog) and 41px (360px phone), so it is hidden
+  (`hideMultipleSelectionIndicator`) and selection is shown by fill AND a bolder label plus
+  `aria-pressed` - never colour alone; Material exposes NO token for the label's 12px-per-side
+  padding, so ONE `::ng-deep` rule, scoped under the group's own class, trims it (an explicit,
+  commented exception to the token-only rule). Each toggle carries its FULL weekday name as
+  `aria-label`. (6) **§13 - layout guards.** A wide table's short cells (dates, action icons,
+  time ranges) need `whitespace-nowrap` or the auto layout wraps the date and stacks the icons
+  (second occurrence after Chapter 10 - now a rule); an optional `mat-form-field` with
+  `subscriptSizing="dynamic"` needs bottom margin while its two-line hint shows (the grid gap is
+  4px). (7) **§16/testing - measure layout, do not just eyeball it.** jsdom does no layout, so
+  the live script asserts bounding boxes: every weekday label inside its toggle at 1280 AND 360px,
+  action icons sharing a top, the date on one line, the hint clear of the next row. That measured
+  check found phone-width clipping the first fix had left. (8) **Optional lookups** stay
+  optional: a failed `/shifts` load disables only the Shift select with a hint and never blocks
+  the Employee form (extends v15's per-consumer fatality rule). (9) **Tests: 252 (was 175; 77
+  new)**; live 60/60 (Shift screens) and 28/28 (Employee integration) against the real backend,
+  with all test data removed and verified (0 shifts, 30 employees = the dev baseline).
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:

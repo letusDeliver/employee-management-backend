@@ -41,6 +41,7 @@ after that feature ships.
 8. [Department](./frontend-08-department.md)
 9. [Designation & the shared master-data screen](./frontend-09-designation.md)
 10. [Fixing Employees against the real contract (master-data capstone)](./frontend-10-employees-capstone.md)
+11. [Shift (the first master-data domain without a `code`)](./frontend-11-shift.md)
 
 ## Backend Stack
 

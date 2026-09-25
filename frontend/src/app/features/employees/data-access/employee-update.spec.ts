@@ -8,6 +8,7 @@ const formFor = (overrides: Partial<EmployeeFormValue> = {}): EmployeeFormValue 
   salary: 1000,
   dateOfJoining: new Date(2024, 0, 1),
   branchId: '',
+  shiftId: '',
   userId: '',
   managerId: '',
   ...overrides,
@@ -20,18 +21,19 @@ describe('buildEmployeeUpdate - a PATCH body with only what changed', () => {
     expect(buildEmployeeUpdate(original, formFor())).toEqual({});
   });
 
-  it('THE CRUX: an unchanged departmentId/designationId/branchId is never resent, so a since-deactivated one cannot fail an unrelated edit', () => {
-    const withBranch = makeEmployee({ branchId: 'br-1', managerId: 'emp-2', userId: 'u-1' });
+  it('THE CRUX: an unchanged departmentId/designationId/branchId/shiftId is never resent, so a since-deactivated one cannot fail an unrelated edit', () => {
+    const withLinks = makeEmployee({ branchId: 'br-1', shiftId: 'sh-1', managerId: 'emp-2', userId: 'u-1' });
 
     const body = buildEmployeeUpdate(
-      withBranch,
-      formFor({ salary: 2000, branchId: 'br-1', managerId: 'emp-2', userId: 'u-1' }),
+      withLinks,
+      formFor({ salary: 2000, branchId: 'br-1', shiftId: 'sh-1', managerId: 'emp-2', userId: 'u-1' }),
     );
 
     expect(body).toEqual({ salary: 2000 });
     expect(body).not.toHaveProperty('departmentId');
     expect(body).not.toHaveProperty('designationId');
     expect(body).not.toHaveProperty('branchId');
+    expect(body).not.toHaveProperty('shiftId');
   });
 
   it('includes a department that actually changed - and only that', () => {
@@ -88,10 +90,31 @@ describe('buildEmployeeUpdate - a PATCH body with only what changed', () => {
     });
   });
 
-  it('never sends shiftId - nothing in the UI can set it', () => {
-    const body = buildEmployeeUpdate(makeEmployee({ shiftId: 'sh-1' }), formFor({ salary: 1, departmentId: 'dep-2' }));
+  describe('shift (an optional link, same rule as branch)', () => {
+    it('sets a shift that was previously none', () => {
+      expect(buildEmployeeUpdate(original, formFor({ shiftId: 'sh-2' }))).toEqual({ shiftId: 'sh-2' });
+    });
 
-    expect(body).not.toHaveProperty('shiftId');
+    it('changes to another shift', () => {
+      expect(buildEmployeeUpdate(makeEmployee({ shiftId: 'sh-1' }), formFor({ shiftId: 'sh-2' }))).toEqual({ shiftId: 'sh-2' });
+    });
+
+    it('CLEARS a shift with null (choosing "No shift"), not by omitting it', () => {
+      const body = buildEmployeeUpdate(makeEmployee({ shiftId: 'sh-1' }), formFor({ shiftId: '' }));
+
+      expect(body).toEqual({ shiftId: null });
+      expect(body.shiftId).toBeNull();
+    });
+
+    it('leaves an unchanged shift out even when other fields changed - it may have been deactivated since', () => {
+      const body = buildEmployeeUpdate(makeEmployee({ shiftId: 'sh-old' }), formFor({ shiftId: 'sh-old', salary: 9 }));
+
+      expect(body).toEqual({ salary: 9 });
+    });
+
+    it('treats a blank field and a null original as no change', () => {
+      expect(buildEmployeeUpdate(makeEmployee({ shiftId: null }), formFor({ shiftId: '' }))).toEqual({});
+    });
   });
 });
 
@@ -101,13 +124,18 @@ describe('buildEmployeeCreate', () => {
 
     expect(body).toMatchObject({ departmentId: 'dep-1', designationId: 'des-1', employmentType: 'FULL_TIME', salary: 1000 });
     expect(body.branchId).toBeUndefined();
+    expect(body.shiftId).toBeUndefined();
     expect(body.userId).toBeUndefined();
     expect(body.managerId).toBeUndefined();
   });
 
   it('includes optional links that were chosen', () => {
-    const body = buildEmployeeCreate(formFor({ branchId: 'br-1', userId: 'u-1', managerId: 'emp-2' }));
+    const body = buildEmployeeCreate(formFor({ branchId: 'br-1', shiftId: 'sh-1', userId: 'u-1', managerId: 'emp-2' }));
 
-    expect(body).toMatchObject({ branchId: 'br-1', userId: 'u-1', managerId: 'emp-2' });
+    expect(body).toMatchObject({ branchId: 'br-1', shiftId: 'sh-1', userId: 'u-1', managerId: 'emp-2' });
+  });
+
+  it('omits a blank shift', () => {
+    expect(buildEmployeeCreate(formFor()).shiftId).toBeUndefined();
   });
 });

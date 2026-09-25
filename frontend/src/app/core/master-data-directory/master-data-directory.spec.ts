@@ -6,6 +6,7 @@ import { BranchDirectoryService } from './branch-directory.service';
 import { DepartmentDirectoryService } from './department-directory.service';
 import { DesignationDirectoryService } from './designation-directory.service';
 import { DirectoryEntry } from './master-data-directory';
+import { ShiftDirectoryService } from './shift-directory.service';
 
 const entry = (id: string, name: string, status: DirectoryEntry['status'] = 'ACTIVE'): DirectoryEntry => ({ id, name, status });
 const pagination = (totalPages: number, page = 1) => ({ page, limit: 100, total: totalPages * 100, totalPages });
@@ -169,6 +170,7 @@ describe('directory providers', () => {
     ['department', () => TestBed.inject(DepartmentDirectoryService), '/departments', 'departments'],
     ['designation', () => TestBed.inject(DesignationDirectoryService), '/designations', 'designations'],
     ['branch', () => TestBed.inject(BranchDirectoryService), '/branches', 'branches'],
+    ['shift', () => TestBed.inject(ShiftDirectoryService), '/shifts', 'shifts'],
   ])('%s directory reads its own endpoint and response key', (_name, factory, path, key) => {
     const directory = factory();
     directory.refresh();

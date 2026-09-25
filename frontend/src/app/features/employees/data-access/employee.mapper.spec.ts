@@ -113,6 +113,20 @@ describe('employee mapper', () => {
       expect(body).not.toHaveProperty('userId');
       expect(body).not.toHaveProperty('managerId');
       expect(body).not.toHaveProperty('branchId');
+      expect(body).not.toHaveProperty('shiftId');
+    });
+
+    it('sends a chosen shift', () => {
+      const dto = toCreateEmployeeRequestDto({
+        departmentId: 'dep-1',
+        designationId: 'des-1',
+        employmentType: 'FULL_TIME',
+        salary: 1,
+        dateOfJoining: new Date(2024, 0, 1),
+        shiftId: 'sh-1',
+      });
+
+      expect(dto.shiftId).toBe('sh-1');
     });
 
     it('never sends the retired free-text fields', () => {
@@ -149,14 +163,21 @@ describe('employee mapper', () => {
       expect(body).toEqual({ branchId: null, managerId: null });
     });
 
-    it('converts a Date to a date-only string and never sends shiftId', () => {
+    it('preserves a shift id and an explicit null shift (clear it)', () => {
+      const set = JSON.parse(JSON.stringify(toUpdateEmployeeRequestDto({ shiftId: 'sh-1' }))) as Record<string, unknown>;
+      const cleared = JSON.parse(JSON.stringify(toUpdateEmployeeRequestDto({ shiftId: null }))) as Record<string, unknown>;
+
+      expect(set).toEqual({ shiftId: 'sh-1' });
+      expect(cleared).toEqual({ shiftId: null });
+    });
+
+    it('converts a Date to a date-only string and sends nothing else', () => {
       const body = JSON.parse(JSON.stringify(toUpdateEmployeeRequestDto({ dateOfJoining: new Date(2024, 11, 25) }))) as Record<
         string,
         unknown
       >;
 
       expect(body).toEqual({ dateOfJoining: '2024-12-25' });
-      expect(body).not.toHaveProperty('shiftId');
     });
   });
 

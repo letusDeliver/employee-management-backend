@@ -27,6 +27,10 @@
         <dd class="ds-body">{{ branchDirectory.nameOf(employee.branchId) ?? '—' }}</dd>
       </div>
       <div>
+        <dt class="ds-label">Shift</dt>
+        <dd class="ds-body">{{ shiftDirectory.nameOf(employee.shiftId) ?? '—' }}</dd>
+      </div>
+      <div>
         <dt class="ds-label">Employee</dt>
         <dd class="ds-body">{{ displayName(employee.userId) ?? '—' }}</dd>
       </div>

@@ -64,6 +64,7 @@ export function toCreateEmployeeRequestDto(request: CreateEmployeeRequest): Crea
     dateOfJoining: toDateOnlyString(request.dateOfJoining),
     managerId: request.managerId,
     branchId: request.branchId,
+    shiftId: request.shiftId,
   };
 }
 

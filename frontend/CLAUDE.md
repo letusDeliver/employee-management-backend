@@ -131,6 +131,10 @@ EmployeeListPageComponent` automatically — verified live during Feature
   Department (first abstract base class in the app)
 - [x] Feature 10 — Employees capstone: rebuilt against the real backend contract
   (core lookup directory, changed-fields-only edit, date-of-joining timezone fix)
+- [x] Feature 11 — Shift: first master-data domain without a `code`; `MasterDataStore` types widened,
+  own table/dialog/page; Shift select + detail row on the Employee form (`shiftId` sent only when changed)
+- [ ] Feature 12 — Holiday Calendar: NEXT (the first hierarchical domain: Branch -> HolidayCalendar -> Holiday;
+  Branch's dialog then gains a calendar select). Not started - Phase 1 (Theory) has not been presented.
 
 _(Feature 0 — Angular Project Initialization — completed, on the
 `frontend` branch. Scaffolded via `npx @angular/cli@21.2.19 new frontend`
@@ -1677,3 +1681,69 @@ form.touched` (shared with the Branch dialog - only the first click on an untouc
 every required error); at 1280px the toolbar's third select wraps; `managerId`/`userId` remain
 pasted UUIDs; the global error toast still duplicates inline errors; the shell's overlay drawer
 stays open after a nav tap at narrow widths. `ng build`/`ng lint`/`ng test` clean.)_
+
+_(Feature 11 — Shift: the first master-data domain that is NOT `id / name / code` —
+2026-09-24, two commits directly on `main` (the Shift screens, then the Employee
+integration). Full write-up: `handbook/frontend-11-shift.md`; architectural record:
+blueprint v16.
+
+**Contract (read from `backend/src/modules/shifts/*`, then exercised live).** Fields
+`id, name, startTime, endTime, workingDays[], status, createdAt, updatedAt` - NO `code`; times
+are 24h `"HH:mm"` strings with no timezone; `endTime < startTime` = overnight (attributed to the
+start day, ADR-SH03); the backend ACCEPTS `startTime === endTime`; `workingDays` is a non-empty
+subset of MONDAY..SUNDAY; list sorts `name|startTime|endTime|status|createdAt`; name unique
+case-insensitively (a different-case duplicate is a 409); `shift:read` for every role,
+create/update/delete ADMIN-only; delete is a 409 while ANY employee (soft-deleted included)
+references it; only ACTIVE shifts are assignable and the backend re-validates a `shiftId` PRESENT
+in an Employee PATCH.
+
+**What was built.** (A) `MasterDataStore` gained a 4th type parameter `Q` (the domain's own list
+query; default = the `code`-based one) and its record constraint loosened to `MasterDataBase`
+(`id/name/status`); Department, Designation and Branch compile and pass their specs UNEDITED.
+`features/shifts/`: models, an explicit service, a ~10-line store, two pure modules
+(`shift-schedule`: `isOvernight`, `formatWorkingDays`; `shift-update`: `buildShiftCreate`/
+`buildShiftUpdate`), a table, a create/edit dialog (native `<input type="time">`, a Mon..Sun
+button-toggle group with FULL weekday `aria-label`s, an informing-not-blocking overnight /
+zero-length hint) and the smart page; route, nav entry, `schedule` icon. (B)
+`ShiftDirectoryService` in `core/`, `shiftId` through model/DTO/mapper and both builders (id /
+`null` = "No shift" / absent), an optional Shift select on the Employee form (disabled with a hint,
+never blocking, when its lookup fails; the CURRENT inactive shift is kept as the first real option)
+and a Shift row on the detail page.
+
+**Decisions, made explicit.** (1) Widen the store's TYPES, keep Shift's own table/dialog/page -
+rejected a `ShiftStore` copy and bending the shared screens; accepted cost: the ~40-line delete
+flow is duplicated in `ShiftListPage` (revisit at Holiday Calendar). (2) Native time input, not a
+`Date`-valued picker. (3) Be exactly as strict as the backend: overnight and zero-length are hints,
+never errors. (4) The Employee edit sends `shiftId` ONLY when it changed - proven live: sending a
+deactivated shift's id directly is a 400, the form's salary-only edit omits it and succeeds.
+(5) Defaults on a new shift are 09:00-18:00 Mon-Fri, visible and editable.
+
+**Tests: 252 (was 175; 77 new)** - step A 60 (schedule 11, update-builder 10, store 6, table 6,
+dialog 14, page 13), step B 17 net. `ng build`/`ng lint`/`ng test` clean. **Live verification
+against the real backend (temporary ADMIN + EMPLOYEE accounts): Shift screens 60/60, Employee
+integration 28/28**; all data removed and verified (0 shifts, 30 employees = the dev baseline).
+
+**What went wrong on the way, and how it was told apart.** FOUR real defects, none from the
+backend: (1) a `computed()` over reactive-forms state (`control.invalid && touched`) cached its
+first value forever, so "Select at least one working day" never appeared - caught by a component
+spec; fixed by using a method. (2) The seven weekday toggles clipped their labels ("Mo") because
+Material's selected checkmark needs ~26px and each toggle has 61px (41px on a 360px phone) -
+found by READING a screenshot; fixed with `hideMultipleSelectionIndicator`, a bolder selected
+label and one scoped `::ng-deep` rule for the label padding (Material has no token for it); a
+MEASURED bounding-box check then caught phone-width clipping the first fix had left. (3) The
+table wrapped the date and stacked the Edit/Delete icons - the same defect as Chapter 10, now a
+rule (`whitespace-nowrap` on short cells). (4) A two-line hint under an optional select ran into
+the next row's label (Branch had the identical weakness); both now add bottom margin while the
+hint shows. NOT bugs: two early lost sidebar clicks and a `vite-error-overlay` in a third run were
+`ng serve` recompiling during my edits (16 immediate post-login clicks afterwards lost none - an
+inference, not a proof); "Create Shift" click timeouts were my script clicking a button the form
+had correctly disabled; a label overlapping its value in one screenshot was the floating-label
+animation (re-shot after 800ms and measured); one run failed because earlier fixtures pushed a row
+off page 1; and my own expectation "the inactive current shift is first" was wrong ("No shift" is
+first, as Branch).
+
+**Outside scope, not changed:** Employee-list filter/sort by shift and a Shift column (the backend
+already supports both); a failed optional lookup still raises the global "Something went wrong"
+toast on top of the inline hint; Prettier is configured but not enforced (every pre-existing file
+fails `prettier --check`); Branch is still not on the shared screen and still patches its list
+locally.)_

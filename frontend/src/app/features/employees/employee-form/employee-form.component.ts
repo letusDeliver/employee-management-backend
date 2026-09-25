@@ -14,6 +14,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { BranchDirectoryService } from '../../../core/master-data-directory/branch-directory.service';
 import { DepartmentDirectoryService } from '../../../core/master-data-directory/department-directory.service';
 import { DesignationDirectoryService } from '../../../core/master-data-directory/designation-directory.service';
+import { ShiftDirectoryService } from '../../../core/master-data-directory/shift-directory.service';
 import { InlineBannerComponent } from '../../../shared/components/inline-banner/inline-banner.component';
 import { PageHeaderComponent } from '../../../shared/components/page-header/page-header.component';
 import { ICON_NAMES } from '../../../shared/icon-names';
@@ -47,17 +48,17 @@ function selfManagedValidator(employeeId: string | null) {
 /**
  * Create + edit, one component (typed Reactive Form, blueprint §9).
  *
- * Department, Designation and Employment Type are mandatory selects; Branch is an optional
- * one ("No branch"). The options are the records the backend will actually accept:
+ * Department, Designation and Employment Type are mandatory selects; Branch and Shift are
+ * optional ones ("No branch" / "No shift"). The options are the records the backend will actually accept:
  * `active()` only - assigning an inactive record is a 400 - PLUS, in edit mode, the
  * employee's *current* value even if it has since been deactivated, labelled
  * "(inactive)", so the select never goes blank on an existing assignment.
  *
  * Those lookups are a functional dependency (the FKs are mandatory), so a failed
  * Department or Designation load BLOCKS the form with a retry - unlike a list column's
- * display-only names, which degrade to "—". Branch is optional: if only the branch
+ * display-only names, which degrade to "—". Branch and Shift are optional: if only their
  * lookup fails the select is disabled and the rest of the form stays usable (an
- * unchanged branch is never sent, so nothing is lost).
+ * unchanged link is never sent, so nothing is lost).
  *
  * Edit sends only what changed (`buildEmployeeUpdate`) - the backend re-validates any
  * foreign key that is PRESENT in a PATCH, so resending an unchanged, since-deactivated
@@ -93,6 +94,7 @@ export class EmployeeFormPageComponent implements OnInit {
   private readonly departments = inject(DepartmentDirectoryService);
   private readonly designations = inject(DesignationDirectoryService);
   private readonly branches = inject(BranchDirectoryService);
+  private readonly shifts = inject(ShiftDirectoryService);
 
   protected readonly employeeId = this.route.snapshot.paramMap.get('id');
   protected readonly isEditMode = this.employeeId !== null;
@@ -105,12 +107,13 @@ export class EmployeeFormPageComponent implements OnInit {
   /** The record as loaded, set when the edit form is patched - the baseline `buildEmployeeUpdate` diffs against. */
   private readonly original = signal<Employee | null>(null);
 
-  // --- Mandatory lookups (department + designation) block the form; branch is best-effort. ---
+  // --- Mandatory lookups (department + designation) block the form; branch and shift are best-effort. ---
   protected readonly mandatoryLookupsLoaded = computed(() => this.departments.loaded() && this.designations.loaded());
   protected readonly mandatoryLookupsError = computed(() => this.departments.error() ?? this.designations.error());
   protected readonly lookupsLoading = computed(() => this.departments.loading() || this.designations.loading());
   protected readonly formReady = computed(() => this.mandatoryLookupsLoaded() && !this.mandatoryLookupsError());
   protected readonly branchUnavailable = computed(() => Boolean(this.branches.error()));
+  protected readonly shiftUnavailable = computed(() => Boolean(this.shifts.error()));
   protected readonly canSubmit = computed(
     () => !this.submitting() && this.formReady() && (!this.isEditMode || this.original() !== null),
   );
@@ -122,12 +125,14 @@ export class EmployeeFormPageComponent implements OnInit {
     this.designations.optionsFor(this.original()?.designationId),
   );
   protected readonly branchOptions = computed(() => this.branches.optionsFor(this.original()?.branchId));
+  protected readonly shiftOptions = computed(() => this.shifts.optionsFor(this.original()?.shiftId));
 
   protected readonly form = this.formBuilder.nonNullable.group({
     departmentId: ['', Validators.required],
     designationId: ['', Validators.required],
     employmentType: ['' as EmploymentType | '', Validators.required],
     branchId: [''],
+    shiftId: [''],
     // A plain text control, not type="number" - see positiveNumberValidator's
     // own comment for why a native number input is the wrong tool here.
     salary: ['', [Validators.required, positiveNumberValidator(MAX_SALARY)]],
@@ -156,6 +161,7 @@ export class EmployeeFormPageComponent implements OnInit {
           designationId: employee.designationId,
           employmentType: employee.employmentType,
           branchId: employee.branchId ?? '',
+          shiftId: employee.shiftId ?? '',
           salary: String(employee.salary),
           dateOfJoining: employee.dateOfJoining,
           userId: employee.userId ?? '',
@@ -165,14 +171,18 @@ export class EmployeeFormPageComponent implements OnInit {
       }
     });
 
-    effect(() => {
-      const control = this.form.controls.branchId;
-      if (this.branchUnavailable()) {
-        control.disable({ emitEvent: false });
-      } else {
-        control.enable({ emitEvent: false });
-      }
-    });
+    // An optional link whose lookup failed: disable its select (an unchanged link is never sent).
+    const disableWhenUnavailable = (control: AbstractControl, unavailable: () => boolean) =>
+      effect(() => {
+        if (unavailable()) {
+          control.disable({ emitEvent: false });
+        } else {
+          control.enable({ emitEvent: false });
+        }
+      });
+
+    disableWhenUnavailable(this.form.controls.branchId, this.branchUnavailable);
+    disableWhenUnavailable(this.form.controls.shiftId, this.shiftUnavailable);
   }
 
   ngOnInit(): void {
@@ -185,7 +195,7 @@ export class EmployeeFormPageComponent implements OnInit {
 
   /** Also the Retry button's handler. Errors are surfaced through each directory's `error` signal, not here. */
   protected reloadLookups(): void {
-    for (const directory of [this.departments, this.designations, this.branches]) {
+    for (const directory of [this.departments, this.designations, this.branches, this.shifts]) {
       directory.refresh().subscribe({ error: () => undefined });
     }
   }
@@ -208,6 +218,7 @@ export class EmployeeFormPageComponent implements OnInit {
       // Safe: Validators.required on this control already gated submission above.
       dateOfJoining: raw.dateOfJoining as Date,
       branchId: raw.branchId,
+      shiftId: raw.shiftId,
       userId: raw.userId,
       managerId: raw.managerId,
     };

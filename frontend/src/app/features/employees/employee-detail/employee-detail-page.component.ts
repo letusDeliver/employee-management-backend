@@ -11,6 +11,7 @@ import { SessionStore } from '../../../core/auth/session.store';
 import { BranchDirectoryService } from '../../../core/master-data-directory/branch-directory.service';
 import { DepartmentDirectoryService } from '../../../core/master-data-directory/department-directory.service';
 import { DesignationDirectoryService } from '../../../core/master-data-directory/designation-directory.service';
+import { ShiftDirectoryService } from '../../../core/master-data-directory/shift-directory.service';
 import { UserDirectoryService } from '../../../core/users/user-directory.service';
 import { ConfirmDialogComponent } from '../../../shared/components/confirm-dialog/confirm-dialog.component';
 import { InlineBannerComponent } from '../../../shared/components/inline-banner/inline-banner.component';
@@ -25,7 +26,7 @@ import { EMPLOYMENT_TYPE_LABELS } from '../data-access/employment-type';
  * Read-only detail + permission-gated edit/delete entry points. Reuses
  * the shared `ConfirmDialogComponent` (this feature's first real
  * consumer) for the soft-delete confirmation, and the `core/` directories
- * (`UserDirectoryService`, department, designation, branch) for the same honest
+ * (`UserDirectoryService`, department, designation, branch, shift) for the same honest
  * name-resolution the list table uses - the API returns only bare ids, and a name
  * that cannot be resolved is a plain "—", never a raw id or "undefined". The
  * directory loads are display-only enrichment here, so their failures are swallowed.
@@ -55,6 +56,7 @@ export class EmployeeDetailPageComponent implements OnInit {
   protected readonly departmentDirectory = inject(DepartmentDirectoryService);
   protected readonly designationDirectory = inject(DesignationDirectoryService);
   protected readonly branchDirectory = inject(BranchDirectoryService);
+  protected readonly shiftDirectory = inject(ShiftDirectoryService);
   protected readonly employeeStore = inject(EmployeeStore);
   protected readonly icons = ICON_NAMES;
 
@@ -69,6 +71,7 @@ export class EmployeeDetailPageComponent implements OnInit {
       this.departmentDirectory.refresh().subscribe({ error: () => undefined });
       this.designationDirectory.refresh().subscribe({ error: () => undefined });
       this.branchDirectory.refresh().subscribe({ error: () => undefined });
+      this.shiftDirectory.refresh().subscribe({ error: () => undefined });
     }
   }
 

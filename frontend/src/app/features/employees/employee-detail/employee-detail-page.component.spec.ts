@@ -8,6 +8,7 @@ import { SessionStore } from '../../../core/auth/session.store';
 import { BranchDirectoryService } from '../../../core/master-data-directory/branch-directory.service';
 import { DepartmentDirectoryService } from '../../../core/master-data-directory/department-directory.service';
 import { DesignationDirectoryService } from '../../../core/master-data-directory/designation-directory.service';
+import { ShiftDirectoryService } from '../../../core/master-data-directory/shift-directory.service';
 import { UserDirectoryService } from '../../../core/users/user-directory.service';
 import { Employee } from '../data-access/employee.model';
 import { EmployeeStore } from '../data-access/employee.store';
@@ -34,14 +35,21 @@ describe('EmployeeDetailPageComponent', () => {
   let departments: ReturnType<typeof directory>;
   let designations: ReturnType<typeof directory>;
   let branches: ReturnType<typeof directory>;
+  let shifts: ReturnType<typeof directory>;
 
   const setup = (
     employee: Employee,
-    lookups: { departments?: Record<string, string>; designations?: Record<string, string>; branches?: Record<string, string> } = {},
+    lookups: {
+      departments?: Record<string, string>;
+      designations?: Record<string, string>;
+      branches?: Record<string, string>;
+      shifts?: Record<string, string>;
+    } = {},
   ): { fixture: ComponentFixture<EmployeeDetailPageComponent>; el: HTMLElement } => {
     departments = directory(lookups.departments ?? { 'dep-1': 'Engineering' });
     designations = directory(lookups.designations ?? { 'des-1': 'Backend Engineer' });
     branches = directory(lookups.branches ?? { 'br-1': 'Bengaluru HQ' });
+    shifts = directory(lookups.shifts ?? { 'sh-1': 'Day Shift' });
     selected.set(employee);
 
     TestBed.configureTestingModule({
@@ -55,6 +63,7 @@ describe('EmployeeDetailPageComponent', () => {
         { provide: DepartmentDirectoryService, useValue: departments },
         { provide: DesignationDirectoryService, useValue: designations },
         { provide: BranchDirectoryService, useValue: branches },
+        { provide: ShiftDirectoryService, useValue: shifts },
       ],
     });
 
@@ -77,13 +86,14 @@ describe('EmployeeDetailPageComponent', () => {
     store.selectedError.set(null);
   });
 
-  it('loads the record and refreshes the four lookups it needs to show names', () => {
+  it('loads the record and refreshes the lookups it needs to show names', () => {
     setup(makeEmployee());
 
     expect(store.loadOne).toHaveBeenCalledWith('emp-1');
     expect(departments.refresh).toHaveBeenCalled();
     expect(designations.refresh).toHaveBeenCalled();
     expect(branches.refresh).toHaveBeenCalled();
+    expect(shifts.refresh).toHaveBeenCalled();
   });
 
   it('titles the page with the designation name and shows department, designation, type and branch by NAME', () => {
@@ -96,8 +106,24 @@ describe('EmployeeDetailPageComponent', () => {
     expect(field(el, 'Branch')).toBe('Bengaluru HQ');
   });
 
+  it('shows the shift by NAME', () => {
+    const { el } = setup(makeEmployee({ shiftId: 'sh-1' }));
+
+    expect(field(el, 'Shift')).toBe('Day Shift');
+  });
+
+  it('shows a dash when there is no shift, or it cannot be resolved (e.g. the shifts lookup failed)', () => {
+    expect(field(setup(makeEmployee({ shiftId: null })).el, 'Shift')).toBe('—');
+
+    TestBed.resetTestingModule();
+    const { el } = setup(makeEmployee({ shiftId: 'sh-gone' }), { shifts: {} });
+
+    expect(field(el, 'Shift')).toBe('—');
+    expect(el.textContent).not.toContain('sh-gone');
+  });
+
   it('shows a plain dash - never an id or "undefined" - for anything that cannot be resolved or is unset', () => {
-    const { el } = setup(makeEmployee({ departmentId: 'dep-gone', designationId: 'des-gone', branchId: null }), {
+    const { el } = setup(makeEmployee({ departmentId: 'dep-gone', designationId: 'des-gone', branchId: null, shiftId: null }), {
       departments: {},
       designations: {},
     });
@@ -106,6 +132,7 @@ describe('EmployeeDetailPageComponent', () => {
     expect(field(el, 'Department')).toBe('—');
     expect(field(el, 'Designation')).toBe('—');
     expect(field(el, 'Branch')).toBe('—');
+    expect(field(el, 'Shift')).toBe('—');
     expect(el.textContent).not.toContain('undefined');
     expect(el.textContent).not.toContain('dep-gone');
   });

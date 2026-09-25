@@ -11,6 +11,7 @@ import { BranchDirectoryService } from '../../../core/master-data-directory/bran
 import { DepartmentDirectoryService } from '../../../core/master-data-directory/department-directory.service';
 import { DesignationDirectoryService } from '../../../core/master-data-directory/designation-directory.service';
 import { DirectoryEntry, DirectoryOption } from '../../../core/master-data-directory/master-data-directory';
+import { ShiftDirectoryService } from '../../../core/master-data-directory/shift-directory.service';
 import { Employee } from '../data-access/employee.model';
 import { EmployeeStore } from '../data-access/employee.store';
 import { makeEmployee } from '../data-access/employee.testing';
@@ -21,6 +22,7 @@ const entry = (id: string, name: string, status: DirectoryEntry['status'] = 'ACT
 const DEPARTMENTS = [entry('dep-1', 'Engineering'), entry('dep-2', 'Finance'), entry('dep-old', 'Legacy Ops', 'INACTIVE')];
 const DESIGNATIONS = [entry('des-1', 'Backend Engineer'), entry('des-2', 'Sales Manager'), entry('des-old', 'Retired Title', 'INACTIVE')];
 const BRANCHES = [entry('br-1', 'Bengaluru HQ'), entry('br-old', 'Old Site', 'INACTIVE')];
+const SHIFTS = [entry('sh-1', 'Day Shift'), entry('sh-2', 'Night Shift'), entry('sh-old', 'Retired Shift', 'INACTIVE')];
 
 const pagination = { page: 1, limit: 100, total: 3, totalPages: 1 };
 
@@ -30,11 +32,13 @@ interface Internals {
   departmentOptions: () => DirectoryOption[];
   designationOptions: () => DirectoryOption[];
   branchOptions: () => DirectoryOption[];
+  shiftOptions: () => DirectoryOption[];
   canSubmit: () => boolean;
   submit: () => void;
 }
 
-type Lookup = 'departments' | 'designations' | 'branches';
+type Lookup = 'departments' | 'designations' | 'branches' | 'shifts';
+const LOOKUPS = ['departments', 'designations', 'branches', 'shifts'] as const;
 
 describe('EmployeeFormPageComponent', () => {
   const selected = signal<Employee | null>(null);
@@ -75,11 +79,11 @@ describe('EmployeeFormPageComponent', () => {
     if (options.preloaded) {
       // The directories are root singletons: by the time the form opens they may already
       // hold data from an earlier page (e.g. the list). Simulate that visit.
-      const earlier = { departments: DEPARTMENTS, designations: DESIGNATIONS, branches: BRANCHES };
-      for (const service of [DepartmentDirectoryService, DesignationDirectoryService, BranchDirectoryService]) {
+      const earlier = { departments: DEPARTMENTS, designations: DESIGNATIONS, branches: BRANCHES, shifts: SHIFTS };
+      for (const service of [DepartmentDirectoryService, DesignationDirectoryService, BranchDirectoryService, ShiftDirectoryService]) {
         TestBed.inject(service).refresh();
       }
-      for (const name of ['departments', 'designations', 'branches'] as const) {
+      for (const name of LOOKUPS) {
         lookupRequest(name).flush({ [name]: earlier[name], pagination });
       }
     }
@@ -91,11 +95,16 @@ describe('EmployeeFormPageComponent', () => {
 
   const lookupRequest = (name: Lookup) => http.expectOne((req) => req.method === 'GET' && req.url.endsWith(`/${name}`));
 
-  /** Answers the three lookup requests the form fires on init (or on Retry). `fail` makes one of them a 500. */
+  /** Answers the four lookup requests the form fires on init (or on Retry). `fail` makes one of them a 500. */
   const flushLookups = (fixture: ComponentFixture<EmployeeFormPageComponent>, fail: Lookup[] = []) => {
-    const data: Record<Lookup, DirectoryEntry[]> = { departments: DEPARTMENTS, designations: DESIGNATIONS, branches: BRANCHES };
+    const data: Record<Lookup, DirectoryEntry[]> = {
+      departments: DEPARTMENTS,
+      designations: DESIGNATIONS,
+      branches: BRANCHES,
+      shifts: SHIFTS,
+    };
 
-    for (const name of ['departments', 'designations', 'branches'] as const) {
+    for (const name of LOOKUPS) {
       const request = lookupRequest(name);
       if (fail.includes(name)) {
         request.flush({ status: 'error', message: 'boom' }, { status: 500, statusText: 'Server Error' });
@@ -135,7 +144,7 @@ describe('EmployeeFormPageComponent', () => {
   afterEach(() => http.verify());
 
   describe('create', () => {
-    it('loads the department, designation and branch lookups on entry', () => {
+    it('loads the department, designation, branch and shift lookups on entry', () => {
       const { fixture } = setup();
 
       flushLookups(fixture);
@@ -143,13 +152,14 @@ describe('EmployeeFormPageComponent', () => {
       expect(store.loadOne).not.toHaveBeenCalled();
     });
 
-    it('offers only ACTIVE records - an inactive department/designation/branch is not assignable', () => {
+    it('offers only ACTIVE records - an inactive department/designation/branch/shift is not assignable', () => {
       const { fixture, c } = setup();
       flushLookups(fixture);
 
       expect(c.departmentOptions().map((o) => o.id)).toEqual(['dep-1', 'dep-2']);
       expect(c.designationOptions().map((o) => o.id)).toEqual(['des-1', 'des-2']);
       expect(c.branchOptions().map((o) => o.id)).toEqual(['br-1']);
+      expect(c.shiftOptions().map((o) => o.id)).toEqual(['sh-1', 'sh-2']);
     });
 
     it('cannot be submitted until the lookups have loaded', () => {
@@ -189,6 +199,7 @@ describe('EmployeeFormPageComponent', () => {
       const request = store.createEmployee.mock.calls[0][0];
       expect(request).toMatchObject({ departmentId: 'dep-2', designationId: 'des-1', employmentType: 'INTERN', salary: 5000.5 });
       expect(request.branchId).toBeUndefined();
+      expect(request.shiftId).toBeUndefined();
       expect(request.userId).toBeUndefined();
       expect(request.managerId).toBeUndefined();
       expect(router.navigate).toHaveBeenCalledWith(['/employees', 'new-1']);
@@ -203,6 +214,25 @@ describe('EmployeeFormPageComponent', () => {
       submitForm(fixture, el);
 
       expect(store.createEmployee.mock.calls[0][0].branchId).toBe('br-1');
+    });
+
+    it('sends a shift when one was chosen', () => {
+      store.createEmployee.mockReturnValue(of(makeEmployee({ id: 'new-1' })));
+      const { fixture, el, c } = setup();
+      flushLookups(fixture);
+      fillValid(c, { shiftId: 'sh-2' });
+
+      submitForm(fixture, el);
+
+      expect(store.createEmployee.mock.calls[0][0].shiftId).toBe('sh-2');
+    });
+
+    it('renders an optional Shift select', () => {
+      const { fixture, el } = setup();
+      flushLookups(fixture);
+
+      expect(el.textContent).toContain('Shift (optional)');
+      expect(el.querySelector('mat-select[formcontrolname=shiftId]')).not.toBeNull();
     });
 
     it("stays on the page and shows the backend's message when creation is rejected", () => {
@@ -285,6 +315,23 @@ describe('EmployeeFormPageComponent', () => {
       expect(store.createEmployee).toHaveBeenCalledTimes(1);
       expect(store.createEmployee.mock.calls[0][0].branchId).toBeUndefined();
     });
+
+    it('does NOT block on a shift failure alone - shift is optional: the select is disabled and the rest still works', () => {
+      store.createEmployee.mockReturnValue(of(makeEmployee({ id: 'new-1' })));
+      const { fixture, el, c } = setup();
+      flushLookups(fixture, ['shifts']);
+      fillValid(c);
+
+      expect(el.textContent).not.toContain('Could not load the department and designation');
+      expect(c.form.controls['shiftId'].disabled).toBe(true);
+      expect(c.form.controls['branchId'].disabled).toBe(false);
+      expect(el.textContent).toContain('Shifts could not be loaded');
+      expect(c.canSubmit()).toBe(true);
+
+      submitForm(fixture, el);
+      expect(store.createEmployee).toHaveBeenCalledTimes(1);
+      expect(store.createEmployee.mock.calls[0][0].shiftId).toBeUndefined();
+    });
   });
 
   describe('edit', () => {
@@ -294,6 +341,7 @@ describe('EmployeeFormPageComponent', () => {
         designationId: 'des-1',
         employmentType: 'CONTRACT',
         branchId: 'br-1',
+        shiftId: 'sh-old', // deactivated since it was assigned
         salary: 1000,
         userId: null,
         managerId: null,
@@ -322,6 +370,7 @@ describe('EmployeeFormPageComponent', () => {
         designationId: 'des-1',
         employmentType: 'CONTRACT',
         branchId: 'br-1',
+        shiftId: 'sh-old',
         salary: '1000',
         userId: '11111111-1111-4111-8111-111111111111',
       });
@@ -335,6 +384,53 @@ describe('EmployeeFormPageComponent', () => {
       expect(c.departmentOptions()[0]).toEqual({ id: 'dep-old', label: 'Legacy Ops', inactive: true });
       expect(c.departmentOptions().map((o) => o.id)).toEqual(['dep-old', 'dep-1', 'dep-2']);
       // ...but ANOTHER employee's form still cannot offer it (that is the create case above).
+    });
+
+    it('keeps a since-deactivated CURRENT shift selectable - first, and flagged inactive', () => {
+      const { fixture, c } = setup('emp-1');
+      selected.set(existing());
+      flushLookups(fixture);
+
+      expect(c.shiftOptions()[0]).toEqual({ id: 'sh-old', label: 'Retired Shift', inactive: true });
+      expect(c.shiftOptions().map((o) => o.id)).toEqual(['sh-old', 'sh-1', 'sh-2']);
+    });
+
+    it('editing something else does NOT resend the (deactivated) shift, so the save cannot be rejected over it', () => {
+      store.updateEmployee.mockReturnValue(of(makeEmployee()));
+      const { fixture, el, c } = setup('emp-1');
+      selected.set(existing());
+      flushLookups(fixture);
+      c.form.patchValue({ salary: '2000' });
+
+      submitForm(fixture, el);
+
+      const body = store.updateEmployee.mock.calls[0][1];
+      expect(body).toEqual({ salary: 2000 });
+      expect(body).not.toHaveProperty('shiftId');
+    });
+
+    it('sends a newly chosen shift - and only that', () => {
+      store.updateEmployee.mockReturnValue(of(makeEmployee()));
+      const { fixture, el, c } = setup('emp-1');
+      selected.set(existing());
+      flushLookups(fixture);
+      c.form.patchValue({ shiftId: 'sh-1' });
+
+      submitForm(fixture, el);
+
+      expect(store.updateEmployee.mock.calls[0][1]).toEqual({ shiftId: 'sh-1' });
+    });
+
+    it('CLEARS a shift with null (choosing "No shift"), not by omitting it', () => {
+      store.updateEmployee.mockReturnValue(of(makeEmployee()));
+      const { fixture, el, c } = setup('emp-1');
+      selected.set(existing());
+      flushLookups(fixture);
+      c.form.patchValue({ shiftId: '' });
+
+      submitForm(fixture, el);
+
+      expect(store.updateEmployee.mock.calls[0][1]).toEqual({ shiftId: null });
     });
 
     it('THE CRUX: changing only the salary sends only the salary - the deactivated department is NOT resent', () => {

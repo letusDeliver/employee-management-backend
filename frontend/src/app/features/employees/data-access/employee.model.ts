@@ -45,10 +45,11 @@ export interface CreateEmployeeRequest {
   dateOfJoining: Date;
   managerId?: string;
   branchId?: string;
+  shiftId?: string;
 }
 
 /**
- * Not `Partial<CreateEmployeeRequest>` - `userId`/`managerId`/`branchId` are widened to
+ * Not `Partial<CreateEmployeeRequest>` - `userId`/`managerId`/`branchId`/`shiftId` are widened to
  * `string | null` (not just `string | undefined`), since an update needs to express
  * "clear this link" explicitly. Omitting the key means "leave it as-is" (PATCH
  * semantics); `null` means "unset it" - the backend's `updateEmployeeSchema`
@@ -63,4 +64,5 @@ export interface UpdateEmployeeRequest {
   dateOfJoining?: Date;
   managerId?: string | null;
   branchId?: string | null;
+  shiftId?: string | null;
 }

@@ -70,7 +70,8 @@
             }
           </mat-form-field>
 
-          <mat-form-field class="w-full" subscriptSizing="dynamic">
+          <!-- mb-3 while the hint shows: a dynamic-sized field's two-line hint otherwise runs into the next row's label. -->
+          <mat-form-field class="w-full" subscriptSizing="dynamic" [class.mb-3]="branchUnavailable()">
             <mat-label>Branch (optional)</mat-label>
             <mat-select formControlName="branchId">
               <mat-option value="">No branch</mat-option>
@@ -80,6 +81,19 @@
             </mat-select>
             @if (branchUnavailable()) {
               <mat-hint>Branches could not be loaded - the current branch is left unchanged.</mat-hint>
+            }
+          </mat-form-field>
+
+          <mat-form-field class="w-full" subscriptSizing="dynamic" [class.mb-3]="shiftUnavailable()">
+            <mat-label>Shift (optional)</mat-label>
+            <mat-select formControlName="shiftId">
+              <mat-option value="">No shift</mat-option>
+              @for (option of shiftOptions(); track option.id) {
+                <mat-option [value]="option.id">{{ option.label }}{{ option.inactive ? ' (inactive)' : '' }}</mat-option>
+              }
+            </mat-select>
+            @if (shiftUnavailable()) {
+              <mat-hint>Shifts could not be loaded - the current shift is left unchanged.</mat-hint>
             }
           </mat-form-field>
 

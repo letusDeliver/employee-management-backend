@@ -10,6 +10,7 @@ export interface EmployeeFormValue {
   salary: number;
   dateOfJoining: Date;
   branchId: string;
+  shiftId: string;
   userId: string;
   managerId: string;
 }
@@ -25,6 +26,7 @@ export function buildEmployeeCreate(form: EmployeeFormValue): CreateEmployeeRequ
     userId: form.userId || undefined,
     managerId: form.managerId || undefined,
     branchId: form.branchId || undefined,
+    shiftId: form.shiftId || undefined,
   };
 }
 
@@ -36,11 +38,12 @@ export function buildEmployeeCreate(form: EmployeeFormValue): CreateEmployeeRequ
  * unchanged. So resending an employee's current `departmentId` after that department
  * was deactivated is a 400 - "not active and cannot be assigned" - on an edit that
  * never touched the department. Omitting the key leaves the existing assignment
- * alone, which is exactly the intent. The same rule applies to `designationId` and
- * `branchId`.
+ * alone, which is exactly the intent. The same rule applies to `designationId`,
+ * `branchId` and `shiftId` (a shift assigned earlier and deactivated since must not fail
+ * an unrelated edit).
  *
  * For the optional links a change is either a new id or `null` ("clear it"); omitting
- * means "leave as-is". `shiftId` is never sent - nothing in the UI can set it.
+ * means "leave as-is".
  *
  * An empty object means the user changed nothing, and the caller should not send a
  * request at all (a no-op PATCH still writes an audit row and bumps `updatedAt`).
@@ -71,11 +74,15 @@ export function buildEmployeeUpdate(original: Employee, form: EmployeeFormValue)
   };
 
   const branchId = link(original.branchId, form.branchId);
+  const shiftId = link(original.shiftId, form.shiftId);
   const userId = link(original.userId, form.userId);
   const managerId = link(original.managerId, form.managerId);
 
   if (branchId !== undefined) {
     request.branchId = branchId;
+  }
+  if (shiftId !== undefined) {
+    request.shiftId = shiftId;
   }
   if (userId !== undefined) {
     request.userId = userId;
