@@ -44,6 +44,7 @@ after that feature ships.
 11. [Shift (the first master-data domain without a `code`)](./frontend-11-shift.md)
 12. [Holiday Calendar (the first parent → child domain)](./frontend-12-holiday-calendar.md)
 13. [Attendance (the first transactional domain)](./frontend-13-attendance.md)
+14. [Leave (the first approval workflow)](./frontend-14-leave.md)
 
 ## Backend Stack
 

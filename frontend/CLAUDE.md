@@ -139,8 +139,10 @@ EmployeeListPageComponent` automatically — verified live during Feature
 - [x] Feature 13 — Attendance: first transactional domain (a ledger, not master data): a "today" check-in card for every
   role, an ADMIN/MANAGER records list with create / correct / delete and a computed-status lookup; `core/employee-directory`;
   the card follows the SERVER's UTC day
-- [ ] Feature 14 — Leave: NEXT (consumes Employment Type + Holiday Calendar; read, never written, by Attendance; the
-  second consumer of the employee picker - promote it to `shared/`). Not started - Phase 1 (Theory) has not been presented.
+- [x] Feature 14 — Leave: first approval workflow (leave types, my leave, a requests ledger with approve / reject / cancel, a balances
+  ledger with an ADMIN adjust); the employee picker, status pill, employee cell and server-day helper promoted to `shared/`
+- [ ] Feature 15 — Payroll: NEXT (the heaviest consumer: Employment Type, Attendance, Leave, Department, Designation, Branch). Not
+  started - Phase 1 (Theory) has not been presented.
 
 _(Feature 0 — Angular Project Initialization — completed, on the
 `frontend` branch. Scaffolded via `npx @angular/cli@21.2.19 new frontend`
@@ -1870,3 +1872,52 @@ west of UTC is reasoned from the code, not reproduced); a non-working day hides 
 user's own punches; a joining date is not a unique key. Also: other features' dialogs still toast on top of an inline
 error; Prettier is configured but not enforced; Branch is still not on the shared screen. Promote
 `EmployeePickerComponent` to `shared/` when Leave needs it.)_
+
+_(Feature 14 - Leave: the first APPROVAL WORKFLOW (leave types, requests, balances) - 2026-09-26, directly on `main`.
+Full write-up: `handbook/frontend-14-leave.md`; architectural record: blueprint v19.
+
+**Contract (read from `backend/src/modules/leave*` + `docs/domain-leave.md`, then exercised live).** A request has
+`startDate`/`endDate` (calendar dates), `reason?`, `status` PENDING/APPROVED/REJECTED/CANCELLED and `durationDays` (a Decimal
+string, NULL until approved - holidays and week-offs are excluded from it, worked out only at approval). A balance is
+`entitlement` + `consumed` (Decimal strings) per employee/type/year and is created LAZILY at the first approval. `GET
+/leave-requests` and `/leave-balances` are auto-scoped to the caller WITHOUT `:read:any`; ADMIN and MANAGER HAVE it. ADMIN may
+decide any pending request (`decide:any`), a MANAGER only their direct reports' (`decide:reports`, via `Employee.managerId`);
+approve can be a 409 "Insufficient leave balance"; overlap is a 409; an inactive type or no employee record is a 400; cancel
+allows PENDING always and APPROVED only while `startDate` is after the SERVER's UTC day. A rejection reason is stored ONLY in
+the audit log. Leave type: no `code`, names unique ignoring case, delete 409 while referenced. Balance adjust: ADMIN only, any
+number >= 0, audit-logged. Attendance reads an approved leave as ON_LEAVE (verified live).
+
+**What was built.** (0) A behaviour-neutral REFACTOR, its own commit: `shared/components/{employee-picker,status-pill,
+employee-cell}`, `shared/utils/server-day.util.ts`, `ConfirmDialogData.tone`; Attendance's specs unchanged. (A) `features/leave/`:
+`leave.dto/models/mapper` (Decimal strings -> numbers), four services, `LeaveTypeStore` on `MasterDataStore`, three page-provided
+stores on the new `shared/utils/paged-list.util.ts` (`createPagedList`), pure tested `leave-rules.ts` (`canCancel`, `canDecide`,
+`remainingDays`, `formatDateRange`) and `leave-form.ts` (only-changed builders, decimal / whole-day parsing). (B) Screens:
+`/leave-types` (own table and dialog), `/my-leave` (balance cards + my requests + apply dialog + cancel), `/leave-requests`
+(ledger starting on PENDING; Approve / Reject / Cancel; "Not your report"), `/leave-balances` (ledger + ADMIN adjust). (C)
+`EmployeeDirectoryService` + `managerId`, `managerIdOf`, `ownEmployeeId`; `LeaveTypeDirectoryService`;
+`MasterDataDirectory` `silentErrors`.
+
+**Judgment calls.** "My leave" resolves the caller's OWN employee first when they hold `:read:any` (else it lists everyone's
+leave), fetches nothing without one, and blocks with a Retry when the directory fails. Who may decide is derived from the manager
+link and FAILS CLOSED (hidden buttons + "Not your report", never offered-then-refused). No day estimate on the apply form and no
+promise that the employee sees a rejection reason. Approve and cancel reuse the confirm helper (label, tone). Every request opts
+out of the global toast.
+
+**Tests: 768 (was 530; 238 new).** `ng build`/`ng lint`/`ng test` clean. **Fourteen mutation checks, all killed by the intended
+spec.** **Live against the real backend (temporary ADMIN, MANAGER, EMPLOYEE accounts): 135/135**, plus Attendance's own 105/105
+and 44/44 re-run twice (after the refactor and at the end). Data removed and verified (0 attendance/leave rows, 30 employees, 1
+branch, 0 shifts/calendars/holidays). Harness: `setup-leave-extra.mjs`, `verify-leave.mjs` (on top of `setup-attendance.mjs`),
+`cleanup-attendance.mjs` (now also clears leave audit rows), `attendance-lib.mjs`.
+
+**Real defects, and how each was found.** (1) "My leave" would have listed everyone's leave for ADMIN/MANAGER - found while WRITING
+A COMMENT for `MyLeaveStore` that could not be made true, before any test. (2) The shared employee cell lost the space before the
+"Joined ..." line - a moved spec. (3) A leave-types outage showed twice (blocking banner + toast) - the outage screenshot.
+(4) A hint claimed weekends and holidays are not counted - false without a shift; replaced. NOT app bugs: two fixture requests
+came back 409 (my "big" request overlapped the reject fixtures - the overlap rule working); an apply-dialog error was missing from
+a screenshot mid-fade (measured opacity 1 after a wait); three checks read a dialog or a response status too early; a spec looked
+for `mat-select` options before it was opened; the Vite `EPERM` login-page failure again.
+
+**Outside scope, not changed (backend):** a rejection reason is invisible to the applicant; no day estimate before approval; no
+"waiting on me" filter (the list takes one employee); a new hire has no balance row until a first approval; the cancel rule is
+UTC-day based. Also: `AttendanceStore` is not yet on `createPagedList`; other features' dialogs still toast on top of an inline
+error; Prettier is configured but not enforced; Branch is still not on the shared screen.)_

@@ -496,7 +496,7 @@ handbook kept in sync, one commit per feature).
   Windows and leave the login page blank (504 "Outdated Optimize Dep") - stop `ng serve`, delete
   `frontend/.angular/cache/<ver>/frontend/vite`, restart, and confirm the login form renders before
   running a verifier.
-- v18 (this revision) — **Attendance** (item 8 of the rollout; the first TRANSACTIONAL domain - a
+- v18 — **Attendance** (item 8 of the rollout; the first TRANSACTIONAL domain - a
   ledger, not master data). `features/attendance/`, `core/employee-directory/`, two optional flags
   on the shared `ColumnDef`. Establishes or amends: (1) **§1/§6 - a `core/` directory for
   something a feature must REFERENCE without owning**, now for EMPLOYEES: `EmployeeDirectoryService`
@@ -546,6 +546,42 @@ handbook kept in sync, one commit per feature).
   carry no display name; "today" and lateness are UTC-based; a non-working day hides the record from
   the status response; a joining date is not a unique key. Verified live: data removed and confirmed
   (0 attendance rows, 30 employees, 1 branch, 0 shifts, calendars, holidays, leave rows).
+- v19 (this revision) — **Leave** (item 9 of the rollout; the first APPROVAL WORKFLOW: three aggregates -
+  leave types, requests, balances). `features/leave/`, promotions to `shared/`, two `core/` additions.
+  Establishes or amends: (1) **§9 - promote at the SECOND consumer, prove it with the first one's specs.**
+  Leave was the second consumer of Attendance's employee picker, status badge, employee-label cell and
+  `serverToday`, so a behaviour-neutral refactor (its own commit) moved them to `shared/components/
+  {employee-picker,status-pill,employee-cell}` and `shared/utils/server-day.util.ts`; Attendance keeps its own
+  status wording and renders through the shared pill. The proof is that Attendance's behavioural specs did
+  not change (only import paths) and its live checks still pass. `shared/utils/paged-list.util.ts`
+  (`createPagedList`: page, sort, filters, refetch, cancel a superseded request, step back a page) was
+  extracted at Leave's third store; `AttendanceStore` predates it and is not yet on it. (2) **§6/§7 -
+  "may THIS caller do THIS to THIS row?" is a pure, tested function that fails CLOSED.** `canDecide`
+  (ADMIN: any pending; MANAGER: only where the requester's `managerId` is the caller's OWN employee id;
+  anything unknown: no) and `canCancel` (PENDING always; APPROVED only while `startDate` is after the
+  SERVER's UTC day) mirror the backend; the buttons that cannot succeed are not offered, the rows a MANAGER
+  cannot decide say "Not your report", and the server stays the authority (a 403 / 409 shows inline).
+  `EmployeeDirectoryService` gained `managerId`, `managerIdOf` and `ownEmployeeId`. (3) **§7 - a broad read
+  permission must never widen a "my ..." screen.** ADMIN and MANAGER hold `leaveRequest:read:any`, so an
+  unfiltered `GET /leave-requests` is org-wide: "My leave" resolves the caller's own employee first, sends
+  that id on BOTH lists, shows a "not linked" state and fetches NOTHING when there is none, and blocks with a
+  Retry (never falls back to everyone's) when the directory fails. (4) **§8 - a DTO -> model mapper again**
+  (`leave.mapper.ts`): Decimal strings (`durationDays`, `entitlement`, `consumed`) become numbers; a
+  `null` duration stays `null`, and the UI never estimates a day count - the server works it out only at
+  approval, from the branch calendar and the shift. (5) **§9 - reuse the confirm flow, do not fork it**:
+  `createConfirmDelete` and `ConfirmDialogData` gained optional `confirmLabel`, `cancelLabel` and `tone`
+  (default `warn`, unchanged) for cancel and approve. (6) **§12 - inline failure means no toast, per
+  request and per directory**: every Leave request opts out of `SKIP_GLOBAL_ERROR_NOTIFICATION`, and
+  `MasterDataDirectory` gained an optional `silentErrors` (set for leave types only; the older directories
+  keep their toast) after a leave-types outage showed twice. (7) **§13/§15 - testing.** 768 tests (was 530;
+  238 new); fourteen MUTATION checks, each killed by the intended spec; live 135/135 against the real backend
+  with temporary ADMIN / MANAGER / EMPLOYEE accounts (approve with a holiday-excluded duration of 4 and a
+  lazily created balance, the insufficient-balance 409, reject with and without a reason, ADMIN cancel giving
+  days back, the started-leave 400, Attendance reading ON_LEAVE, outages, `Etc/GMT+12`, 360 px), and
+  Attendance's own 105/105 + 44/44 re-run twice. (8) **Backend facts recorded, NOT changed**: a rejection
+  reason is kept only in the audit log (the applicant never sees it); a balance row exists only after a first
+  approval; the list filters by one employee (so no "waiting on me" inbox); the cancel rule and a balance's
+  year are UTC-day based.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:
