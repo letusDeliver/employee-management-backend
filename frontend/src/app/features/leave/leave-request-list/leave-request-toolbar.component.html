@@ -1,0 +1,42 @@
+<form [formGroup]="form" class="mb-4 flex flex-wrap items-start gap-2">
+  <div class="employee-field">
+    <app-employee-picker formControlName="employeeId" label="Employee" />
+  </div>
+
+  <mat-form-field class="status-field" subscriptSizing="dynamic">
+    <mat-label>Status</mat-label>
+    <mat-select formControlName="status">
+      <mat-option value="">All</mat-option>
+      @for (option of statusOptions; track option.value) {
+        <mat-option [value]="option.value">{{ option.label }}</mat-option>
+      }
+    </mat-select>
+  </mat-form-field>
+
+  <mat-form-field class="type-field" subscriptSizing="dynamic">
+    <mat-label>Leave type</mat-label>
+    <mat-select formControlName="leaveTypeId">
+      <mat-option value="">All</mat-option>
+      @for (entry of leaveTypes.entries(); track entry.id) {
+        <mat-option [value]="entry.id">{{ entry.name }}{{ entry.status === 'INACTIVE' ? ' (inactive)' : '' }}</mat-option>
+      }
+    </mat-select>
+  </mat-form-field>
+
+  <mat-form-field subscriptSizing="dynamic">
+    <mat-label>Starts between</mat-label>
+    <mat-date-range-input [rangePicker]="rangePicker" formGroupName="range">
+      <input matStartDate formControlName="start" placeholder="From" aria-label="Start date from" />
+      <input matEndDate formControlName="end" placeholder="To" aria-label="Start date to" />
+    </mat-date-range-input>
+    <mat-datepicker-toggle matIconSuffix [for]="rangePicker" />
+    <mat-date-range-picker #rangePicker />
+  </mat-form-field>
+
+  @if (hasFilters()) {
+    <button mat-button type="button" class="clear-button" (click)="clear()">
+      <mat-icon>{{ icons.close }}</mat-icon>
+      Clear filters
+    </button>
+  }
+</form>

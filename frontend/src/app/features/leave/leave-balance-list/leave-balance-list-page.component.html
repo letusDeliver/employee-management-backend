@@ -1,0 +1,41 @@
+<app-page-header
+  title="Leave balances"
+  description="How many days each employee was granted and has used. A balance appears once a leave is first approved."
+/>
+
+<app-leave-balance-toolbar [filters]="filters()" (filtersChange)="onFiltersChange($event)" />
+
+@if (directory.error()) {
+  <div class="mb-4">
+    <app-inline-banner
+      tone="warning"
+      message="Employee names could not be loaded, so rows may read 'Unknown employee'."
+      [showRetry]="true"
+      (retry)="reloadDirectory()"
+    />
+  </div>
+}
+
+@if (store.error(); as message) {
+  <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="store.loadList()" />
+} @else if (!store.loading() && store.balances().length === 0) {
+  <app-empty-state
+    [icon]="icons.accountBalanceWallet"
+    [title]="hasActiveFilters() ? 'No balances match your filters' : 'No leave balances yet'"
+    [description]="
+      hasActiveFilters()
+        ? 'Try a different employee, type or year, or clear your filters.'
+        : 'A balance is created when an employee\'s first leave for a year is approved.'
+    "
+  />
+} @else {
+  <app-leave-balance-table
+    [rows]="store.balances()"
+    [loading]="store.loading()"
+    [pagination]="store.pagination()"
+    [canAdjust]="canAdjust()"
+    (pageChange)="onPageChange($event)"
+    (sortChange)="onSortChange($event)"
+    (adjustRequested)="openAdjustDialog($event)"
+  />
+}

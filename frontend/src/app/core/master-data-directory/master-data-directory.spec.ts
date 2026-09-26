@@ -2,11 +2,13 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, TestRequest, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 
+import { SKIP_GLOBAL_ERROR_NOTIFICATION } from '../http/http-context-tokens';
 import { BranchDirectoryService } from './branch-directory.service';
 import { DepartmentDirectoryService } from './department-directory.service';
 import { DesignationDirectoryService } from './designation-directory.service';
 import { DirectoryEntry } from './master-data-directory';
 import { HolidayCalendarDirectoryService } from './holiday-calendar-directory.service';
+import { LeaveTypeDirectoryService } from './leave-type-directory.service';
 import { ShiftDirectoryService } from './shift-directory.service';
 
 const entry = (id: string, name: string, status: DirectoryEntry['status'] = 'ACTIVE'): DirectoryEntry => ({ id, name, status });
@@ -181,5 +183,44 @@ describe('directory providers', () => {
     request.flush({ [key]: [entry('x1', 'Thing')], pagination: pagination(1) });
 
     expect(directory.nameOf('x1')).toBe('Thing');
+  });
+});
+
+describe('LeaveTypeDirectoryService', () => {
+  let http: HttpTestingController;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({ providers: [provideHttpClient(), provideHttpClientTesting()] });
+    http = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => http.verify());
+
+  it("pages /leave-types and maps the `leaveTypes` key", () => {
+    const directory = TestBed.inject(LeaveTypeDirectoryService);
+    directory.refresh();
+
+    const request = http.expectOne((r) => r.method === 'GET' && r.url.endsWith('/leave-types'));
+    request.flush({ leaveTypes: [{ id: 't-1', name: 'Annual Leave', status: 'ACTIVE' }], pagination: { page: 1, limit: 100, total: 1, totalPages: 1 } });
+
+    expect(directory.nameOf('t-1')).toBe('Annual Leave');
+  });
+
+  it('opts out of the global error toast, because the apply dialog shows a failure itself', () => {
+    const directory = TestBed.inject(LeaveTypeDirectoryService);
+    directory.refresh().subscribe({ error: () => undefined });
+
+    const request = http.expectOne((r) => r.url.endsWith('/leave-types'));
+    expect(request.request.context.get(SKIP_GLOBAL_ERROR_NOTIFICATION)).toBe(true);
+    request.flush({}, { status: 500, statusText: 'Server Error' });
+  });
+
+  it('leaves the OTHER directories on the toast, as before', () => {
+    const shifts = TestBed.inject(ShiftDirectoryService);
+    shifts.refresh().subscribe({ error: () => undefined });
+
+    const request = http.expectOne((r) => r.url.endsWith('/shifts'));
+    expect(request.request.context.get(SKIP_GLOBAL_ERROR_NOTIFICATION)).toBe(false);
+    request.flush({}, { status: 500, statusText: 'Server Error' });
   });
 });

@@ -1,0 +1,13 @@
+:host {
+  display: block;
+}
+
+.summary {
+  margin: 0 0 16px;
+}
+
+// `subscriptSizing="dynamic"` removes the fixed subscript gap, so the field keeps its own bottom margin
+// (the hint sits inside the field's own box, and a banner may follow).
+.reason-field {
+  margin-bottom: 20px;
+}

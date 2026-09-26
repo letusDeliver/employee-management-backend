@@ -1,0 +1,27 @@
+<form [formGroup]="form" class="mb-4 flex flex-wrap items-start gap-2">
+  <div class="employee-field">
+    <app-employee-picker formControlName="employeeId" label="Employee" />
+  </div>
+
+  <mat-form-field class="type-field" subscriptSizing="dynamic">
+    <mat-label>Leave type</mat-label>
+    <mat-select formControlName="leaveTypeId">
+      <mat-option value="">All</mat-option>
+      @for (entry of leaveTypes.entries(); track entry.id) {
+        <mat-option [value]="entry.id">{{ entry.name }}{{ entry.status === 'INACTIVE' ? ' (inactive)' : '' }}</mat-option>
+      }
+    </mat-select>
+  </mat-form-field>
+
+  <mat-form-field class="year-field" subscriptSizing="dynamic">
+    <mat-label>Year</mat-label>
+    <input matInput type="text" inputmode="numeric" maxlength="4" formControlName="year" placeholder="e.g. 2026" />
+  </mat-form-field>
+
+  @if (hasFilters()) {
+    <button mat-button type="button" class="clear-button" (click)="clear()">
+      <mat-icon>{{ icons.close }}</mat-icon>
+      Clear filters
+    </button>
+  }
+</form>

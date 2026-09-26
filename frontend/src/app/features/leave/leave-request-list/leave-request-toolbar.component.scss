@@ -1,0 +1,21 @@
+:host {
+  display: block;
+}
+
+.employee-field {
+  width: 260px;
+  max-width: 100%;
+}
+
+.status-field {
+  width: 150px;
+}
+
+.type-field {
+  width: 200px;
+}
+
+.clear-button {
+  // Lines up with the 56px-tall outline fields beside it.
+  height: 56px;
+}

@@ -1,0 +1,98 @@
+<app-page-header title="My leave" description="Your balances, and the leave you have asked for.">
+  @if (!store.notLinked() && !ownerError()) {
+    <button pageHeaderActions mat-flat-button color="primary" type="button" (click)="openApplyDialog()">
+      <mat-icon>{{ icons.add }}</mat-icon>
+      Apply for Leave
+    </button>
+  }
+</app-page-header>
+
+@if (ownerError(); as message) {
+  <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="resolveOwner()" />
+} @else if (store.notLinked()) {
+  <app-empty-state
+    [icon]="icons.badge"
+    title="Your account isn't linked to an employee record"
+    description="Leave is requested and tracked against an employee. Ask an administrator to link your account to an employee record."
+  />
+} @else {
+  <section class="section" aria-labelledby="balances-heading">
+    <div class="section-head">
+      <h2 id="balances-heading" class="ds-h3">Balances</h2>
+      <mat-form-field class="year-field" subscriptSizing="dynamic">
+        <mat-label>Year</mat-label>
+        <mat-select [value]="store.year()" (selectionChange)="store.setYear($event.value)">
+          @for (year of years(); track year) {
+            <mat-option [value]="year">{{ year }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+    </div>
+
+    @if (store.balancesError(); as message) {
+      <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="store.loadBalances()" />
+    } @else if (store.balancesLoading() && store.balances().length === 0) {
+      <div class="flex items-center gap-2">
+        <mat-progress-spinner diameter="24" mode="indeterminate" aria-label="Loading your balances" />
+        <span>Loading...</span>
+      </div>
+    } @else if (balanceCards().length === 0) {
+      <p class="ds-body muted">
+        No balance for {{ store.year() }} yet. A balance is created when your first leave for the year is approved.
+      </p>
+    } @else {
+      <div class="cards">
+        @for (card of balanceCards(); track card.id) {
+          <div class="surface-card balance-card">
+            <p class="ds-label">{{ card.name }}</p>
+            <p class="remaining">{{ card.remaining }} <span class="ds-body">days left</span></p>
+            <p class="ds-caption muted">Used {{ card.used }} of {{ card.entitlement }} days</p>
+          </div>
+        }
+      </div>
+    }
+  </section>
+
+  <section class="section" aria-labelledby="requests-heading">
+    <div class="section-head">
+      <h2 id="requests-heading" class="ds-h3">My requests</h2>
+      <mat-form-field class="status-field" subscriptSizing="dynamic">
+        <mat-label>Status</mat-label>
+        <mat-select [value]="store.query().status ?? ''" (selectionChange)="onStatusChange($event.value)">
+          <mat-option value="">All</mat-option>
+          @for (option of statusOptions; track option.value) {
+            <mat-option [value]="option.value">{{ option.label }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+    </div>
+
+    @if (actionError(); as message) {
+      <div class="mb-4">
+        <app-inline-banner tone="error" [message]="message" />
+      </div>
+    }
+
+    @if (store.error(); as message) {
+      <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="store.reload()" />
+    } @else if (!store.loading() && store.requests().length === 0) {
+      <app-empty-state
+        [icon]="icons.flightTakeoff"
+        [title]="store.query().status ? 'No requests with that status' : 'No leave requests yet'"
+        [description]="
+          store.query().status ? 'Try another status, or show all.' : 'Use Apply for Leave to ask for time off.'
+        "
+      />
+    } @else {
+      <app-my-leave-table
+        [rows]="store.requests()"
+        [loading]="store.loading()"
+        [pagination]="store.pagination()"
+        [cancellingIds]="cancellingIds()"
+        (pageChange)="onPageChange($event)"
+        (sortChange)="onSortChange($event)"
+        (cancelRequested)="onCancelRequested($event)"
+      />
+    }
+  </section>
+}

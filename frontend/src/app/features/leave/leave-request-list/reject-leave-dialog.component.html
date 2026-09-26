@@ -1,0 +1,24 @@
+<h2 mat-dialog-title>Reject Leave Request</h2>
+<form [formGroup]="form" (ngSubmit)="submit()">
+  <mat-dialog-content class="flex flex-col gap-1">
+    <p class="ds-body summary">{{ data.summary }}</p>
+
+    <mat-form-field class="w-full reason-field" subscriptSizing="dynamic">
+      <mat-label>Reason (optional)</mat-label>
+      <textarea matInput formControlName="reason" rows="3"></textarea>
+      <mat-hint>Recorded in the audit log only. The employee is not shown it.</mat-hint>
+    </mat-form-field>
+
+    @if (serverError(); as message) {
+      <app-inline-banner tone="error" [message]="message" />
+    }
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    @if (submitting()) {
+      <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Rejecting" />
+    }
+    <button mat-button type="button" [disabled]="submitting()" (click)="cancel()">Cancel</button>
+    <button mat-flat-button color="warn" type="submit" [disabled]="submitting()">Reject Request</button>
+  </mat-dialog-actions>
+</form>

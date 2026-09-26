@@ -35,6 +35,12 @@ export const ICON_NAMES = {
   login: 'login',
   howToReg: 'how_to_reg',
   factCheck: 'fact_check',
+  beachAccess: 'beach_access',
+  flightTakeoff: 'flight_takeoff',
+  eventAvailable: 'event_available',
+  accountBalanceWallet: 'account_balance_wallet',
+  check: 'check',
+  eventBusy: 'event_busy',
 } as const satisfies Record<string, string>;
 
 export type IconName = keyof typeof ICON_NAMES;

@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpContext } from '@angular/common/http';
 import { computed, inject, signal } from '@angular/core';
 import { Observable, ReplaySubject, catchError, finalize, forkJoin, map, of, switchMap, tap, throwError } from 'rxjs';
 
@@ -6,6 +6,7 @@ import { Paginated } from '../../shared/models/paginated.model';
 import { extractErrorMessage } from '../../shared/utils/extract-error-message.util';
 import { toHttpParams } from '../../shared/utils/http-params.util';
 import { API_BASE_URL } from '../config/api-base-url.token';
+import { SKIP_GLOBAL_ERROR_NOTIFICATION } from '../http/http-context-tokens';
 
 /** The only fields a lookup needs from a master-data record. */
 export interface DirectoryEntry {
@@ -26,10 +27,18 @@ export interface DirectoryConfig {
   path: string;
   /** The endpoint's own response key, e.g. `departments` (there is no generic envelope - blueprint §0). */
   listKey: string;
+  /**
+   * Skip the global error toast for this directory's requests. For a directory whose failure every
+   * consumer already shows itself (Leave's apply dialog blocks with a banner and a Retry), where the toast
+   * would only repeat it. Off by default: the older consumers rely on the toast.
+   */
+  silentErrors?: boolean;
 }
 
 // The API's maximum page size (a request for 101 is a 400).
 const PAGE_SIZE = 100;
+
+const SILENT = new HttpContext().set(SKIP_GLOBAL_ERROR_NOTIFICATION, true);
 
 /**
  * A `core/` lookup over one governed master-data list (Department, Designation,
@@ -163,7 +172,7 @@ export class MasterDataDirectory {
     const params = toHttpParams({ page, limit: PAGE_SIZE, sortBy: 'name', order: 'asc' });
 
     return this.http
-      .get<Record<string, unknown>>(`${this.baseUrl}${this.config.path}`, { params })
+      .get<Record<string, unknown>>(`${this.baseUrl}${this.config.path}`, { params, context: this.config.silentErrors ? SILENT : undefined })
       .pipe(
         map((response) => ({
           items: (response[this.config.listKey] as DirectoryEntry[]) ?? [],

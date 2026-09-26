@@ -1,0 +1,16 @@
+:host {
+  display: block;
+}
+
+.types-error {
+  margin-bottom: 12px;
+}
+
+// `subscriptSizing="dynamic"` removes the fixed one-line subscript gap its siblings keep, so a field
+// that is followed by another needs its own bottom margin (the ~20px the fixed gap would give) or the
+// next field's floating label overlaps it. Checked in a real browser, not in jsdom.
+.type-field,
+.range-field,
+.reason-field {
+  margin-bottom: 20px;
+}

@@ -133,6 +133,48 @@ export const routes: Routes = [
         canActivate: [permissionGuard],
         data: { breadcrumb: 'Attendance records', permissions: ['attendance:read:any'] },
       },
+      {
+        // Flat, like 'shifts' - create/edit is a dialog, not a routed sub-page. leaveType:read is granted to
+        // every role (docs/domain-leave.md ADR-LV07); every mutation is ADMIN-only and gated in-page.
+        path: 'leave-types',
+        loadComponent: () =>
+          import('./features/leave/leave-type-list/leave-type-list-page.component').then(
+            (m) => m.LeaveTypeListPageComponent,
+          ),
+        canActivate: [permissionGuard],
+        data: { breadcrumb: 'Leave types', permissions: ['leaveType:read'] },
+      },
+      {
+        // Flat: one page, no nested routes. leaveRequest:create:own is granted to every role
+        // (docs/domain-leave.md ADR-LV07), so this is every signed-in user's own leave page.
+        path: 'my-leave',
+        loadComponent: () =>
+          import('./features/leave/my-leave/my-leave-page.component').then((m) => m.MyLeavePageComponent),
+        canActivate: [permissionGuard],
+        data: { breadcrumb: 'My leave', permissions: ['leaveRequest:create:own'] },
+      },
+      {
+        // Flat: decisions are a dialog and a confirm, not routed sub-pages. GET /leave-requests without
+        // :read:any is auto-scoped to one's own requests, but this LEDGER is for the people who decide.
+        path: 'leave-requests',
+        loadComponent: () =>
+          import('./features/leave/leave-request-list/leave-request-list-page.component').then(
+            (m) => m.LeaveRequestListPageComponent,
+          ),
+        canActivate: [permissionGuard],
+        data: { breadcrumb: 'Leave requests', permissions: ['leaveRequest:read:any'] },
+      },
+      {
+        // Flat: adjusting a balance is a dialog. GET /leave-balances without :read:any is auto-scoped to
+        // one's own balances (shown on /my-leave); this ledger is for ADMIN and MANAGER.
+        path: 'leave-balances',
+        loadComponent: () =>
+          import('./features/leave/leave-balance-list/leave-balance-list-page.component').then(
+            (m) => m.LeaveBalanceListPageComponent,
+          ),
+        canActivate: [permissionGuard],
+        data: { breadcrumb: 'Leave balances', permissions: ['leaveBalance:read:any'] },
+      },
     ],
   },
 ];

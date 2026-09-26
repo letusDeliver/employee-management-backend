@@ -1,0 +1,60 @@
+<app-data-table
+  [columns]="columns"
+  [rows]="rows()"
+  [loading]="loading()"
+  [totalCount]="pagination().total"
+  [pageIndex]="pagination().page - 1"
+  [pageSize]="pagination().limit"
+  (pageChange)="pageChange.emit($event)"
+  (sortChange)="sortChange.emit($event)"
+>
+  <ng-template appDataTableCell="defaultAnnualEntitlement" let-row>
+    <span class="whitespace-nowrap">{{ row.defaultAnnualEntitlement }}</span>
+  </ng-template>
+
+  <!-- Words, not colour: an unpaid type is the exception a payroll reader needs to spot. -->
+  <ng-template appDataTableCell="isPaid" let-row>
+    <span class="whitespace-nowrap">{{ row.isPaid ? 'Paid' : 'Unpaid' }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="status" let-row>
+    <mat-chip-set>
+      <mat-chip>{{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}</mat-chip>
+    </mat-chip-set>
+  </ng-template>
+
+  <ng-template appDataTableCell="createdAt" let-row>
+    <span class="whitespace-nowrap">{{ row.createdAt | date: 'mediumDate' }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="actions" let-row>
+    <div class="flex flex-nowrap items-center">
+      @if (canEdit()) {
+        <button
+          mat-icon-button
+          type="button"
+          [attr.aria-label]="'Edit ' + row.name"
+          matTooltip="Edit"
+          (click)="editRequested.emit(row)"
+        >
+          <mat-icon>{{ icons.edit }}</mat-icon>
+        </button>
+      }
+      @if (canDelete()) {
+        @if (deletingIds().has(row.id)) {
+          <mat-progress-spinner diameter="20" mode="indeterminate" [attr.aria-label]="'Deleting ' + row.name" />
+        } @else {
+          <button
+            mat-icon-button
+            type="button"
+            [attr.aria-label]="'Delete ' + row.name"
+            matTooltip="Delete"
+            (click)="deleteRequested.emit(row)"
+          >
+            <mat-icon>{{ icons.delete }}</mat-icon>
+          </button>
+        }
+      }
+    </div>
+  </ng-template>
+</app-data-table>

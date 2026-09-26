@@ -1,0 +1,49 @@
+<app-data-table
+  [columns]="columns"
+  [rows]="rows()"
+  [loading]="loading()"
+  [totalCount]="pagination().total"
+  [pageIndex]="pagination().page - 1"
+  [pageSize]="pagination().limit"
+  (pageChange)="pageChange.emit($event)"
+  (sortChange)="sortChange.emit($event)"
+>
+  <ng-template appDataTableCell="type" let-row>
+    {{ typeName(row) }}
+    @if (row.reason) {
+      <span class="ds-caption request-reason">{{ row.reason }}</span>
+    }
+  </ng-template>
+
+  <ng-template appDataTableCell="startDate" let-row>
+    <span class="whitespace-nowrap">{{ dates(row) }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="durationDays" let-row>
+    <span class="whitespace-nowrap">{{ days(row) }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="status" let-row>
+    <app-status-pill [label]="status(row).label" [tone]="status(row).tone" [icon]="status(row).icon" />
+  </ng-template>
+
+  <ng-template appDataTableCell="actions" let-row>
+    <div class="flex flex-nowrap items-center whitespace-nowrap">
+      @if (cancellable(row)) {
+        @if (cancellingIds().has(row.id)) {
+          <mat-progress-spinner diameter="20" mode="indeterminate" [attr.aria-label]="'Cancelling ' + rowLabel(row)" />
+        } @else {
+          <button
+            mat-icon-button
+            type="button"
+            [attr.aria-label]="'Cancel ' + rowLabel(row)"
+            matTooltip="Cancel request"
+            (click)="cancelRequested.emit(row)"
+          >
+            <mat-icon>{{ icons.close }}</mat-icon>
+          </button>
+        }
+      }
+    </div>
+  </ng-template>
+</app-data-table>

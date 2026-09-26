@@ -1,0 +1,76 @@
+<app-data-table
+  [columns]="columns"
+  [rows]="rows()"
+  [loading]="loading()"
+  [totalCount]="pagination().total"
+  [pageIndex]="pagination().page - 1"
+  [pageSize]="pagination().limit"
+  (pageChange)="pageChange.emit($event)"
+  (sortChange)="sortChange.emit($event)"
+>
+  <ng-template appDataTableCell="employee" let-row>
+    <app-employee-cell [employeeId]="row.employeeId" />
+  </ng-template>
+
+  <ng-template appDataTableCell="type" let-row>
+    {{ typeName(row) }}
+    @if (row.reason) {
+      <span class="ds-caption request-reason">{{ row.reason }}</span>
+    }
+  </ng-template>
+
+  <ng-template appDataTableCell="startDate" let-row>
+    <span class="whitespace-nowrap">{{ dates(row) }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="durationDays" let-row>
+    <span class="whitespace-nowrap">{{ days(row) }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="status" let-row>
+    <app-status-pill [label]="status(row).label" [tone]="status(row).tone" [icon]="status(row).icon" />
+  </ng-template>
+
+  <ng-template appDataTableCell="actions" let-row>
+    <!-- nowrap: the icons must stay on one line, or every row grows taller. -->
+    <div class="flex flex-nowrap items-center whitespace-nowrap">
+      @if (busyIds().has(row.id)) {
+        <mat-progress-spinner diameter="20" mode="indeterminate" [attr.aria-label]="'Working on ' + rowLabel(row)" />
+      } @else {
+        @if (decidable(row)) {
+          <button
+            mat-icon-button
+            type="button"
+            [attr.aria-label]="'Approve ' + rowLabel(row)"
+            matTooltip="Approve"
+            (click)="approveRequested.emit(row)"
+          >
+            <mat-icon>{{ icons.check }}</mat-icon>
+          </button>
+          <button
+            mat-icon-button
+            type="button"
+            [attr.aria-label]="'Reject ' + rowLabel(row)"
+            matTooltip="Reject"
+            (click)="rejectRequested.emit(row)"
+          >
+            <mat-icon>{{ icons.close }}</mat-icon>
+          </button>
+        } @else if (notYourReport(row)) {
+          <span class="ds-caption not-yours">Not your report</span>
+        }
+        @if (cancellable(row)) {
+          <button
+            mat-icon-button
+            type="button"
+            [attr.aria-label]="'Cancel ' + rowLabel(row)"
+            matTooltip="Cancel request"
+            (click)="cancelRequested.emit(row)"
+          >
+            <mat-icon>{{ icons.eventBusy }}</mat-icon>
+          </button>
+        }
+      }
+    </div>
+  </ng-template>
+</app-data-table>

@@ -1,0 +1,45 @@
+<app-page-header title="Leave types" description="The kinds of leave employees can request, and how many days each grants a year.">
+  @if (canCreate()) {
+    <button pageHeaderActions mat-flat-button color="primary" type="button" (click)="openCreateDialog()">
+      <mat-icon>{{ icons.add }}</mat-icon>
+      New Leave Type
+    </button>
+  }
+</app-page-header>
+
+<app-master-data-toolbar (filtersChange)="onFiltersChange($event)" />
+
+@if (deleteError(); as message) {
+  <div class="mb-4">
+    <app-inline-banner tone="error" [message]="message" />
+  </div>
+}
+
+@if (store.error(); as message) {
+  <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="store.loadList()" />
+} @else if (!store.loading() && store.items().length === 0) {
+  <app-empty-state
+    [icon]="icons.beachAccess"
+    [title]="hasActiveFilters() ? 'No leave types match your filters' : 'No leave types yet'"
+    [description]="
+      hasActiveFilters()
+        ? 'Try a different search or clear your filters.'
+        : canCreate()
+          ? 'Add the first leave type so employees can request it.'
+          : 'Leave types will appear here once an administrator adds one.'
+    "
+  />
+} @else {
+  <app-leave-type-table
+    [rows]="store.items()"
+    [loading]="store.loading()"
+    [pagination]="store.pagination()"
+    [deletingIds]="deletingIds()"
+    [canEdit]="canEdit()"
+    [canDelete]="canDelete()"
+    (pageChange)="onPageChange($event)"
+    (sortChange)="onSortChange($event)"
+    (editRequested)="openEditDialog($event)"
+    (deleteRequested)="onDeleteRequested($event)"
+  />
+}

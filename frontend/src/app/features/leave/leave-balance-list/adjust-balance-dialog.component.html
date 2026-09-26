@@ -1,0 +1,44 @@
+<h2 mat-dialog-title>Adjust Leave Balance</h2>
+<form [formGroup]="form" (ngSubmit)="submit()">
+  <mat-dialog-content class="flex flex-col gap-1">
+    <p class="ds-body summary">{{ data.summary }}</p>
+
+    <mat-form-field class="w-full amount-field" subscriptSizing="dynamic">
+      <mat-label>Entitlement (days)</mat-label>
+      <input matInput type="text" inputmode="decimal" formControlName="entitlement" />
+      @if (form.controls.entitlement.invalid && form.controls.entitlement.touched) {
+        <mat-error>Enter a number of days, 0 or more.</mat-error>
+      }
+    </mat-form-field>
+
+    <mat-form-field class="w-full amount-field" subscriptSizing="dynamic">
+      <mat-label>Used (days)</mat-label>
+      <input matInput type="text" inputmode="decimal" formControlName="consumed" />
+      @if (form.controls.consumed.invalid && form.controls.consumed.touched) {
+        <mat-error>Enter a number of days, 0 or more.</mat-error>
+      }
+    </mat-form-field>
+
+    @if (overdrawn()) {
+      <p class="ds-caption overdrawn" role="status">
+        More days are marked used than granted, so the balance would be negative. This is allowed for an administrator.
+      </p>
+    }
+
+    <p class="ds-caption note">Every adjustment is recorded in the audit log.</p>
+
+    @if (serverError(); as message) {
+      <app-inline-banner tone="error" [message]="message" />
+    }
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    @if (submitting()) {
+      <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Saving" />
+    }
+    <button mat-button type="button" [disabled]="submitting()" (click)="cancel()">Cancel</button>
+    <button mat-flat-button color="primary" type="submit" [disabled]="submitting() || (form.invalid && form.touched)">
+      Save Changes
+    </button>
+  </mat-dialog-actions>
+</form>

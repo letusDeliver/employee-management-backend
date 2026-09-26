@@ -1,0 +1,70 @@
+<h2 mat-dialog-title>Apply for Leave</h2>
+<form [formGroup]="form" (ngSubmit)="submit()">
+  <mat-dialog-content class="flex flex-col gap-1">
+    @if (leaveTypes.error(); as message) {
+      <div class="types-error">
+        <app-inline-banner tone="error" [message]="'Couldn\'t load leave types: ' + message" [showRetry]="true" (retry)="retryTypes()" />
+      </div>
+    }
+
+    <mat-form-field class="w-full type-field" subscriptSizing="dynamic">
+      <mat-label>Leave type</mat-label>
+      <mat-select formControlName="leaveTypeId" [disabled]="typesUnavailable()" required>
+        @for (option of options(); track option.id) {
+          <mat-option [value]="option.id">{{ option.name }}</mat-option>
+        }
+      </mat-select>
+      @if (form.controls.leaveTypeId.hasError('required') && form.controls.leaveTypeId.touched) {
+        <mat-error>Choose a leave type.</mat-error>
+      } @else if (leaveTypes.loading()) {
+        <mat-hint>Loading leave types...</mat-hint>
+      } @else if (leaveTypes.loaded() && options().length === 0) {
+        <mat-hint>No leave types are available. Ask an administrator to add one.</mat-hint>
+      }
+    </mat-form-field>
+
+    <mat-form-field class="w-full range-field" subscriptSizing="dynamic" formGroupName="range">
+      <mat-label>Dates</mat-label>
+      <mat-date-range-input [rangePicker]="rangePicker" required>
+        <input matStartDate formControlName="start" placeholder="First day" aria-label="First day of leave" />
+        <input matEndDate formControlName="end" placeholder="Last day" aria-label="Last day of leave" />
+      </mat-date-range-input>
+      <mat-datepicker-toggle matIconSuffix [for]="rangePicker" />
+      <mat-date-range-picker #rangePicker />
+      @if (form.controls.range.controls.start.hasError('matStartDateInvalid') || form.controls.range.controls.end.hasError('matEndDateInvalid')) {
+        <mat-error>The last day cannot be before the first.</mat-error>
+      } @else if (
+        (form.controls.range.controls.start.hasError('required') || form.controls.range.controls.end.hasError('required')) &&
+        (form.controls.range.controls.start.touched || form.controls.range.controls.end.touched)
+      ) {
+        <mat-error>Pick the first and last day (the same day is fine).</mat-error>
+      } @else {
+        <mat-hint>The days counted against your balance are worked out when the request is approved.</mat-hint>
+      }
+    </mat-form-field>
+
+    <mat-form-field class="w-full reason-field" subscriptSizing="dynamic">
+      <mat-label>Reason (optional)</mat-label>
+      <textarea matInput formControlName="reason" rows="2"></textarea>
+    </mat-form-field>
+
+    @if (serverError(); as message) {
+      <app-inline-banner tone="error" [message]="message" />
+    }
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    @if (submitting()) {
+      <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Submitting" />
+    }
+    <button mat-button type="button" [disabled]="submitting()" (click)="cancel()">Cancel</button>
+    <button
+      mat-flat-button
+      color="primary"
+      type="submit"
+      [disabled]="submitting() || typesUnavailable() || (form.invalid && form.touched)"
+    >
+      Submit Request
+    </button>
+  </mat-dialog-actions>
+</form>

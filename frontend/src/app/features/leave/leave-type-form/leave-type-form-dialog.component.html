@@ -1,0 +1,50 @@
+<h2 mat-dialog-title>{{ isEditMode ? 'Edit Leave Type' : 'New Leave Type' }}</h2>
+<form [formGroup]="form" (ngSubmit)="submit()">
+  <mat-dialog-content class="flex flex-col gap-1">
+    <mat-form-field class="w-full">
+      <mat-label>Name</mat-label>
+      <input matInput formControlName="name" />
+      @if (form.controls.name.invalid && form.controls.name.touched) {
+        <mat-error>Leave type name is required.</mat-error>
+      }
+    </mat-form-field>
+
+    <mat-form-field class="w-full">
+      <mat-label>Days per year</mat-label>
+      <input matInput type="text" inputmode="numeric" formControlName="defaultAnnualEntitlement" />
+      @if (form.controls.defaultAnnualEntitlement.invalid && form.controls.defaultAnnualEntitlement.touched) {
+        <mat-error>Enter a whole number of days from 1 to 365.</mat-error>
+      } @else {
+        <mat-hint>The full annual entitlement; the first year is prorated from the joining date.</mat-hint>
+      }
+    </mat-form-field>
+
+    <mat-checkbox formControlName="isPaid">Paid leave</mat-checkbox>
+    <p class="ds-caption paid-hint">An unpaid type is deducted from pay for each day taken.</p>
+
+    @if (isEditMode) {
+      <mat-form-field class="w-full" subscriptSizing="dynamic">
+        <mat-label>Status</mat-label>
+        <mat-select formControlName="status">
+          <mat-option value="ACTIVE">Active</mat-option>
+          <mat-option value="INACTIVE">Inactive</mat-option>
+        </mat-select>
+        <mat-hint>Inactive leave types can't be requested.</mat-hint>
+      </mat-form-field>
+    }
+
+    @if (serverError(); as message) {
+      <app-inline-banner tone="error" [message]="message" />
+    }
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    @if (submitting()) {
+      <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Saving" />
+    }
+    <button mat-button type="button" [disabled]="submitting()" (click)="cancel()">Cancel</button>
+    <button mat-flat-button color="primary" type="submit" [disabled]="submitting() || (form.invalid && form.touched)">
+      {{ isEditMode ? 'Save Changes' : 'Create Leave Type' }}
+    </button>
+  </mat-dialog-actions>
+</form>

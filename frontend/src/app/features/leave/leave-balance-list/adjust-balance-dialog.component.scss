@@ -1,0 +1,23 @@
+:host {
+  display: block;
+}
+
+.summary {
+  margin: 0 0 16px;
+}
+
+// `subscriptSizing="dynamic"` removes the fixed one-line subscript gap its siblings keep, so a field
+// followed by another needs its own bottom margin (the ~20px the fixed gap would give).
+.amount-field {
+  margin-bottom: 20px;
+}
+
+.overdrawn {
+  margin: 0 0 12px;
+  color: var(--mat-sys-error);
+}
+
+.note {
+  margin: 0 0 12px;
+  color: var(--mat-sys-on-surface-variant);
+}

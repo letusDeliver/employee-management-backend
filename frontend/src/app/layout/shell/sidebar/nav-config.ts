@@ -110,4 +110,39 @@ export const NAV_CONFIG: NavItem[] = [
     description: "View, correct and look up every employee's attendance.",
     permissions: ['attendance:read:any'],
   },
+  {
+    // leaveType:read only - granted to all 3 roles server-side (docs/domain-leave.md ADR-LV07), so this
+    // link is visible to everyone; New/Edit/Delete are ADMIN-only and gated in-page.
+    route: '/leave-types',
+    icon: ICON_NAMES.beachAccess,
+    label: 'Leave types',
+    description: 'Manage the kinds of leave employees can request.',
+    permissions: ['leaveType:read'],
+  },
+  {
+    // leaveRequest:create:own is granted to every role (docs/domain-leave.md ADR-LV07), so this link is
+    // visible to everyone; it is the caller's OWN balances and requests, not the approvals ledger.
+    route: '/my-leave',
+    icon: ICON_NAMES.flightTakeoff,
+    label: 'My leave',
+    description: 'See your leave balances and ask for time off.',
+    permissions: ['leaveRequest:create:own'],
+  },
+  {
+    // leaveRequest:read:any only (ADMIN, MANAGER): an employee's own requests live on /my-leave.
+    route: '/leave-requests',
+    icon: ICON_NAMES.eventAvailable,
+    label: 'Leave requests',
+    description: 'Review, approve and reject leave requests.',
+    permissions: ['leaveRequest:read:any'],
+  },
+  {
+    // leaveBalance:read:any only (ADMIN, MANAGER): an employee's own balances live on /my-leave. Adjusting a
+    // balance is further gated in-page on leaveBalance:adjust:any (ADMIN).
+    route: '/leave-balances',
+    icon: ICON_NAMES.accountBalanceWallet,
+    label: 'Leave balances',
+    description: "View and adjust employees' leave balances.",
+    permissions: ['leaveBalance:read:any'],
+  },
 ];

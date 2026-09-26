@@ -1,0 +1,52 @@
+<app-data-table
+  [columns]="columns"
+  [rows]="rows()"
+  [loading]="loading()"
+  [totalCount]="pagination().total"
+  [pageIndex]="pagination().page - 1"
+  [pageSize]="pagination().limit"
+  (pageChange)="pageChange.emit($event)"
+  (sortChange)="sortChange.emit($event)"
+>
+  <ng-template appDataTableCell="employee" let-row>
+    <app-employee-cell [employeeId]="row.employeeId" />
+  </ng-template>
+
+  <ng-template appDataTableCell="type" let-row>
+    {{ typeName(row) }}
+  </ng-template>
+
+  <ng-template appDataTableCell="entitlement" let-row>
+    <span class="whitespace-nowrap">{{ days(row.entitlement) }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="consumed" let-row>
+    <span class="whitespace-nowrap">{{ days(row.consumed) }}</span>
+  </ng-template>
+
+  <!-- A negative remaining (an admin override left more used than granted) is said in words too. -->
+  <ng-template appDataTableCell="remaining" let-row>
+    <span class="whitespace-nowrap" [class.negative]="isNegative(row)">
+      {{ remaining(row) }}
+      @if (isNegative(row)) {
+        <span class="ds-caption">(overdrawn)</span>
+      }
+    </span>
+  </ng-template>
+
+  <ng-template appDataTableCell="actions" let-row>
+    <div class="flex flex-nowrap items-center whitespace-nowrap">
+      @if (canAdjust()) {
+        <button
+          mat-icon-button
+          type="button"
+          [attr.aria-label]="'Adjust ' + rowLabel(row)"
+          matTooltip="Adjust balance"
+          (click)="adjustRequested.emit(row)"
+        >
+          <mat-icon>{{ icons.edit }}</mat-icon>
+        </button>
+      }
+    </div>
+  </ng-template>
+</app-data-table>

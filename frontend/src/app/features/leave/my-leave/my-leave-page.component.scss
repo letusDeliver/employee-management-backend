@@ -1,0 +1,53 @@
+:host {
+  display: block;
+}
+
+.section {
+  margin-bottom: 32px;
+}
+
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+
+.section-head h2 {
+  margin: 0;
+}
+
+.year-field {
+  width: 120px;
+}
+
+.status-field {
+  width: 180px;
+}
+
+.muted {
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.balance-card {
+  padding: 16px;
+}
+
+.balance-card p {
+  margin: 0;
+}
+
+.remaining {
+  margin: 4px 0 !important;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+}

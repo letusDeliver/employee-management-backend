@@ -1,0 +1,52 @@
+<app-page-header
+  title="Leave requests"
+  description="Time-off requests. Approve or reject the ones awaiting a decision."
+/>
+
+<app-leave-request-toolbar [filters]="filters()" (filtersChange)="onFiltersChange($event)" />
+
+@if (directory.error()) {
+  <div class="mb-4">
+    <app-inline-banner
+      tone="warning"
+      message="Employees could not be loaded, so names may read 'Unknown employee' and approve / reject are not offered."
+      [showRetry]="true"
+      (retry)="reloadDirectory()"
+    />
+  </div>
+}
+
+@if (actionError(); as message) {
+  <div class="mb-4">
+    <app-inline-banner tone="error" [message]="message" />
+  </div>
+}
+
+@if (store.error(); as message) {
+  <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="store.loadList()" />
+} @else if (!store.loading() && store.requests().length === 0) {
+  <app-empty-state
+    [icon]="icons.eventAvailable"
+    [title]="hasActiveFilters() ? 'No requests match your filters' : 'No leave requests yet'"
+    [description]="
+      hasActiveFilters()
+        ? 'Nothing is waiting here. Change or clear the filters to see other requests.'
+        : 'Requests appear here as employees ask for time off.'
+    "
+  />
+} @else {
+  <app-leave-request-table
+    [rows]="store.requests()"
+    [loading]="store.loading()"
+    [pagination]="store.pagination()"
+    [decidableIds]="decidableIds()"
+    [showNotYourReport]="showNotYourReport()"
+    [canCancelAny]="canCancelAny()"
+    [busyIds]="busyIds()"
+    (pageChange)="onPageChange($event)"
+    (sortChange)="onSortChange($event)"
+    (approveRequested)="onApproveRequested($event)"
+    (rejectRequested)="onRejectRequested($event)"
+    (cancelRequested)="onCancelRequested($event)"
+  />
+}
