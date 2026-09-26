@@ -11,6 +11,7 @@ import { EmployeeDirectoryService } from '../../../core/employee-directory/emplo
 import { ColumnDef } from '../../../shared/components/data-table/column-def';
 import { DataTableCellDirective } from '../../../shared/components/data-table/data-table-cell.directive';
 import { DataTableComponent } from '../../../shared/components/data-table/data-table.component';
+import { EmployeeCellComponent } from '../../../shared/components/employee-cell/employee-cell.component';
 import { ICON_NAMES } from '../../../shared/icon-names';
 import { Paginated } from '../../../shared/models/paginated.model';
 import { AttendanceRecord } from '../data-access/attendance.models';
@@ -34,6 +35,7 @@ import { punchLabel, recordDate, workedDuration } from '../data-access/attendanc
     DataTableComponent,
     DataTableCellDirective,
     DatePipe,
+    EmployeeCellComponent,
     MatButtonModule,
     MatIconModule,
     MatProgressSpinnerModule,
@@ -72,14 +74,6 @@ export class AttendanceTableComponent {
 
   protected employeeLabel(row: AttendanceRecord): string {
     return this.directory.labelOf(row.employeeId);
-  }
-
-  /**
-   * A second line, only for an employee with no resolvable name (every employee to a MANAGER): the
-   * label alone ("Engineer, Sales") would be the same on many rows.
-   */
-  protected employeeDetail(row: AttendanceRecord): string | null {
-    return this.directory.personNameOf(row.employeeId) === null ? this.directory.detailOf(row.employeeId) : null;
   }
 
   protected day(row: AttendanceRecord): Date {

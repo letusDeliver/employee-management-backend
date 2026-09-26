@@ -70,7 +70,7 @@ describe('EmployeeDirectoryService', () => {
       flushLookups();
 
       expect(directory.entries()).toEqual([
-        { id: 'e-1', userId: null, departmentId: 'dep-1', designationId: 'des-1', dateOfJoining: '2024-01-05' },
+        { id: 'e-1', userId: null, departmentId: 'dep-1', designationId: 'des-1', managerId: null, dateOfJoining: '2024-01-05' },
       ]);
       expect(directory.loaded()).toBe(true);
       expect(directory.loading()).toBe(false);
@@ -195,6 +195,54 @@ describe('EmployeeDirectoryService', () => {
       expect(directory.labelOf(null)).toBe(UNKNOWN_EMPLOYEE_LABEL);
       expect(directory.labelOf(undefined)).toBe(UNKNOWN_EMPLOYEE_LABEL);
       expect(directory.labelOf('nobody')).not.toContain('nobody');
+    });
+  });
+
+  describe('managerId and ownEmployeeId (what decides who may approve leave)', () => {
+    it('keeps the direct manager link, null when there is none', () => {
+      directory.refresh();
+      employeePages()[0].flush({
+        employees: [employee('e-boss'), employee('e-report', { managerId: 'e-boss' })],
+        pagination: pagination(1),
+      });
+      flushLookups();
+
+      expect(directory.entries().map((e) => [e.id, e.managerId])).toEqual([
+        ['e-boss', null],
+        ['e-report', 'e-boss'],
+      ]);
+    });
+
+    it('answers managerIdOf: the manager, null for none, undefined for an id it does not know', () => {
+      directory.refresh();
+      employeePages()[0].flush({
+        employees: [employee('e-boss'), employee('e-report', { managerId: 'e-boss' })],
+        pagination: pagination(1),
+      });
+      flushLookups();
+
+      expect(directory.managerIdOf('e-report')).toBe('e-boss');
+      expect(directory.managerIdOf('e-boss')).toBeNull();
+      expect(directory.managerIdOf('nobody')).toBeUndefined();
+      expect(directory.managerIdOf(null)).toBeUndefined();
+    });
+
+    it("finds the signed-in user's own employee by userId, and null when there is none", () => {
+      directory.refresh();
+      employeePages()[0].flush({
+        employees: [employee('e-1', { userId: 'u-1' }), employee('e-2', { userId: 'u-2' }), employee('e-3')],
+        pagination: pagination(1),
+      });
+      flushLookups();
+
+      expect(directory.ownEmployeeId('u-2')).toBe('e-2');
+      expect(directory.ownEmployeeId('u-unlinked')).toBeNull();
+      expect(directory.ownEmployeeId(null)).toBeNull();
+      expect(directory.ownEmployeeId(undefined)).toBeNull();
+    });
+
+    it('is null before the directory has loaded', () => {
+      expect(directory.ownEmployeeId('u-1')).toBeNull();
     });
   });
 

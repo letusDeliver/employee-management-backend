@@ -1,7 +1,6 @@
+import { StatusTone } from '../../../shared/components/status-pill/status-pill.component';
 import { formatDateOnly, parseDateOnly } from '../../../shared/utils/date-only.util';
 import { EffectiveStatus } from './attendance.models';
-
-export type StatusTone = 'success' | 'warning' | 'error' | 'info' | 'neutral';
 
 export interface StatusMeta {
   label: string;
@@ -26,21 +25,6 @@ export const STATUS_META: Record<EffectiveStatus, StatusMeta> = {
   WEEK_OFF: { label: 'Week off', tone: 'neutral', icon: 'weekend', explanation: "Not a working day on the employee's shift." },
   ON_LEAVE: { label: 'On leave', tone: 'info', icon: 'beach_access', explanation: 'An approved leave covers this day.' },
 };
-
-/**
- * The calendar date the SERVER treats as "today" for check-in and check-out: the current UTC date
- * (`toDateOnly(new Date())` in `attendance.service.js`). It is NOT the user's local date - for a
- * user behind UTC in the evening or ahead of it in the early morning the two differ. The
- * "today" card must ask about THIS date, or a successful check-in would read back as ABSENT.
- *
- * This is the one place `toISOString()` is right for a calendar date: the point is to mirror the
- * server's UTC day, not to describe the user's own. If the backend ever becomes timezone-aware,
- * this is the single function to change.
- */
-export const serverToday = (now: Date = new Date()): string => now.toISOString().slice(0, 10);
-
-/** The user's own local calendar date, for saying so when it differs from `serverToday`. */
-export const localToday = (now: Date = new Date()): string => formatDateOnly(now);
 
 /** `null` when either punch is missing or the checkout precedes the check-in (nothing sensible to show). */
 export const workedDuration = (checkIn: string | null, checkOut: string | null): string | null => {

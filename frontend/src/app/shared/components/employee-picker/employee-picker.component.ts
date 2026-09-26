@@ -9,7 +9,7 @@ import { MatInputModule } from '@angular/material/input';
 import { filter } from 'rxjs';
 
 import { EmployeeDirectoryService } from '../../../core/employee-directory/employee-directory.service';
-import { ICON_NAMES } from '../../../shared/icon-names';
+import { ICON_NAMES } from '../../icon-names';
 
 // A long list is filtered by typing; rendering hundreds of options at once helps nobody.
 const MAX_OPTIONS = 100;
@@ -25,7 +25,7 @@ const MAX_OPTIONS = 100;
  * the page or dialog that owns the field calls `refresh()` on entry, so a page that shows several
  * pickers (or none, until a dialog opens) decides when the load happens.
  *
- * Promote to `shared/` when a second feature needs it (Leave will) - it is one feature's until then.
+ * Lives in `shared/` since Leave became its second consumer (it began in `features/attendance`).
  */
 @Component({
   selector: 'app-employee-picker',

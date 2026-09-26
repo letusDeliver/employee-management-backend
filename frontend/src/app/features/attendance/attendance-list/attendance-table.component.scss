@@ -1,9 +1,3 @@
 :host {
   display: block;
 }
-
-// Under the employee label when the employee has no resolvable name (see `employeeDetail`).
-.employee-detail {
-  display: block;
-  color: var(--mat-sys-on-surface-variant);
-}

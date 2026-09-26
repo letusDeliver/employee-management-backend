@@ -18,6 +18,8 @@ export interface DirectoryEmployee {
   userId: string | null;
   departmentId: string;
   designationId: string;
+  /** The direct manager's employee id, if any - what decides who may approve this employee's leave. */
+  managerId: string | null;
   /** `YYYY-MM-DD` part of an ISO instant. */
   dateOfJoining: string;
 }
@@ -138,6 +140,23 @@ export class EmployeeDirectoryService {
     return entry ? this.userDirectory.resolveDisplayName(entry.userId) : null;
   }
 
+  /** The employee's direct manager (an employee id), `null` when there is none, `undefined` for an id the directory does not know. */
+  managerIdOf(employeeId: string | null | undefined): string | null | undefined {
+    return employeeId ? this.byId().get(employeeId)?.managerId : undefined;
+  }
+
+  /**
+   * The signed-in user's own employee id (the entry whose `userId` is theirs), or `null` when the
+   * account has no employee record or the directory has not loaded. Needs `employee:read:any`, so an
+   * EMPLOYEE gets `null` - callers use it only where that permission is already required.
+   */
+  ownEmployeeId(userId: string | null | undefined): string | null {
+    if (!userId) {
+      return null;
+    }
+    return this.entries().find((entry) => entry.userId === userId)?.id ?? null;
+  }
+
   /** "Joined 5 Jan 2024" - what tells two same-label employees apart. `null` for an unknown id. */
   detailOf(employeeId: string | null | undefined): string | null {
     const entry = employeeId ? this.byId().get(employeeId) : undefined;
@@ -195,6 +214,7 @@ export class EmployeeDirectoryService {
           userId: employee.userId,
           departmentId: employee.departmentId,
           designationId: employee.designationId,
+          managerId: employee.managerId ?? null,
           dateOfJoining: employee.dateOfJoining.slice(0, 10),
         })),
         pagination: response.pagination,

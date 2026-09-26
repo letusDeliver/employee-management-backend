@@ -8,7 +8,7 @@ import { MatIconModule } from '@angular/material/icon';
 
 import { ICON_NAMES } from '../../../shared/icon-names';
 import { formatDateOnly, parseDateOnly } from '../../../shared/utils/date-only.util';
-import { EmployeePickerComponent } from '../employee-picker/employee-picker.component';
+import { EmployeePickerComponent } from '../../../shared/components/employee-picker/employee-picker.component';
 
 /** The filters the records list understands. Dates are `YYYY-MM-DD`; a missing key means "no filter". */
 export interface AttendanceFilters {

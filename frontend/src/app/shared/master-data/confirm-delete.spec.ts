@@ -23,6 +23,19 @@ describe('createConfirmDelete', () => {
     deleteById.mockReset();
   });
 
+  it('lets a caller word the confirmation itself (Leave reuses this flow for cancel and approve), defaulting only what it omits', () => {
+    answers(false);
+
+    setup().request('id-1', { ...copy, confirmLabel: 'Cancel request', cancelLabel: 'Keep request', tone: 'primary' });
+
+    expect(dialog.open.mock.calls[0][1].data).toEqual({
+      ...copy,
+      confirmLabel: 'Cancel request',
+      cancelLabel: 'Keep request',
+      tone: 'primary',
+    });
+  });
+
   it('asks with the given copy and a Delete button', () => {
     answers(false);
 

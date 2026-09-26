@@ -9,8 +9,9 @@ import { InlineBannerComponent } from '../../../shared/components/inline-banner/
 import { PageHeaderComponent } from '../../../shared/components/page-header/page-header.component';
 import { ICON_NAMES } from '../../../shared/icon-names';
 import { parseDateOnly } from '../../../shared/utils/date-only.util';
+import { localToday } from '../../../shared/utils/server-day.util';
 import { AttendanceStatusBadgeComponent } from '../attendance-status-badge/attendance-status-badge.component';
-import { STATUS_META, localToday, punchLabel, workedDuration } from '../data-access/attendance-status';
+import { STATUS_META, punchLabel, workedDuration } from '../data-access/attendance-status';
 import { MyAttendanceStore } from '../data-access/my-attendance.store';
 
 /**

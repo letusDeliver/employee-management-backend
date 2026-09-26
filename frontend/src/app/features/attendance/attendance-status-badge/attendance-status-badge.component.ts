@@ -1,18 +1,18 @@
 import { Component, computed, input } from '@angular/core';
-import { MatIconModule } from '@angular/material/icon';
 
+import { StatusPillComponent } from '../../../shared/components/status-pill/status-pill.component';
 import { EffectiveStatus } from '../data-access/attendance.models';
 import { STATUS_META } from '../data-access/attendance-status';
 
 /**
- * One computed attendance status as a pill: a glyph AND the word, never colour alone (a colour
- * cue is invisible to some users). Presentational - the wording and tone live in `STATUS_META`.
+ * One computed attendance status: `STATUS_META` (this feature's wording, tone and glyph) rendered
+ * through the shared `StatusPillComponent`. Presentational.
  */
 @Component({
   selector: 'app-attendance-status-badge',
-  imports: [MatIconModule],
-  templateUrl: './attendance-status-badge.component.html',
-  styleUrl: './attendance-status-badge.component.scss',
+  imports: [StatusPillComponent],
+  template: '<app-status-pill [label]="meta().label" [tone]="meta().tone" [icon]="meta().icon" />',
+  styles: ':host { display: inline-block; }',
 })
 export class AttendanceStatusBadgeComponent {
   readonly status = input.required<EffectiveStatus>();

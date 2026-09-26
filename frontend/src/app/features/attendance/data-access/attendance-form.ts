@@ -1,6 +1,6 @@
 import { formatDateOnly } from '../../../shared/utils/date-only.util';
 import { AttendanceRecord, CreateAttendanceRequest, UpdateAttendanceRequest } from './attendance.models';
-import { serverToday } from './attendance-status';
+import { serverToday } from '../../../shared/utils/server-day.util';
 
 /**
  * What the attendance form holds. The punches are native `datetime-local` values

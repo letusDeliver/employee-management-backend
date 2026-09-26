@@ -13,11 +13,12 @@ import { finalize } from 'rxjs';
 import { InlineBannerComponent } from '../../../shared/components/inline-banner/inline-banner.component';
 import { formatDateOnly, parseDateOnly } from '../../../shared/utils/date-only.util';
 import { extractErrorMessage } from '../../../shared/utils/extract-error-message.util';
+import { serverToday } from '../../../shared/utils/server-day.util';
 import { AttendanceStatusBadgeComponent } from '../attendance-status-badge/attendance-status-badge.component';
 import { EffectiveStatusResult } from '../data-access/attendance.models';
 import { AttendanceService } from '../data-access/attendance.service';
-import { STATUS_META, punchLabel, serverToday, workedDuration } from '../data-access/attendance-status';
-import { EmployeePickerComponent } from '../employee-picker/employee-picker.component';
+import { STATUS_META, punchLabel, workedDuration } from '../data-access/attendance-status';
+import { EmployeePickerComponent } from '../../../shared/components/employee-picker/employee-picker.component';
 
 /**
  * "What was this employee's status on this day?" - `GET /attendance/effective-status` for any

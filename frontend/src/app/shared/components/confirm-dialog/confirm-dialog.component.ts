@@ -7,6 +7,8 @@ export interface ConfirmDialogData {
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** The confirm button's colour; `warn` (the default) suits a destructive action, `primary` a constructive one (e.g. approving). */
+  tone?: 'warn' | 'primary';
 }
 
 /**

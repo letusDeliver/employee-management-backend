@@ -6,7 +6,7 @@ import { NotificationService } from '../../../core/notifications/notification.se
 import { extractErrorMessage } from '../../../shared/utils/extract-error-message.util';
 import { AttendanceRecord, EffectiveStatusResult } from './attendance.models';
 import { AttendanceService } from './attendance.service';
-import { serverToday } from './attendance-status';
+import { serverToday } from '../../../shared/utils/server-day.util';
 
 /**
  * Is this the backend's "your account has no employee record" answer? It is a 400 from

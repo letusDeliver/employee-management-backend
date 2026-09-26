@@ -14,6 +14,7 @@ import { startWith } from 'rxjs';
 import { EmployeeDirectoryService } from '../../../core/employee-directory/employee-directory.service';
 import { InlineBannerComponent } from '../../../shared/components/inline-banner/inline-banner.component';
 import { parseDateOnly } from '../../../shared/utils/date-only.util';
+import { serverToday } from '../../../shared/utils/server-day.util';
 import { extractErrorMessage } from '../../../shared/utils/extract-error-message.util';
 import { AttendanceRecord } from '../data-access/attendance.models';
 import { AttendanceStore } from '../data-access/attendance.store';
@@ -24,8 +25,8 @@ import {
   isPunchOnAnotherDay,
   toDateTimeLocal,
 } from '../data-access/attendance-form';
-import { recordDate, serverToday } from '../data-access/attendance-status';
-import { EmployeePickerComponent } from '../employee-picker/employee-picker.component';
+import { recordDate } from '../data-access/attendance-status';
+import { EmployeePickerComponent } from '../../../shared/components/employee-picker/employee-picker.component';
 
 export interface AttendanceFormDialogData {
   /** `null` means create a record; a record means correct it. */

@@ -9,10 +9,7 @@
   (sortChange)="sortChange.emit($event)"
 >
   <ng-template appDataTableCell="employee" let-row>
-    {{ employeeLabel(row) }}
-    @if (employeeDetail(row); as detail) {
-      <span class="ds-caption employee-detail">{{ detail }}</span>
-    }
+    <app-employee-cell [employeeId]="row.employeeId" />
   </ng-template>
 
   <!-- nowrap: dates and times are short and must stay on one line, or every row grows taller. -->

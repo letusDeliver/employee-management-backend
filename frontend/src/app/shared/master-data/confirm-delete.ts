@@ -9,6 +9,10 @@ import { extractErrorMessage } from '../utils/extract-error-message.util';
 export interface ConfirmDeleteCopy {
   title: string;
   message: string;
+  /** Defaults to "Delete". Leave's cancel / approve flows reuse this helper with their own wording. */
+  confirmLabel?: string;
+  cancelLabel?: string;
+  tone?: 'warn' | 'primary';
 }
 
 /**
@@ -23,7 +27,7 @@ export interface ConfirmDeleteCopy {
  * Extracted from `MasterDataListPageComponent` and `ShiftListPageComponent` once Holiday Calendar
  * became a third identical consumer (the "two identical instances" rule had already been met).
  */
-export function createConfirmDelete(deleteById: (id: string) => Observable<void>) {
+export function createConfirmDelete(deleteById: (id: string) => Observable<unknown>) {
   const dialog = inject(MatDialog);
   const destroyRef = inject(DestroyRef);
 
@@ -32,7 +36,7 @@ export function createConfirmDelete(deleteById: (id: string) => Observable<void>
 
   const request = (id: string, copy: ConfirmDeleteCopy): void => {
     dialog
-      .open(ConfirmDialogComponent, { data: { ...copy, confirmLabel: 'Delete' } })
+      .open(ConfirmDialogComponent, { data: { confirmLabel: 'Delete', ...copy } })
       .afterClosed()
       .subscribe((confirmed: boolean | undefined) => {
         if (!confirmed) {
