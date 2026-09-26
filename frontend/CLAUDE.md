@@ -136,8 +136,11 @@ EmployeeListPageComponent` automatically — verified live during Feature
 - [x] Feature 12 — Holiday Calendar: first parent -> child domain (calendar list + a detail page of holidays with a
   year filter); `createConfirmDelete` and `date-only.util` extracted at the third consumer; optional calendar select on
   the Branch dialog (`holidayCalendarId` sent only when changed)
-- [ ] Feature 13 — Attendance: NEXT (first transactional/workflow domain; consumes Shift + Holiday Calendar). Not started -
-  Phase 1 (Theory) has not been presented.
+- [x] Feature 13 — Attendance: first transactional domain (a ledger, not master data): a "today" check-in card for every
+  role, an ADMIN/MANAGER records list with create / correct / delete and a computed-status lookup; `core/employee-directory`;
+  the card follows the SERVER's UTC day
+- [ ] Feature 14 — Leave: NEXT (consumes Employment Type + Holiday Calendar; read, never written, by Attendance; the
+  second consumer of the employee picker - promote it to `shared/`). Not started - Phase 1 (Theory) has not been presented.
 
 _(Feature 0 — Angular Project Initialization — completed, on the
 `frontend` branch. Scaffolded via `npx @angular/cli@21.2.19 new frontend`
@@ -1804,3 +1807,66 @@ case-insensitively and removes every `zzv-` user).
 banner until the next submit; a 404 and a failed lookup still raise the global error toast on top of the inline
 state; the Branch list has no calendar column; Prettier is configured but not enforced; Branch is still not on the
 shared screen and still patches its list locally.)_
+
+_(Feature 13 - Attendance: the first TRANSACTIONAL domain (a ledger, not master data) - 2026-09-26, directly on
+`main`. Full write-up: `handbook/frontend-13-attendance.md`; architectural record: blueprint v18.
+
+**Contract (read from `backend/src/modules/attendance/*` + `docs/domain-attendance.md`, then exercised live).**
+Record `id, employeeId, date, checkIn?, checkOut?, isHalfDay, createdAt, updatedAt` - no name, no status; `date` is a
+CALENDAR DATE (ISO instant at UTC midnight), the punches are INSTANTS. `POST /attendance/check-in` and
+`PATCH /attendance/check-out` (`attendance:checkin`, every role, the caller's OWN employee); `GET /attendance`
+(`read:any` only - there is NO "my own records" list); `GET /attendance/effective-status` (`read:any` or `read:own`);
+`POST/PATCH/DELETE /attendance[/:id]` (`create/update/delete:any`, ADMIN + MANAGER). Effective status
+(Present/Late/Half day/Absent/Holiday/Week off/On leave) is COMPUTED on read, never stored. The server's "today" is
+the UTC date; on a Holiday / Week off / On leave day the status response carries `record: null` even when a record
+exists; a create date after the UTC date of now is a 400; `checkOut < checkIn` is a 400 (equal is fine). An employee
+has NO name (only `userId`; `GET /users` is ADMIN-only) and an ADMIN account may have no employee record (check-in and
+own-status then answer 400). Every mutation, self-service ones included, writes an audit row.
+
+**What was built.** (A) `core/employee-directory/EmployeeDirectoryService` - every employee paged, no long-lived
+cache, `labelOf` = user name -> "Designation, Department" -> "Unknown employee" (never an id), `personNameOf`,
+`detailOf`, picker `options`. (B) `features/attendance/`: pure tested modules `attendance-status.ts` (`STATUS_META`,
+`serverToday`, `workedDuration`, `punchLabel`) and `attendance-form.ts` (create/update builders, `datetime-local`
+helpers, the form rules); `AttendanceStore` (list, page-provided) and `MyAttendanceStore` (page-provided); a
+`/my-attendance` card (every role) with a status badge, Check in / Check out and a "not linked" state; a `/attendance`
+ledger (ADMIN, MANAGER) on the shared server-paginated table with an employee filter and a date range, create / correct
+/ delete each gated on its own permission, and a "Check Status" lookup for days that have no record; an employee
+autocomplete `ControlValueAccessor`. (C) Shared: `ColumnDef.nowrap` and `ColumnDef.stickyEnd`. Two routes, two nav
+entries, four icons.
+
+**Judgment calls.** The card asks about the SERVER's (UTC) day, follows the record the server returns, and says so
+when it differs from the local date (the alternative shows Absent right after a successful check-in for hours of
+every day). Load every employee and filter client-side rather than server-side search (the client is the only place
+that can build a MANAGER's label; named cap: a few thousand). A second "Joined ..." line for an employee with no
+resolvable name. Punches are `datetime-local` (a night shift's check-out is on the next day). A correction sends only
+what changed, at minute precision (the stored instant carries seconds). After a create the filters FOLLOW a record they
+would hide. No worked-hours or half-day rule was invented. Every request opts out of the global toast.
+
+**Tests: 530 (was 366; 164 new).** `ng build`/`ng lint`/`ng test` clean. **Eight mutation checks, all killed by the
+intended spec.** **Live against the real backend (temporary ADMIN, MANAGER and EMPLOYEE accounts): records screens
+105/105, My Attendance 44/44**, covering all six computed statuses, the audit log (CREATE, UPDATE x3, DELETE), outages,
+`Etc/GMT+12` (local date != UTC date), `America/Los_Angeles`, `Pacific/Auckland` and 360px. Data removed and verified (0
+attendance rows, 30 employees, 1 branch, 0 shifts/calendars/holidays/leave rows). Harness: `setup-attendance.mjs`,
+`seed-attendance-records.mjs`, `verify-attendance.mjs`, `verify-my-attendance.mjs`, `cleanup-attendance.mjs`,
+`attendance-lib.mjs`.
+
+**Real defects, and how each was found.** By a component spec that failed on the unfixed code: (1) a failed submit left
+the employee field silent while the button went disabled (`markAllAsTouched()` never calls `onTouched` on a custom
+accessor); (2) "check out before check in" was never displayed (a group-level error under a `mat-error` that renders only
+for its own control); (3) the toolbar emitted one filter set several times. By READING SCREENSHOTS only: (4) the employee
+field sat flush against Date and its error text overlapped Date's floating label (0px, measured; `subscriptSizing=
+"dynamic"` again); (5) Employee not marked required; (6) "Check in" / "Half day" headers wrapped; (7) a MANAGER's rows were
+indistinguishable; (8) a 409 and an employees outage each showed twice (inline + toast); (9) Edit/Delete off-screen at
+360px. NOT app bugs: Escape closed the dialog rather than the autocomplete panel; `Tab` in a `datetime-local` never
+blurs it; my script clicked a submit button the UI had correctly disabled; a "first row" check ran after an earlier step
+left the list sorted by check-in; a twin employee already had a seeded record; specs failed on "15 Sept" because this
+runtime's default locale is not en-US; my mutation script read stdout while Vitest prints failures to stderr (it said
+"SURVIVED" for every mutant while the failure counts showed all eight killed). One verifier invocation crashed with an
+uncaught Playwright error and the identical rerun passed 44/44 - NOT root-caused.
+
+**Outside scope, not changed (backend):** no "list my own attendance" endpoint (an employee sees today only); Employee
+responses carry no display name; "today" and lateness are UTC-based (a check-out after the UTC day rolls over for a user
+west of UTC is reasoned from the code, not reproduced); a non-working day hides the record so a reload cannot show the
+user's own punches; a joining date is not a unique key. Also: other features' dialogs still toast on top of an inline
+error; Prettier is configured but not enforced; Branch is still not on the shared screen. Promote
+`EmployeePickerComponent` to `shared/` when Leave needs it.)_

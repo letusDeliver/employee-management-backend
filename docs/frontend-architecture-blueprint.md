@@ -449,7 +449,7 @@ handbook kept in sync, one commit per feature).
   the Employee form (extends v15's per-consumer fatality rule). (9) **Tests: 252 (was 175; 77
   new)**; live 60/60 (Shift screens) and 28/28 (Employee integration) against the real backend,
   with all test data removed and verified (0 shifts, 30 employees = the dev baseline).
-- v17 (this revision) — **Holiday Calendar** (item 7 of the rollout; the first PARENT -> CHILD
+- v17 — **Holiday Calendar** (item 7 of the rollout; the first PARENT -> CHILD
   domain: `HolidayCalendar -> Holiday`), plus the deferred calendar select on the Branch dialog.
   `features/holiday-calendars/`, `core/master-data-directory/holiday-calendar-directory.service.ts`,
   `features/branches/data-access/branch-calendar.ts`. Establishes or amends: (1) **§9/§11 - extract
@@ -496,6 +496,56 @@ handbook kept in sync, one commit per feature).
   Windows and leave the login page blank (504 "Outdated Optimize Dep") - stop `ng serve`, delete
   `frontend/.angular/cache/<ver>/frontend/vite`, restart, and confirm the login form renders before
   running a verifier.
+- v18 (this revision) — **Attendance** (item 8 of the rollout; the first TRANSACTIONAL domain - a
+  ledger, not master data). `features/attendance/`, `core/employee-directory/`, two optional flags
+  on the shared `ColumnDef`. Establishes or amends: (1) **§1/§6 - a `core/` directory for
+  something a feature must REFERENCE without owning**, now for EMPLOYEES: `EmployeeDirectoryService`
+  pages through every employee (list `limit` caps at 100), holds no long-lived cache (each page calls
+  `refresh()` on entry), and exposes `labelOf(id)` = the linked user's name -> "Designation,
+  Department" -> "Unknown employee" - never an id - plus `personNameOf`, `detailOf` and picker
+  `options`. An employee has NO name (only `userId`, and `GET /users` is ADMIN-only), so a MANAGER
+  sees the role label; the table therefore adds a "Joined ..." line for a nameless employee. The
+  fatality rule stands: a failed EMPLOYEE load is exposed (a picker with no employees is useless), a
+  failed NAME lookup is swallowed (a label just degrades). It is a second paging implementation next
+  to `MasterDataDirectory`'s - extract a pager at a third. (2) **§8 - a day is the SERVER's day when
+  the server decides it.** Check-in and check-out file a punch under the current UTC date, so
+  `serverToday()` (the one place `toISOString().slice(0, 10)` is correct) is what the "today" card
+  asks about, the card follows the date of the record the server returned, and a note says so when it
+  differs from the user's local date; a new-record date is refused against the server's today, exactly
+  as the backend does. A calendar DATE is still `YYYY-MM-DD` from local parts (v17); a PUNCH is an
+  INSTANT, sent as `new Date(localValue).toISOString()` (native `datetime-local`, because a night
+  shift's check-out falls on the next day). (3) **§6 - two page-provided stores**:
+  `AttendanceStore` (server-paginated ledger; refetch after every mutation; a created record that the
+  active filters would hide MAKES THE FILTERS FOLLOW IT, the year-jump idea again) and
+  `MyAttendanceStore` (reads the computed status back after each action; a 400 "No employee record" is
+  its own state, not an error; on a holiday / week off / leave day the backend answers `record: null`
+  even when a record exists, so the card remembers the record an action just returned and forgets it on
+  a working day). Effective status is COMPUTED on read (ADR-AT03) and is therefore not shown per list
+  row. (4) **§9 - custom form controls**: `EmployeePickerComponent` injects `NgControl` and assigns
+  itself as the accessor (no `NG_VALUE_ACCESSOR`) so it can read the CONTROL's touched state through
+  `control.events` in `ngAfterViewInit` - `markAllAsTouched()` never calls `onTouched` on an accessor,
+  so without this a failed submit left the field silent while the button went disabled. **A validation
+  rule belongs on the control whose `mat-error` shows it**: a group-level "check out before check in"
+  was never displayed; it is now the checkout control's validator, revalidated when the check-in
+  changes. A toolbar over reactive forms never emits the same filter set twice in a row (the group, its
+  date-range inputs and `reset()` each report a change; every emission is a request). (5) **§9 -
+  `DataTableComponent` gained two optional `ColumnDef` flags**: `nowrap` (a short header such as
+  "Check in" must not wrap) and `stickyEnd` (an actions column stays in reach when a phone-width table
+  scrolls sideways); existing consumers are untouched. (6) **§12 - a request whose failure the screen
+  shows inline opts out of the global toast** (`SKIP_GLOBAL_ERROR_NOTIFICATION`): every attendance
+  request and the employee directory do, because a 409 in the create dialog and an employees outage
+  each showed twice. (7) **§13/§15 - testing.** 530 tests (was 366; 164 new); eight MUTATION checks,
+  each killed by the intended spec; live 105/105 (records) and 44/44 (My Attendance) against the real
+  backend with temporary ADMIN / MANAGER / EMPLOYEE accounts, covering all six computed statuses
+  (Holiday via a branch calendar, Week off, On leave via an approved leave, Absent, Half day, Present),
+  the audit log, outages, `Etc/GMT+12` (a local date that is not UTC's), `America/Los_Angeles`,
+  `Pacific/Auckland`, and 360 px. Layout defects that no unit test can see were found only by reading
+  screenshots: a field flush against the next one, an error message over a floating label, wrapped
+  headers, indistinguishable rows, duplicate toasts, and actions off-screen at 360 px. (8) **Backend
+  facts recorded, NOT changed**: there is no "list my own attendance" endpoint; Employee responses
+  carry no display name; "today" and lateness are UTC-based; a non-working day hides the record from
+  the status response; a joining date is not a unique key. Verified live: data removed and confirmed
+  (0 attendance rows, 30 employees, 1 branch, 0 shifts, calendars, holidays, leave rows).
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:
