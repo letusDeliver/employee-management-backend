@@ -5,8 +5,8 @@
 
   <table mat-table matSort (matSortChange)="onSort($event)" [dataSource]="rows()" class="w-full">
     @for (col of columns(); track col.key) {
-      <ng-container [matColumnDef]="col.key">
-        <th mat-header-cell *matHeaderCellDef mat-sort-header [disabled]="!col.sortable">
+      <ng-container [matColumnDef]="col.key" [stickyEnd]="col.stickyEnd ?? false">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header [disabled]="!col.sortable" [class.whitespace-nowrap]="col.nowrap">
           {{ col.header }}
         </th>
         <td mat-cell *matCellDef="let row">

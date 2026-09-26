@@ -1,0 +1,67 @@
+<h2 mat-dialog-title>Check Status</h2>
+<form [formGroup]="form" (ngSubmit)="check()">
+  <mat-dialog-content class="flex flex-col gap-1">
+    <p class="ds-caption intro">
+      The status is worked out from the employee's attendance, leave, branch holiday calendar and shift for that day.
+    </p>
+
+    <div class="picker-row">
+      <app-employee-picker formControlName="employeeId" label="Employee" [required]="true" />
+    </div>
+
+    <mat-form-field class="w-full date-field" subscriptSizing="dynamic">
+      <mat-label>Date</mat-label>
+      <input matInput [matDatepicker]="picker" formControlName="date" />
+      <mat-datepicker-toggle matIconSuffix [for]="picker" />
+      <mat-datepicker #picker />
+      @if (form.controls.date.hasError('required') && form.controls.date.touched) {
+        <mat-error>Pick a date.</mat-error>
+      } @else if (form.controls.date.hasError('matDatepickerParse') && form.controls.date.touched) {
+        <mat-error>That is not a valid date.</mat-error>
+      }
+    </mat-form-field>
+
+    @if (error(); as message) {
+      <app-inline-banner tone="error" [message]="message" />
+    }
+
+    @if (result(); as current) {
+      <div class="result" aria-live="polite">
+        <p class="ds-label result-day">{{ resultDay() | date: 'fullDate' }}</p>
+        <div class="status-row">
+          <app-attendance-status-badge [status]="current.status" />
+          <span class="ds-body">{{ explanation() }}</span>
+        </div>
+
+        @if (recordHidden()) {
+          <p class="ds-caption note">Punches are not shown on a holiday, week off or leave day.</p>
+        } @else {
+          <dl class="punches">
+            <div>
+              <dt class="ds-label">Checked in</dt>
+              <dd class="ds-body">{{ checkIn() }}</dd>
+            </div>
+            <div>
+              <dt class="ds-label">Checked out</dt>
+              <dd class="ds-body">{{ checkOut() }}</dd>
+            </div>
+            <div>
+              <dt class="ds-label">Worked</dt>
+              <dd class="ds-body">{{ worked() ?? '—' }}</dd>
+            </div>
+          </dl>
+        }
+      </div>
+    }
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    @if (loading()) {
+      <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Checking" />
+    }
+    <button mat-button type="button" mat-dialog-close>Close</button>
+    <button mat-flat-button color="primary" type="submit" [disabled]="loading() || (form.invalid && form.touched)">
+      Check status
+    </button>
+  </mat-dialog-actions>
+</form>

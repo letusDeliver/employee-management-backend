@@ -1,0 +1,46 @@
+@use '../../../../styles/tokens';
+
+:host {
+  display: inline-block;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px 2px 6px;
+  border-radius: #{tokens.$radius-full};
+  font-size: #{tokens.$type-label-size};
+  font-weight: #{tokens.$type-label-weight};
+  line-height: #{tokens.$type-label-line-height};
+  white-space: nowrap;
+}
+
+.badge mat-icon {
+  flex: none;
+}
+
+.badge-success {
+  background-color: #{tokens.$color-success-container};
+  color: #{tokens.$color-on-success-container};
+}
+
+.badge-warning {
+  background-color: #{tokens.$color-warning-container};
+  color: #{tokens.$color-on-warning-container};
+}
+
+.badge-error {
+  background-color: #{tokens.$color-warn-container};
+  color: #{tokens.$color-on-warn-container};
+}
+
+.badge-info {
+  background-color: #{tokens.$color-primary-container};
+  color: #{tokens.$color-on-primary-container};
+}
+
+.badge-neutral {
+  background-color: var(--mat-sys-surface-variant);
+  color: var(--mat-sys-on-surface-variant);
+}

@@ -111,6 +111,28 @@ export const routes: Routes = [
         // wrapper is the one ancestor that can carry the parent crumb for the detail page.
         data: { breadcrumb: 'Holiday calendars' },
       },
+      {
+        // Flat, like 'shifts': one page, no nested routes. attendance:checkin is granted to every role
+        // (docs/domain-attendance.md ADR-AT06), so this is every signed-in user's own check-in card.
+        path: 'my-attendance',
+        loadComponent: () =>
+          import('./features/attendance/my-attendance/my-attendance-page.component').then(
+            (m) => m.MyAttendancePageComponent,
+          ),
+        canActivate: [permissionGuard],
+        data: { breadcrumb: 'My attendance', permissions: ['attendance:checkin'] },
+      },
+      {
+        // Flat, like 'shifts': create/correct is a dialog, not a routed sub-page. The list needs
+        // attendance:read:any (ADMIN and MANAGER) - GET /attendance is :any-only server-side.
+        path: 'attendance',
+        loadComponent: () =>
+          import('./features/attendance/attendance-list/attendance-list-page.component').then(
+            (m) => m.AttendanceListPageComponent,
+          ),
+        canActivate: [permissionGuard],
+        data: { breadcrumb: 'Attendance records', permissions: ['attendance:read:any'] },
+      },
     ],
   },
 ];

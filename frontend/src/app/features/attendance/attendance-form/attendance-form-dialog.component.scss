@@ -1,0 +1,28 @@
+:host {
+  display: block;
+}
+
+.whose {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 16px;
+}
+
+.whose dd {
+  margin: 0;
+}
+
+// The picker (and the message it may show under itself) is followed by a `subscriptSizing="dynamic"`
+// field, so it needs its own gap - measured in a real browser at 1280 and 360px, in every state.
+.picker-row {
+  margin-bottom: 20px;
+}
+
+// `subscriptSizing="dynamic"` removes the fixed one-line subscript gap its siblings keep, so a field
+// that is followed by another needs its own bottom margin (the ~20px the fixed gap would give) or the
+// next field's floating label overlaps it. Checked in a real browser, not in jsdom.
+.date-field,
+.punch-field {
+  margin-bottom: 20px;
+}

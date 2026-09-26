@@ -1,0 +1,71 @@
+<app-page-header title="My attendance" description="Check in when you start your day and check out when you finish." />
+
+@if (store.loading() && !store.status()) {
+  <div class="flex items-center gap-2">
+    <mat-progress-spinner diameter="24" mode="indeterminate" aria-label="Loading your attendance" />
+    <span>Loading...</span>
+  </div>
+} @else if (store.notLinked()) {
+  <app-empty-state
+    [icon]="icons.badge"
+    title="Your account isn't linked to an employee record"
+    description="Attendance is recorded against an employee. Ask an administrator to link your account to an employee record."
+  />
+} @else if (store.error(); as message) {
+  <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="reload()" />
+} @else if (store.status(); as result) {
+  <div class="surface-card mx-auto max-w-lg p-6">
+    <h2 class="ds-h3 today-date">{{ day() | date: 'fullDate' }}</h2>
+
+    @if (differingLocalDate(); as local) {
+      <p class="ds-caption day-note" role="note">
+        Attendance days follow the server's calendar (UTC), so this is not your local date ({{ local | date: 'mediumDate' }}).
+        Check in and check out are recorded on the day shown here.
+      </p>
+    }
+
+    <div class="status-row">
+      <app-attendance-status-badge [status]="result.status" />
+      <span class="ds-body">{{ explanation() }}</span>
+    </div>
+
+    <dl class="punches">
+      <div>
+        <dt class="ds-label">Checked in</dt>
+        <dd class="ds-body">{{ checkIn() }}</dd>
+      </div>
+      <div>
+        <dt class="ds-label">Checked out</dt>
+        <dd class="ds-body">{{ checkOut() }}</dd>
+      </div>
+      <div>
+        <dt class="ds-label">Worked</dt>
+        <dd class="ds-body">{{ worked() ?? '—' }}</dd>
+      </div>
+    </dl>
+
+    @if (store.actionError(); as message) {
+      <div class="action-error">
+        <app-inline-banner tone="error" [message]="message" />
+      </div>
+    }
+
+    <div class="actions">
+      <button mat-flat-button color="primary" type="button" [disabled]="!store.canCheckIn()" (click)="store.checkIn()">
+        <mat-icon>{{ icons.login }}</mat-icon>
+        Check in
+      </button>
+      <button mat-stroked-button type="button" [disabled]="!store.canCheckOut()" (click)="store.checkOut()">
+        <mat-icon>{{ icons.logout }}</mat-icon>
+        Check out
+      </button>
+      @if (store.acting()) {
+        <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Saving" />
+      }
+      <button mat-button type="button" class="refresh" [disabled]="store.acting() || store.loading()" (click)="reload()">
+        <mat-icon>{{ icons.refresh }}</mat-icon>
+        Refresh
+      </button>
+    </div>
+  </div>
+}

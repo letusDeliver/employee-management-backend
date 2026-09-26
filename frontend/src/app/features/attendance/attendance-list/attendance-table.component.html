@@ -1,0 +1,70 @@
+<app-data-table
+  [columns]="columns"
+  [rows]="rows()"
+  [loading]="loading()"
+  [totalCount]="pagination().total"
+  [pageIndex]="pagination().page - 1"
+  [pageSize]="pagination().limit"
+  (pageChange)="pageChange.emit($event)"
+  (sortChange)="sortChange.emit($event)"
+>
+  <ng-template appDataTableCell="employee" let-row>
+    {{ employeeLabel(row) }}
+    @if (employeeDetail(row); as detail) {
+      <span class="ds-caption employee-detail">{{ detail }}</span>
+    }
+  </ng-template>
+
+  <!-- nowrap: dates and times are short and must stay on one line, or every row grows taller. -->
+  <ng-template appDataTableCell="date" let-row>
+    <span class="whitespace-nowrap">{{ day(row) | date: 'mediumDate' }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="checkIn" let-row>
+    <span class="whitespace-nowrap">{{ punch(row.checkIn, row) }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="checkOut" let-row>
+    <span class="whitespace-nowrap">{{ punch(row.checkOut, row) }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="worked" let-row>
+    <span class="whitespace-nowrap">{{ worked(row) }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="isHalfDay" let-row>
+    {{ row.isHalfDay ? 'Yes' : '—' }}
+  </ng-template>
+
+  <ng-template appDataTableCell="actions" let-row>
+    <!-- nowrap: with seven columns the cell is narrow, and the two icon buttons would otherwise stack vertically. -->
+    <div class="flex flex-nowrap items-center whitespace-nowrap">
+      @if (canEdit()) {
+        <button
+          mat-icon-button
+          type="button"
+          [attr.aria-label]="'Edit ' + rowLabel(row)"
+          matTooltip="Correct"
+          (click)="editRequested.emit(row)"
+        >
+          <mat-icon>{{ icons.edit }}</mat-icon>
+        </button>
+      }
+      @if (canDelete()) {
+        @if (deletingIds().has(row.id)) {
+          <mat-progress-spinner diameter="20" mode="indeterminate" [attr.aria-label]="'Deleting ' + rowLabel(row)" />
+        } @else {
+          <button
+            mat-icon-button
+            type="button"
+            [attr.aria-label]="'Delete ' + rowLabel(row)"
+            matTooltip="Delete"
+            (click)="deleteRequested.emit(row)"
+          >
+            <mat-icon>{{ icons.delete }}</mat-icon>
+          </button>
+        }
+      }
+    </div>
+  </ng-template>
+</app-data-table>

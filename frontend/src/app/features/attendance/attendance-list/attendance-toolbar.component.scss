@@ -1,0 +1,13 @@
+:host {
+  display: block;
+}
+
+.employee-field {
+  width: 280px;
+  max-width: 100%;
+}
+
+.clear-button {
+  // Lines up with the 56px-tall outline fields beside it.
+  height: 56px;
+}

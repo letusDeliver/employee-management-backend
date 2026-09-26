@@ -32,6 +32,9 @@ export const ICON_NAMES = {
   refresh: 'refresh',
   schedule: 'schedule',
   event: 'event',
+  login: 'login',
+  howToReg: 'how_to_reg',
+  factCheck: 'fact_check',
 } as const satisfies Record<string, string>;
 
 export type IconName = keyof typeof ICON_NAMES;

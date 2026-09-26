@@ -1,0 +1,44 @@
+<mat-form-field class="w-full" subscriptSizing="dynamic">
+  <mat-label>{{ label() }}</mat-label>
+  <input
+    matInput
+    type="text"
+    autocomplete="off"
+    [required]="required()"
+    [matAutocomplete]="auto"
+    [value]="display()"
+    [disabled]="disabled()"
+    [attr.aria-invalid]="problem() ? 'true' : null"
+    (input)="onInput($any($event.target).value)"
+    (blur)="markTouched()"
+  />
+  @if (display() && !disabled()) {
+    <button matIconSuffix mat-icon-button type="button" aria-label="Clear employee" (click)="clear()">
+      <mat-icon>{{ icons.close }}</mat-icon>
+    </button>
+  }
+  <mat-autocomplete #auto="matAutocomplete" [displayWith]="displayOption" (optionSelected)="onSelect($event.option.value)">
+    @for (option of visible(); track option.id) {
+      <mat-option [value]="option.id">
+        <span class="option-label">{{ option.label }}</span>
+        <span class="option-detail">{{ option.detail }}</span>
+      </mat-option>
+    } @empty {
+      <mat-option disabled>No employee matches.</mat-option>
+    }
+    @if (hasMore()) {
+      <mat-option disabled>Showing the first {{ visible().length }} - keep typing to narrow the list.</mat-option>
+    }
+  </mat-autocomplete>
+</mat-form-field>
+
+@if (directory.loading()) {
+  <p class="ds-caption picker-note" role="status">Loading employees...</p>
+} @else if (directory.error(); as message) {
+  <p class="ds-caption picker-problem" role="alert">
+    Couldn't load employees: {{ message }}
+    <button mat-button type="button" (click)="retry()">Retry</button>
+  </p>
+} @else if (problem(); as message) {
+  <p class="ds-caption picker-problem" role="alert">{{ message }}</p>
+}

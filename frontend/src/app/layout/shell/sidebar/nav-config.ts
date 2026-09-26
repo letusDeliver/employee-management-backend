@@ -92,4 +92,22 @@ export const NAV_CONFIG: NavItem[] = [
     description: 'Manage holiday dates for branches.',
     permissions: ['holidayCalendar:read'],
   },
+  {
+    // attendance:checkin is granted to every role (docs/domain-attendance.md ADR-AT06), so this
+    // link is visible to everyone; it is the caller's OWN check-in card, not the records list.
+    route: '/my-attendance',
+    icon: ICON_NAMES.howToReg,
+    label: 'My attendance',
+    description: 'Check in and check out for the day.',
+    permissions: ['attendance:checkin'],
+  },
+  {
+    // attendance:read:any only, not also :read:own - GET /attendance (the list this route points to) is
+    // :any-only server-side, and an employee's own record has no list endpoint at all.
+    route: '/attendance',
+    icon: ICON_NAMES.factCheck,
+    label: 'Attendance records',
+    description: "View, correct and look up every employee's attendance.",
+    permissions: ['attendance:read:any'],
+  },
 ];

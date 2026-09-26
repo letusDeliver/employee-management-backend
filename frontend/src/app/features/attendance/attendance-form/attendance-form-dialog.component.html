@@ -1,0 +1,70 @@
+<h2 mat-dialog-title>{{ isEditMode ? 'Correct Attendance' : 'New Attendance Record' }}</h2>
+<form [formGroup]="form" (ngSubmit)="submit()">
+  <mat-dialog-content class="flex flex-col gap-1">
+    @if (isEditMode) {
+      <!-- A correction cannot move a record to another employee or day, so they are shown, not edited. -->
+      <dl class="whose">
+        <div>
+          <dt class="ds-label">Employee</dt>
+          <dd class="ds-body">{{ employeeLabel }}</dd>
+        </div>
+        <div>
+          <dt class="ds-label">Date</dt>
+          <dd class="ds-body">{{ editedDay | date: 'mediumDate' }}</dd>
+        </div>
+      </dl>
+    } @else {
+      <div class="picker-row">
+        <app-employee-picker formControlName="employeeId" label="Employee" [required]="true" />
+      </div>
+
+      <mat-form-field class="w-full date-field" subscriptSizing="dynamic">
+        <mat-label>Date</mat-label>
+        <input matInput [matDatepicker]="picker" [max]="maxDate" formControlName="date" />
+        <mat-datepicker-toggle matIconSuffix [for]="picker" />
+        <mat-datepicker #picker />
+        @if (form.controls.date.hasError('required') && form.controls.date.touched) {
+          <mat-error>Pick a date.</mat-error>
+        } @else if (form.controls.date.hasError('matDatepickerParse') && form.controls.date.touched) {
+          <mat-error>That is not a valid date.</mat-error>
+        } @else if (form.controls.date.hasError('matDatepickerMax')) {
+          <mat-error>The date cannot be in the future.</mat-error>
+        }
+      </mat-form-field>
+    }
+
+    <mat-form-field class="w-full punch-field" subscriptSizing="dynamic">
+      <mat-label>Check in</mat-label>
+      <input matInput type="datetime-local" formControlName="checkIn" />
+      @if (checkInOnAnotherDay()) {
+        <mat-hint role="status">On a different date than the record - fine for a night shift.</mat-hint>
+      }
+    </mat-form-field>
+
+    <mat-form-field class="w-full punch-field" subscriptSizing="dynamic">
+      <mat-label>Check out</mat-label>
+      <input matInput type="datetime-local" formControlName="checkOut" />
+      @if (form.controls.checkOut.hasError('checkOutBeforeCheckIn')) {
+        <mat-error>Check out cannot be before check in.</mat-error>
+      } @else if (checkOutOnAnotherDay()) {
+        <mat-hint role="status">On a different date than the record - fine for a night shift.</mat-hint>
+      }
+    </mat-form-field>
+
+    <mat-checkbox formControlName="isHalfDay">Half day</mat-checkbox>
+
+    @if (serverError(); as message) {
+      <app-inline-banner tone="error" [message]="message" />
+    }
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    @if (submitting()) {
+      <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Saving" />
+    }
+    <button mat-button type="button" [disabled]="submitting()" (click)="cancel()">Cancel</button>
+    <button mat-flat-button color="primary" type="submit" [disabled]="submitting() || (form.invalid && form.touched)">
+      {{ isEditMode ? 'Save Changes' : 'Create Record' }}
+    </button>
+  </mat-dialog-actions>
+</form>
