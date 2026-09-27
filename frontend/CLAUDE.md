@@ -1921,3 +1921,56 @@ for `mat-select` options before it was opened; the Vite `EPERM` login-page failu
 "waiting on me" filter (the list takes one employee); a new hire has no balance row until a first approval; the cancel rule is
 UTC-day based. Also: `AttendanceStore` is not yet on `createPagedList`; other features' dialogs still toast on top of an inline
 error; Prettier is configured but not enforced; Branch is still not on the shared screen.)_
+
+_(Feature 15 - Payroll: the first FINANCIAL RECORD (payroll runs, immutable payslips) - 2026-09-27, directly on `main`.
+Full write-up: `handbook/frontend-15-payroll.md`; architectural record: blueprint v20.
+
+**Contract (read from `backend/src/modules/payroll/*`, the Prisma models and seed, then probed live before designing).** A run is
+one calendar month (`periodMonth`/`periodYear`, unique), `DRAFT -> PROCESSING -> FINALIZED -> PAID`, one transition per status (any
+other is a 409); every `payrollRun:*` permission is ADMIN-only. `PATCH /:id/process` builds EVERY active employee's payslip in one
+synchronous request (1.3 s for 23 employees); afterwards the run can be neither deleted (DELETE is DRAFT-only) nor processed again. A
+working day with no attendance record is ABSENT and unpaid - future days included, and every weekend of an employee with no shift
+(the dev DB has 0 shifts, so almost every dev payslip nets 0). A payslip snapshots name (NULL without a user account), department,
+designation, branch (nullable), employment type and every amount as Decimal STRINGS; line items only on `GET /payslips/:id`; no run
+status on a payslip. `payslip:read:own` for every role, `:read:any` ADMIN only (a MANAGER cannot see a report's pay); a foreign
+`employeeId` on the list is silently re-scoped; someone else's payslip is 403, an unknown one 404. Lists sort by ONE key with `id` as
+the tie-break; `/payslips` has no year filter and no name sort; `payslipCount` only on `GET /payroll-runs/:id`.
+
+**What was built.** (A) Step 0, its own behaviour-neutral commit: `shared/models/employment-type.ts` (moved from Employees - its own
+comment asked for it at Payroll) and `core/config/app-currency.ts` (`APP_CURRENCY`, replacing Employees' two hard-coded `'USD'`).
+(B) `features/payroll/`: dto/models/mapper (Decimal strings -> numbers, null stays null), pure tested `payroll-rules.ts`
+(`nextAction`, `canDelete`, `isPeriodOver`, `defaultNewRunPeriod`, `periodLabel`, `formatDays`, `byPeriodDesc`), two services (all
+inline-error), three page-provided stores. Screens: `/payroll` (one year by month, New Run dialog defaulting to last month by the
+server's day, Delete for DRAFT), `/payroll/:runId` (steps, one next action, per-step confirms, "Generating payslips…", payslip table
+from the snapshot, employee filter), one `PayslipDetailPage` for `/payroll/:runId/payslips/:id` and `/my-payslips/:id`, and
+`/my-payslips`. Shared widenings (optional, defaults unchanged): `ConfirmDialogData.warning`, `ColumnDef.align: 'end'`; icons
+`payments`, `receiptLong`, `arrowBack`; two NAV entries.
+
+**Judgment calls.** Processing, not finalizing, carries the "can't be undone" wording; an unfinished month gets a warning banner
+(judged by the SERVER day) and is not blocked, because the backend allows it. Transitions live on the run page only (the plan had
+list-row actions too - dropped and reported: finalizing from a row hides the payslips). Server status words, one explanatory line.
+Payslips are shown from the snapshot, never through the live employee cell. "My payslips" sends the ADMIN's own employee id, shows
+"not linked" / blocks with Retry otherwise. Run list: always one year, sorted by month. "My payslips": loads ALL own payslips and
+sorts year -> month on the client (Phase 2 assumed a year filter on `/payslips`; there is none - reported). Net pay follows the period
+on My payslips so it stays visible at 360 px. No client-side totals.
+
+**Tests: 862 (was 768; 94 new).** `ng build`/`ng lint`/`ng test` clean; commit A verified alone (768/768). **17 mutation checks, all
+killed** (one planned mutant - "local day instead of server day" - is not distinguishable in a unit test and was replaced; said so).
+**Live against the real backend: 63/63, three consecutive clean runs** (ADMIN without and with an employee record, MANAGER,
+EMPLOYEE; fixture August: 20 working days, 17.5 paid, 2.5 unpaid, 1000 -> -125 -> 875 exactly), Leave's 135/135 re-run on the shared
+changes, 360 px and header alignment measured. Data removed and verified (0 runs/payslips, 30 employees, 0 ZZV users). Harness:
+`probe-payroll.mjs`, `setup-payroll-extra.mjs`, `verify-payroll.mjs`, `cleanup-payroll.mjs` (run BEFORE `cleanup-attendance.mjs`;
+takes run ids as arguments), `measure-headers.mjs`.
+
+**Real defects, and how each was found.** (1) Right-aligned headers sat 88-119 px left of their values - the first My-payslips
+screenshot, then measured: `arrowPosition="before"` makes the sort header `row-reverse`, so `flex-end` is the LEFT edge; fixed with
+`flex-start`, asserted to +-1 px. (2) Net pay scrolled off screen at 360 px - the 360 px screenshot. (3) The plan's `/payslips` year
+filter does not exist - found writing the DTOs. NOT app bugs: a locator matching a hint and a heading; the fixture payslip on page 2
+(net pay sorts lowest first); `textContent` joining `<dt>`/`<dd>`; `mat-select` options before opening; a select clicked mid dialog
+animation (passed the run before; fixed by waiting for the panel); screenshots mid-fade. Mine: my first cleanup script used the wrong
+audit `entityType` and matched nothing, and the attendance cleanup then deleted the audit rows it relied on - the run was removed by
+its saved id; Python `read_text()` is cp1252 on Windows, so two UTF-8 spec edits silently matched nothing (redone, files checked).
+
+**Outside scope, not changed (backend):** an unfinished month can be processed; no shift = weekends unpaid; single-key sorting; no
+year filter or name sort on `/payslips`; no run totals; no run status on a payslip; processing cost is employees x days. Frontend:
+five one-line copies of the inline-error `HttpContext`; no payslip print/PDF.)_

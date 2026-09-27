@@ -546,7 +546,7 @@ handbook kept in sync, one commit per feature).
   carry no display name; "today" and lateness are UTC-based; a non-working day hides the record from
   the status response; a joining date is not a unique key. Verified live: data removed and confirmed
   (0 attendance rows, 30 employees, 1 branch, 0 shifts, calendars, holidays, leave rows).
-- v19 (this revision) — **Leave** (item 9 of the rollout; the first APPROVAL WORKFLOW: three aggregates -
+- v19 — **Leave** (item 9 of the rollout; the first APPROVAL WORKFLOW: three aggregates -
   leave types, requests, balances). `features/leave/`, promotions to `shared/`, two `core/` additions.
   Establishes or amends: (1) **§9 - promote at the SECOND consumer, prove it with the first one's specs.**
   Leave was the second consumer of Attendance's employee picker, status badge, employee-label cell and
@@ -582,6 +582,36 @@ handbook kept in sync, one commit per feature).
   reason is kept only in the audit log (the applicant never sees it); a balance row exists only after a first
   approval; the list filters by one employee (so no "waiting on me" inbox); the cancel rule and a balance's
   year are UTC-day based.
+- v20 (this revision) — **Payroll** (item 10 of the rollout; the first FINANCIAL RECORD: payroll runs and
+  immutable payslips). `features/payroll/`, a step-0 promotion commit, two optional widenings of shared
+  components. Establishes or amends: (1) **§6 - find the irreversible step from the backend's rules, not the
+  status names.** After `process` a run can be neither deleted nor processed again, so PROCESS - not finalize -
+  is the one-way door; its confirm says so, and adds a warning banner when the month has not ended by the
+  SERVER's day (every working day without attendance, future days included, is unpaid - the backend allows it,
+  so the UI warns and never blocks). The lifecycle is `nextAction(run)`: exactly ONE button per status, gated
+  on that transition's permission (fail closed), plus Delete while DRAFT; each confirm describes its own step
+  ("It does not move any money"). (2) **§7/§8 - a financial record is displayed from its own snapshot.** Payslip
+  tables and the payslip page read the snapshotted name, department, designation, branch and employment type;
+  the shared live `employee-cell` is deliberately not used (ADR-PR02); a missing name reads "No name on record".
+  (3) **§6 - when the server sorts by one key (id tie-break), design around it**: the run list always filters to
+  ONE year and sorts by month (a year fits one page); `/payslips` has no year filter, so "My payslips" pages
+  through ALL of a person's payslips (one a month) and sorts year -> month on the client. (4) **§7 - a broad
+  read permission never widens a "my ..." screen** (Leave's rule, applied again): ADMIN holds
+  `payslip:read:any`, so "My payslips" sends the ADMIN's own employee id, shows "not linked" and fetches
+  nothing without one, and blocks with Retry if the lookup fails. (5) **§9 - promote at the second consumer**:
+  `employment-type.ts` moved to `shared/models/`, and `core/config/app-currency.ts` (`APP_CURRENCY`) replaced
+  Employees' hard-coded `'USD'` - its own commit, the 768 existing specs unchanged. (6) **§9 - widen shared
+  components with OPTIONAL fields**: `ConfirmDialogData.warning` (a warning banner under the message) and
+  `ColumnDef.align: 'end'` (right-aligned amounts; with `arrowPosition="before"` Material lays the sort header
+  out `row-reverse`, so its right edge is `justify-content: flex-start` - measured, not assumed). (7) **§10 -
+  one component, two routes**: `PayslipDetailPage` serves `/payroll/:runId/payslips/:id` and
+  `/my-payslips/:id`; `data.origin` and `pathFromRoot` (a non-empty child does not inherit `:runId`) pick the
+  breadcrumb trail and the Back link. (8) **§13/§15 - testing.** 862 tests (was 768; 94 new); 17 mutation
+  checks, all killed; live 63/63 three runs in a row (ADMIN without / with an employee record, MANAGER,
+  EMPLOYEE; realistic August attendance giving 20 working days, 17.5 paid, 875 net), Leave's 135/135 re-run on
+  the shared changes, 360 px measured. (9) **Backend facts recorded, NOT changed**: an unfinished month can be
+  processed; no shift = weekends unpaid; single-key sorting; no year filter or name sort on `/payslips`; no run
+  totals; no run status on a payslip; processing cost grows with employees x days.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:
