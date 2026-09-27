@@ -582,7 +582,7 @@ handbook kept in sync, one commit per feature).
   reason is kept only in the audit log (the applicant never sees it); a balance row exists only after a first
   approval; the list filters by one employee (so no "waiting on me" inbox); the cancel rule and a balance's
   year are UTC-day based.
-- v20 (this revision) — **Payroll** (item 10 of the rollout; the first FINANCIAL RECORD: payroll runs and
+- v20 — **Payroll** (item 10 of the rollout; the first FINANCIAL RECORD: payroll runs and
   immutable payslips). `features/payroll/`, a step-0 promotion commit, two optional widenings of shared
   components. Establishes or amends: (1) **§6 - find the irreversible step from the backend's rules, not the
   status names.** After `process` a run can be neither deleted nor processed again, so PROCESS - not finalize -
@@ -612,6 +612,27 @@ handbook kept in sync, one commit per feature).
   the shared changes, 360 px measured. (9) **Backend facts recorded, NOT changed**: an unfinished month can be
   processed; no shift = weekends unpaid; single-key sorting; no year filter or name sort on `/payslips`; no run
   totals; no run status on a payslip; processing cost grows with employees x days.
+- v21 (this revision) — **Performance** (item 11 of the rollout; review cycles, reviews with THREE audiences -
+  reviewer, reviewed employee, ADMIN - and append-only notes). `features/performance/`, a step-0 commit widening the
+  shared employee picker. Establishes or amends: (1) **§6/§7 - one pure rule for every action on a multi-audience
+  record**: `reviewActions(review, actor)` returns edit / submit / delete / self-assess / acknowledge / add-note,
+  exactly as the backend decides them (manage = `manage:any`, or `manage:reports` AND being the STORED reviewer) and
+  failing CLOSED; `showManagerContent` hides a DRAFT from its subject. (2) **§7 - who the caller is, when the API cannot
+  say**: `ReviewContext` resolves ADMIN/MANAGER's own employee from the directory; for a caller who can read ONLY their
+  own reviews, the server's 200 on a review is the proof it is theirs; a MANAGER is never assumed to be a review's
+  subject. Names follow each role's permissions and never fall back to an id. (3) **§7 - hiding is not privacy**: the
+  API returns a draft's content to its subject; the UI hides it and the docs record it as a backend gap. (4) **§7 - a
+  broad read never widens a "my ..." screen** (third time): ADMIN (`read:any`) and MANAGER (whose list includes their
+  reports) send their own id on "My reviews". (5) **§9 - widen a shared component with an optional input**:
+  `EmployeePickerComponent.include` (its own commit; Attendance/Leave unchanged, Leave's live checks re-run). (6) **§9 -
+  do not bend `MasterDataStore` / `MasterDataDirectory` for a status vocabulary they do not share** (OPEN/CLOSED):
+  `createPagedList` + a feature-local lookup instead. (7) **§11 - reactive forms**: `[required]` on a
+  `formControlName` element brings Angular's `RequiredValidator` (removed with the element), so a conditionally
+  rendered required field needs no manual validator; reset a SUBMITTED form through `FormGroupDirective.resetForm()`,
+  or Material shows the emptied field as an error. (8) **§13/§15 - testing**: 943 tests (81 new), 17 mutation checks
+  killed (one surviving mutant exposed redundant code, which was removed), live 63/63 on two consecutive runs, Leave
+  135/135. (9) **Backend facts recorded, NOT changed**: draft content visible to its subject; no reviewer filter; no
+  reviewer or note-author names; notes accepted at any status; single-key sorts; no "my employee record" endpoint.
 
 Every claim about backend behavior below was verified against the
 **actual current source**, not assumed or remembered:

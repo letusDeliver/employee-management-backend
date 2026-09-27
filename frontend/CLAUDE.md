@@ -1974,3 +1974,52 @@ its saved id; Python `read_text()` is cp1252 on Windows, so two UTF-8 spec edits
 **Outside scope, not changed (backend):** an unfinished month can be processed; no shift = weekends unpaid; single-key sorting; no
 year filter or name sort on `/payslips`; no run totals; no run status on a payslip; processing cost is employees x days. Frontend:
 five one-line copies of the inline-error `HttpContext`; no payslip print/PDF.)_
+
+_(Feature 16 - Performance: review cycles, reviews with three audiences, notes - 2026-09-27, directly on `main`. Full write-up:
+`handbook/frontend-16-performance.md`; architectural record: blueprint v21.
+
+**Contract (read from `backend/src/modules/{reviewCycles,performance}`, Prisma and seed, then probed live).** Cycles: `name` unique
+IGNORING case (409), `startDate`/`endDate` calendar dates (`end < start` 400), OPEN/CLOSED, delete 409 while referenced ("close it
+instead"); every role reads, ADMIN writes; keys `cycle(s)`. Reviews: DRAFT -> SUBMITTED -> ACKNOWLEDGED; created only in an OPEN cycle,
+one per employee per cycle (409); MANAGER (`create:reports`) only for direct reports and always as the reviewer (a sent `reviewerId` is
+ignored); ADMIN (`create:any`) anyone, and MUST send `reviewerId` when the employee has no manager (400); `reviewerId` stored at
+creation; edit/submit/delete DRAFT-only by the stored reviewer or `manage:any`; submit needs rating + comments (400) and records
+department/designation/branch names; self-assessment by the subject at any status before ACKNOWLEDGED (incl. DRAFT); acknowledge by the
+subject only (no ADMIN override), SUBMITTED only; notes append-only, by anyone who can view, at ANY status, `authorId` a USER id; the
+API returns a DRAFT's rating/comments to its subject; a MANAGER's list = own + authored (no reviewer filter); EMPLOYEE cannot list
+employees/users, MANAGER cannot list users; no "my employee record" endpoint. Keys `review(s)`, `addendum`.
+
+**What was built.** (A) Its own commit: `EmployeePickerComponent.include` (optional; narrows the options). (B) `features/performance/`:
+models (no mapper - no Decimals), pure tested `review-rules.ts` and `cycle-form.ts`, `ReviewContext` (own id, actor, per-role names),
+`ReviewCycleLookup`, two services, four page-provided stores. Screens: `/review-cycles` (ADMIN; search, status, sort; dialog with
+end-not-before-start on the END field; only-changed PATCH), `/performance-reviews` (MANAGER/ADMIN ledger; cycle/status/employee filters;
+"About you" rows; New Review dialog: OPEN cycles, reports-only picker for a MANAGER, a required Reviewer only for an ADMIN picking an
+employee with no manager), one `ReviewDetailPage` for `/performance-reviews/:id` and `/my-reviews/:id` (reviewer: rating + comments,
+Save only-changed, Submit with confirm once saved, Delete draft; subject: draft hidden, self-assessment until acknowledged, Acknowledge
+with a "doesn't mean you agree" confirm; notes from SUBMITTED; recorded org names; 403/404/error states), `/my-reviews`. Icons
+`rateReview`, `eventNote`, `grade`; three NAV entries.
+
+**Judgment calls.** Draft content hidden from its subject (presentation, not privacy - recorded). Notes only from SUBMITTED (the Phase 2
+question, approved). Cycles NOT on `MasterDataStore`/`MasterDataDirectory` (typed ACTIVE/INACTIVE) - changed from Phase 1's "like
+Shift", reported at Phase 2. A MANAGER's own review stays in their ledger labelled "About you" (client filtering would corrupt paging).
+EMPLOYEE's "is it mine?" = the server returned it to a read:own-only caller; never inferred for a MANAGER.
+
+**Tests: 943 (was 862; 81 new).** Lint/build clean; commit A verified alone (863/863). **17 mutation checks, all killed**; planned
+mutant 12 SURVIVED first - the template's `[required]` binding (Angular's `RequiredValidator` directive) already made the conditional
+Reviewer required, so my manual `setValidators` was redundant: removed, mutant rebuilt ("never ask for a reviewer") and killed; an
+equivalent candidate (two independent guards) dropped, not counted. **Live: 63/63 on two consecutive clean runs** (+ an earlier 62/62
+before a check was added), Leave 135/135 re-run on the picker change. Data removed and verified (0 cycles/reviews/notes, 30 employees).
+Harness: `probe-performance.mjs`, `setup-performance-extra.mjs`, `verify-performance.mjs`, `cleanup-performance.mjs` (BEFORE
+`cleanup-attendance.mjs` - reviews are `Restrict`), `login-ready.mjs`, `peek-performance.mjs`.
+
+**Real defects, and how each was found.** (1) The emptied note field turned red after every successful note - the "submitted"
+screenshot: `FormGroup.reset()` leaves the directive `submitted`; fixed with `FormGroupDirective.resetForm()`, pinned by a spec that
+fails on the old code and a live check. (2) Redundant validator code - a surviving mutant. (3) A MANAGER's dialog could have said
+"Nobody reports to you" while their record was loading/failed - caught writing it; reads the context live, blocks with Retry. NOT app
+bugs: Vite EPERM blank login on a fresh cache (now gated by `login-ready.mjs`); `<dt>/<dd>` read as one string in a spec AND the
+verifier (the Payroll lesson again); a status pill's icon ligature in a cell's text; a validator's first run before it has a parent; a
+deleted row's name quoted by the closing confirm; a generated mutation script with real newlines in its strings.
+
+**Outside scope, not changed (backend):** draft content visible to its subject; no reviewer filter; no reviewer/author names; notes at
+any status; single-key sorts; no "my employee record" endpoint. Frontend: very long fixture names make the ledger scroll under its
+sticky action column at 1280 px.)_
