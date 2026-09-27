@@ -36,6 +36,11 @@ const MAX_OPTIONS = 100;
 export class EmployeePickerComponent implements ControlValueAccessor, AfterViewInit {
   readonly label = input('Employee');
   readonly required = input(false);
+  /**
+   * Optional: narrows the options to the employees this returns true for (Performance: a MANAGER may
+   * only review their own direct reports). Absent = every employee, exactly as before.
+   */
+  readonly include = input<((employeeId: string) => boolean) | null>(null);
 
   protected readonly directory = inject(EmployeeDirectoryService);
   protected readonly icons = ICON_NAMES;
@@ -67,7 +72,8 @@ export class EmployeePickerComponent implements ControlValueAccessor, AfterViewI
 
   private readonly matching = computed(() => {
     const query = (this.typed() ?? '').trim().toLowerCase();
-    const options = this.directory.options();
+    const include = this.include();
+    const options = include ? this.directory.options().filter((option) => include(option.id)) : this.directory.options();
     return query ? options.filter((option) => `${option.label} ${option.detail}`.toLowerCase().includes(query)) : options;
   });
 

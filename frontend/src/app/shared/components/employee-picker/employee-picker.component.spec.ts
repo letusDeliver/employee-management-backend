@@ -8,11 +8,12 @@ import { EmployeePickerComponent } from './employee-picker.component';
 
 @Component({
   imports: [EmployeePickerComponent, ReactiveFormsModule],
-  template: `<app-employee-picker [formControl]="control" label="Employee" [required]="required" />`,
+  template: `<app-employee-picker [formControl]="control" label="Employee" [required]="required" [include]="include()" />`,
 })
 class HostComponent {
   control = new FormControl<string | null>(null);
   required = false;
+  include = signal<((employeeId: string) => boolean) | null>(null);
 }
 
 const options: EmployeeOption[] = [
@@ -191,6 +192,18 @@ describe('EmployeePickerComponent', () => {
     fixture.detectChanges();
 
     expect(input(el).disabled).toBe(true);
+  });
+
+  it('narrows the options to the ones `include` accepts, and searches only within them', () => {
+    const { fixture, host, el } = setup();
+    host.include.set((id) => id === 'e-priya' || id === 'e-twin-1');
+    fixture.detectChanges();
+    open(fixture, el);
+
+    expect(optionTexts()).toEqual(['Priya Sharma | Joined Feb 1, 2023', 'Engineer, Sales | Joined Mar 1, 2022']);
+
+    type(fixture, el, 'amit');
+    expect(optionTexts().some((t) => t.startsWith('Amit'))).toBe(false);
   });
 
   it('caps a long list and says to keep typing', () => {
