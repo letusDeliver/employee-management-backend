@@ -25,8 +25,7 @@
   </ng-template>
 
   <ng-template appDataTableCell="salary" let-row>
-    <!-- USD is a placeholder default - no locale/currency config exists elsewhere in this app yet. -->
-    {{ row.salary | currency: 'USD' }}
+    {{ row.salary | currency: currencyCode }}
   </ng-template>
 
   <ng-template appDataTableCell="dateOfJoining" let-row>

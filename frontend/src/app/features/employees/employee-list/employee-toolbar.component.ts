@@ -10,7 +10,7 @@ import { debounceTime, distinctUntilChanged } from 'rxjs';
 import { DirectoryEntry } from '../../../core/master-data-directory/master-data-directory';
 import { ICON_NAMES } from '../../../shared/icon-names';
 import { EmployeeListQuery } from '../data-access/employee.model';
-import { EMPLOYMENT_TYPE_OPTIONS } from '../data-access/employment-type';
+import { EMPLOYMENT_TYPE_OPTIONS } from '../../../shared/models/employment-type';
 
 export type EmployeeFilters = Partial<Pick<EmployeeListQuery, 'search' | 'departmentId' | 'designationId' | 'employmentType'>>;
 

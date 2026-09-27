@@ -1,9 +1,9 @@
 /**
  * A closed, code-defined set (docs/domain-employment-type.md, ADR-ET01) - not a
  * managed master-data table, so there is no endpoint, no directory and no screen:
- * just the four values the backend's Zod enum accepts, mirrored 1:1. Feature-local
- * for now (only Employees uses it); promote to `shared/` the moment Leave or
- * Payroll needs the same labels.
+ * just the four values the backend's Zod enum accepts, mirrored 1:1. Promoted from
+ * `features/employees/` when Payroll became its second consumer (a payslip
+ * snapshots the employment type it was calculated under).
  */
 export const EMPLOYMENT_TYPES = ['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERN'] as const;
 

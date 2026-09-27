@@ -1,4 +1,4 @@
-import { EmploymentType } from './employment-type';
+import { EmploymentType } from '../../../shared/models/employment-type';
 
 /** The shape components/stores actually work with - `salary: number`, real `Date`s. */
 export interface Employee {

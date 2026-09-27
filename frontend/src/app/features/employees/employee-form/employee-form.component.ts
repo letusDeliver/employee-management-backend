@@ -25,7 +25,7 @@ import { uuidValidator } from '../../../shared/validators/uuid.validator';
 import { buildEmployeeCreate, buildEmployeeUpdate, EmployeeFormValue } from '../data-access/employee-update';
 import { Employee } from '../data-access/employee.model';
 import { EmployeeStore } from '../data-access/employee.store';
-import { EMPLOYMENT_TYPE_OPTIONS, EmploymentType } from '../data-access/employment-type';
+import { EMPLOYMENT_TYPE_OPTIONS, EmploymentType } from '../../../shared/models/employment-type';
 
 // Mirrors the backend's own sanity bound (employee.validation.js) - a
 // generous ceiling meant to catch garbled/pasted-in-error input (a

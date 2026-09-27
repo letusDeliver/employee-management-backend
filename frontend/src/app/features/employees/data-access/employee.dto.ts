@@ -1,4 +1,4 @@
-import { EmploymentType } from './employment-type';
+import { EmploymentType } from '../../../shared/models/employment-type';
 
 /**
  * Exact wire shape, verified against a live `GET /employees` - `salary` is a Decimal,

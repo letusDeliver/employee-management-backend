@@ -20,7 +20,8 @@ import { ICON_NAMES } from '../../../shared/icon-names';
 import { extractErrorMessage } from '../../../shared/utils/extract-error-message.util';
 import { EmployeeDocumentsDialogComponent } from '../employee-documents/employee-documents-dialog.component';
 import { EmployeeStore } from '../data-access/employee.store';
-import { EMPLOYMENT_TYPE_LABELS } from '../data-access/employment-type';
+import { EMPLOYMENT_TYPE_LABELS } from '../../../shared/models/employment-type';
+import { APP_CURRENCY } from '../../../core/config/app-currency';
 
 /**
  * Read-only detail + permission-gated edit/delete entry points. Reuses
@@ -59,6 +60,7 @@ export class EmployeeDetailPageComponent implements OnInit {
   protected readonly shiftDirectory = inject(ShiftDirectoryService);
   protected readonly employeeStore = inject(EmployeeStore);
   protected readonly icons = ICON_NAMES;
+  protected readonly currencyCode = APP_CURRENCY;
 
   protected readonly deleteError = signal<string | null>(null);
   protected readonly deleting = signal(false);

@@ -18,7 +18,8 @@ import { DataTableComponent } from '../../../shared/components/data-table/data-t
 import { ICON_NAMES } from '../../../shared/icon-names';
 import { Paginated } from '../../../shared/models/paginated.model';
 import { Employee } from '../data-access/employee.model';
-import { EMPLOYMENT_TYPE_LABELS } from '../data-access/employment-type';
+import { EMPLOYMENT_TYPE_LABELS } from '../../../shared/models/employment-type';
+import { APP_CURRENCY } from '../../../core/config/app-currency';
 
 /**
  * Presentational, domain-scoped (§10) - configures `DataTableComponent` with
@@ -55,6 +56,7 @@ export class EmployeeTableComponent {
   private readonly departments = inject(DepartmentDirectoryService);
   private readonly designations = inject(DesignationDirectoryService);
   protected readonly icons = ICON_NAMES;
+  protected readonly currencyCode = APP_CURRENCY;
 
   readonly rows = input.required<Employee[]>();
   readonly loading = input(false);

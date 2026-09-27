@@ -1,6 +1,6 @@
 import { toDateOnlyString } from './employee.mapper';
 import { CreateEmployeeRequest, Employee, UpdateEmployeeRequest } from './employee.model';
-import { EmploymentType } from './employment-type';
+import { EmploymentType } from '../../../shared/models/employment-type';
 
 /** What the form holds. A blank id (`''`) means "none" for the optional links. */
 export interface EmployeeFormValue {
