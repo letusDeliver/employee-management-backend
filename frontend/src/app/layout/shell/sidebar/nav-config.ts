@@ -145,4 +145,21 @@ export const NAV_CONFIG: NavItem[] = [
     description: "View and adjust employees' leave balances.",
     permissions: ['leaveBalance:read:any'],
   },
+  {
+    // payrollRun:read is ADMIN-only (docs/domain-payroll.md ADR-PR06); MANAGER and EMPLOYEE see only
+    // their own payslips, on /my-payslips.
+    route: '/payroll',
+    icon: ICON_NAMES.payments,
+    label: 'Payroll',
+    description: 'Run monthly payroll: process, finalize and record payment.',
+    permissions: ['payrollRun:read'],
+  },
+  {
+    // payslip:read:own is granted to every role.
+    route: '/my-payslips',
+    icon: ICON_NAMES.receiptLong,
+    label: 'My payslips',
+    description: 'See what you were paid each month.',
+    permissions: ['payslip:read:own'],
+  },
 ];

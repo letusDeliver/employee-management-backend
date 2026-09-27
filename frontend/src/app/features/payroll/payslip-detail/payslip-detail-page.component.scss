@@ -1,0 +1,109 @@
+:host {
+  display: block;
+}
+
+.back-link {
+  margin: 0 0 12px -8px;
+}
+
+// Two columns (employee + attendance beside each other, pay below) on a wide screen, one on a phone.
+.sheet {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  max-width: 960px;
+}
+
+.panel {
+  padding: 16px;
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: 12px;
+  background: var(--mat-sys-surface);
+}
+
+.pay {
+  grid-column: 1 / -1;
+}
+
+.panel-title {
+  margin: 0 0 12px;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 0;
+
+  dt {
+    color: var(--mat-sys-on-surface-variant);
+  }
+
+  dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+.group-title {
+  margin: 12px 0 4px;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.line,
+.total {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
+}
+
+.line + .line {
+  border-top: 1px solid var(--mat-sys-outline-variant);
+}
+
+.none {
+  margin: 0;
+  padding: 6px 0;
+}
+
+.totals {
+  margin: 12px 0 0;
+  padding-top: 8px;
+  border-top: 2px solid var(--mat-sys-outline);
+
+  dt,
+  dd {
+    margin: 0;
+  }
+}
+
+.net {
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.number {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.note {
+  margin: 12px 0 0;
+}
+
+.footnote {
+  margin: 16px 0 0;
+  max-width: 960px;
+}

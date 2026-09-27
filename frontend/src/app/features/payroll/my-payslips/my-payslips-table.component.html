@@ -1,0 +1,36 @@
+<app-data-table
+  [columns]="columns"
+  [rows]="rows()"
+  [loading]="loading()"
+  [totalCount]="rows().length"
+  [pageIndex]="0"
+  [pageSize]="pageSize"
+  [pageSizeOptions]="[pageSize]"
+>
+  <ng-template appDataTableCell="period" let-row>
+    <a class="period-link" [routerLink]="['/my-payslips', row.id]">{{ period(row) }}</a>
+  </ng-template>
+
+  <ng-template appDataTableCell="grossPay" let-row>
+    <span class="amount">{{ row.grossPay | currency: currencyCode }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="totalDeductions" let-row>
+    <span class="amount">{{ row.totalDeductions | currency: currencyCode }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="netPay" let-row>
+    <span class="amount net">{{ row.netPay | currency: currencyCode }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="actions" let-row>
+    <a
+      mat-icon-button
+      [routerLink]="['/my-payslips', row.id]"
+      [attr.aria-label]="'View ' + period(row) + ' payslip'"
+      matTooltip="View payslip"
+    >
+      <mat-icon>{{ icons.receiptLong }}</mat-icon>
+    </a>
+  </ng-template>
+</app-data-table>

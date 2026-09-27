@@ -175,6 +175,19 @@ export const routes: Routes = [
         canActivate: [permissionGuard],
         data: { breadcrumb: 'Leave balances', permissions: ['leaveBalance:read:any'] },
       },
+      {
+        // ADMIN only (payrollRun:read, docs/domain-payroll.md ADR-PR06). A wrapper like 'holiday-calendars':
+        // the list, a run and a payslip opened from it are children, so this carries the parent crumb.
+        path: 'payroll',
+        loadChildren: () => import('./features/payroll/payroll.routes').then((m) => m.PAYROLL_ROUTES),
+        data: { breadcrumb: 'Payroll' },
+      },
+      {
+        // Every role (payslip:read:own). The caller's own payslips and one payslip's page.
+        path: 'my-payslips',
+        loadChildren: () => import('./features/payroll/payroll.routes').then((m) => m.MY_PAYSLIPS_ROUTES),
+        data: { breadcrumb: 'My payslips' },
+      },
     ],
   },
 ];

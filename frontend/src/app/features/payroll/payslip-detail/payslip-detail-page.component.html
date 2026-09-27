@@ -1,0 +1,104 @@
+@if (loading()) {
+  <div class="flex items-center gap-2">
+    <mat-progress-spinner diameter="24" mode="indeterminate" aria-label="Loading payslip" />
+    <span>Loading...</span>
+  </div>
+} @else if (notFound()) {
+  <app-empty-state [icon]="icons.receiptLong" title="Payslip not found" description="Check the link, or go back and pick another payslip." />
+  <div class="mt-4 flex justify-center">
+    <a mat-button [routerLink]="back().link">{{ back().label }}</a>
+  </div>
+} @else if (forbidden()) {
+  <app-empty-state [icon]="icons.receiptLong" title="You can't view this payslip" description="You can only see your own payslips." />
+  <div class="mt-4 flex justify-center">
+    <a mat-button [routerLink]="back().link">{{ back().label }}</a>
+  </div>
+} @else if (error(); as message) {
+  <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="load()" />
+} @else if (payslip(); as slip) {
+  <app-page-header [title]="title()" [description]="name(slip)" />
+
+  <a mat-button class="back-link" [routerLink]="back().link">
+    <mat-icon>{{ icons.arrowBack }}</mat-icon>
+    {{ back().label }}
+  </a>
+
+  <div class="sheet">
+    <section class="panel" aria-labelledby="payslip-employee">
+      <h2 id="payslip-employee" class="ds-h3 panel-title">Employee</h2>
+      <dl class="facts">
+        <dt>Name</dt>
+        <dd [class.muted]="!slip.employeeName">{{ name(slip) }}</dd>
+        <dt>Designation</dt>
+        <dd>{{ slip.designationName }}</dd>
+        <dt>Department</dt>
+        <dd>{{ slip.departmentName }}</dd>
+        <dt>Branch</dt>
+        <dd>{{ slip.branchName ?? '—' }}</dd>
+        <dt>Employment type</dt>
+        <dd>{{ employmentTypeLabels[slip.employmentType] }}</dd>
+      </dl>
+    </section>
+
+    <section class="panel" aria-labelledby="payslip-attendance">
+      <h2 id="payslip-attendance" class="ds-h3 panel-title">Attendance</h2>
+      <dl class="facts">
+        <dt>Working days</dt>
+        <dd class="number">{{ days(slip.workingDaysInPeriod) }}</dd>
+        <dt>Paid days</dt>
+        <dd class="number">{{ days(slip.paidDays) }}</dd>
+        <dt>Unpaid days</dt>
+        <dd class="number">{{ days(slip.unpaidDays) }}</dd>
+      </dl>
+      <p class="ds-caption muted note">Holidays and days off under the employee's shift are not working days.</p>
+    </section>
+
+    <section class="panel pay" aria-labelledby="payslip-pay">
+      <h2 id="payslip-pay" class="ds-h3 panel-title">Pay</h2>
+
+      <h3 class="ds-label group-title">Earnings</h3>
+      <ul class="lines">
+        @for (line of slip.earnings; track line.id) {
+          <li class="line">
+            <span>{{ line.label }}</span>
+            <span class="number">{{ line.amount | currency: currencyCode }}</span>
+          </li>
+        }
+      </ul>
+
+      <h3 class="ds-label group-title">Deductions</h3>
+      @if (slip.deductions.length === 0) {
+        <p class="ds-body muted none">No deductions</p>
+      } @else {
+        <ul class="lines">
+          @for (line of slip.deductions; track line.id) {
+            <li class="line">
+              <span>{{ line.label }}</span>
+              <span class="number">−{{ line.amount | currency: currencyCode }}</span>
+            </li>
+          }
+        </ul>
+      }
+
+      <dl class="totals">
+        <div class="total">
+          <dt>Gross pay</dt>
+          <dd class="number">{{ slip.grossPay | currency: currencyCode }}</dd>
+        </div>
+        <div class="total">
+          <dt>Total deductions</dt>
+          <dd class="number">−{{ slip.totalDeductions | currency: currencyCode }}</dd>
+        </div>
+        <div class="total net">
+          <dt>Net pay</dt>
+          <dd class="number">{{ slip.netPay | currency: currencyCode }}</dd>
+        </div>
+      </dl>
+    </section>
+  </div>
+
+  <p class="ds-caption muted footnote">
+    Generated {{ slip.generatedAt | date: 'medium' }}. A payslip is a snapshot: later changes to salary, department or
+    attendance don't change it.
+  </p>
+}

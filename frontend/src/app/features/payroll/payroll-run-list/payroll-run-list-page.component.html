@@ -1,0 +1,61 @@
+<app-page-header title="Payroll" description="Monthly payroll runs. Open a run to process, finalize and pay it.">
+  @if (canCreate()) {
+    <button pageHeaderActions mat-flat-button color="primary" type="button" (click)="openNewRunDialog()">
+      <mat-icon>{{ icons.add }}</mat-icon>
+      New Run
+    </button>
+  }
+</app-page-header>
+
+<div class="mb-4 flex flex-wrap items-start gap-2">
+  <mat-form-field class="year-field" subscriptSizing="dynamic">
+    <mat-label>Year</mat-label>
+    <mat-select [value]="store.query().periodYear" (selectionChange)="onYearChange($event.value)">
+      @for (year of years(); track year) {
+        <mat-option [value]="year">{{ year }}</mat-option>
+      }
+    </mat-select>
+  </mat-form-field>
+
+  <mat-form-field class="status-field" subscriptSizing="dynamic">
+    <mat-label>Status</mat-label>
+    <mat-select [value]="store.query().status ?? ''" (selectionChange)="onStatusChange($event.value)">
+      <mat-option value="">All</mat-option>
+      @for (option of statusOptions; track option.value) {
+        <mat-option [value]="option.value">{{ option.label }}</mat-option>
+      }
+    </mat-select>
+  </mat-form-field>
+</div>
+
+@if (deleteError(); as message) {
+  <div class="mb-4">
+    <app-inline-banner tone="error" [message]="message" />
+  </div>
+}
+
+@if (store.error(); as message) {
+  <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="store.load()" />
+} @else if (!store.loading() && store.runs().length === 0) {
+  <app-empty-state
+    [icon]="icons.payments"
+    [title]="store.query().status ? 'No runs match this status' : 'No payroll runs in ' + store.query().periodYear"
+    [description]="
+      store.query().status
+        ? 'Choose another status or year.'
+        : canCreate()
+          ? 'Create a run for a month to start paying it.'
+          : 'Runs appear here once they are created.'
+    "
+  />
+} @else {
+  <app-payroll-run-table
+    [rows]="store.runs()"
+    [loading]="store.loading()"
+    [pagination]="store.pagination()"
+    [canDeleteRuns]="canDeleteRuns()"
+    [deletingIds]="deletingIds()"
+    (pageChange)="onPageChange($event)"
+    (deleteRequested)="onDeleteRequested($event)"
+  />
+}

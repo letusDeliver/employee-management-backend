@@ -41,6 +41,9 @@ export const ICON_NAMES = {
   accountBalanceWallet: 'account_balance_wallet',
   check: 'check',
   eventBusy: 'event_busy',
+  payments: 'payments',
+  receiptLong: 'receipt_long',
+  arrowBack: 'arrow_back',
 } as const satisfies Record<string, string>;
 
 export type IconName = keyof typeof ICON_NAMES;

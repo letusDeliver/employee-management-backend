@@ -1,0 +1,21 @@
+:host {
+  display: block;
+}
+
+.intro {
+  margin: 0 0 16px;
+}
+
+.period-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.month-field {
+  flex: 1 1 180px;
+}
+
+.year-field {
+  flex: 0 1 120px;
+}

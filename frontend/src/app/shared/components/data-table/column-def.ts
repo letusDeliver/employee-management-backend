@@ -9,4 +9,9 @@ export interface ColumnDef {
    * reach - meant for a row-actions column (Edit / Delete), as `HolidayTableComponent` does.
    */
   stickyEnd?: boolean;
+  /**
+   * `end` right-aligns the header and cells - for amounts, so digits line up (Payroll's money columns).
+   * Absent = the default start alignment, unchanged for every existing table.
+   */
+  align?: 'end';
 }

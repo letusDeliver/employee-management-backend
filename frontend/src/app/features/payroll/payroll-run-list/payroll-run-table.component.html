@@ -1,0 +1,49 @@
+<app-data-table
+  [columns]="columns"
+  [rows]="rows()"
+  [loading]="loading()"
+  [totalCount]="pagination().total"
+  [pageIndex]="pagination().page - 1"
+  [pageSize]="pagination().limit"
+  [pageSizeOptions]="[12]"
+  (pageChange)="pageChange.emit($event)"
+>
+  <ng-template appDataTableCell="period" let-row>
+    <a class="period-link" [routerLink]="['/payroll', row.id]">{{ period(row) }}</a>
+  </ng-template>
+
+  <ng-template appDataTableCell="status" let-row>
+    <app-status-pill [label]="status(row).label" [tone]="status(row).tone" [icon]="status(row).icon" />
+  </ng-template>
+
+  <ng-template appDataTableCell="createdAt" let-row>
+    <span class="whitespace-nowrap">{{ row.createdAt | date: 'mediumDate' }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="actions" let-row>
+    <!-- nowrap: the icons must stay on one line, or every row grows taller. -->
+    <div class="flex flex-nowrap items-center whitespace-nowrap">
+      <a
+        mat-icon-button
+        [routerLink]="['/payroll', row.id]"
+        [attr.aria-label]="'Open ' + period(row) + ' payroll run'"
+        matTooltip="Open run"
+      >
+        <mat-icon>{{ icons.visibility }}</mat-icon>
+      </a>
+      @if (deletingIds().has(row.id)) {
+        <mat-progress-spinner diameter="20" mode="indeterminate" [attr.aria-label]="'Deleting ' + period(row)" />
+      } @else if (deletable(row)) {
+        <button
+          mat-icon-button
+          type="button"
+          [attr.aria-label]="'Delete ' + period(row) + ' payroll run'"
+          matTooltip="Delete run"
+          (click)="deleteRequested.emit(row)"
+        >
+          <mat-icon>{{ icons.delete }}</mat-icon>
+        </button>
+      }
+    </div>
+  </ng-template>
+</app-data-table>

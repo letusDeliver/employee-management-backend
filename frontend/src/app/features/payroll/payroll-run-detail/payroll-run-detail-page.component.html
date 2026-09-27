@@ -1,0 +1,133 @@
+@if (store.loading() && !store.run()) {
+  <div class="flex items-center gap-2">
+    <mat-progress-spinner diameter="24" mode="indeterminate" aria-label="Loading payroll run" />
+    <span>Loading...</span>
+  </div>
+} @else if (store.notFound()) {
+  <app-empty-state
+    [icon]="icons.payments"
+    title="Payroll run not found"
+    description="It may have been deleted. Go back to the list to pick another."
+  />
+  <div class="mt-4 flex justify-center">
+    <a mat-button routerLink="/payroll">Back to payroll</a>
+  </div>
+} @else if (store.error() && !store.run()) {
+  <app-inline-banner tone="error" [message]="store.error()!" [showRetry]="true" (retry)="store.reload()" />
+} @else if (store.run(); as run) {
+  <app-page-header [title]="title()" description="One month's payroll: process it, check the payslips, finalize, then record the payment.">
+    <div pageHeaderActions class="flex flex-wrap items-center gap-2">
+      @if (busyAction(); as busy) {
+        <span class="busy flex items-center gap-2" role="status">
+          <mat-progress-spinner diameter="20" mode="indeterminate" aria-hidden="true" />
+          {{ busy === 'process' ? 'Generating payslips…' : busy === 'delete' ? 'Deleting…' : 'Saving…' }}
+        </span>
+      } @else {
+        @if (deletable()) {
+          <button mat-stroked-button type="button" (click)="onDelete(run)">
+            <mat-icon>{{ icons.delete }}</mat-icon>
+            Delete
+          </button>
+        }
+        @if (action(); as next) {
+          <button mat-flat-button color="primary" type="button" (click)="onAction(run, next)">
+            {{ actionLabel(next) }}
+          </button>
+        }
+      }
+    </div>
+  </app-page-header>
+
+  <a mat-button class="back-link" routerLink="/payroll">
+    <mat-icon>{{ icons.arrowBack }}</mat-icon>
+    Back to payroll
+  </a>
+
+  <section class="summary" aria-label="Run status">
+    <ol class="steps">
+      @for (step of steps; track step.status; let index = $index) {
+        <li
+          class="step step-{{ stepState(run, index) }}"
+          [attr.aria-current]="stepState(run, index) === 'current' ? 'step' : null"
+        >
+          <mat-icon class="step-icon" aria-hidden="true">
+            {{ stepState(run, index) === 'done' ? icons.check : stepState(run, index) === 'current' ? statusMeta(run).icon : 'radio_button_unchecked' }}
+          </mat-icon>
+          <span class="step-label">{{ step.label }}</span>
+          @if (stepState(run, index) === 'done') {
+            <span class="sr-only">(done)</span>
+          }
+        </li>
+      }
+    </ol>
+
+    <p class="ds-body hint">
+      <app-status-pill [label]="statusMeta(run).label" [tone]="statusMeta(run).tone" [icon]="statusMeta(run).icon" />
+      <span>{{ statusHint(run) }}</span>
+    </p>
+    <p class="ds-caption meta">
+      {{ run.payslipCount === null ? '' : run.payslipCount + (run.payslipCount === 1 ? ' payslip' : ' payslips') + ' · ' }}Created
+      {{ run.createdAt | date: 'mediumDate' }} · Last changed {{ run.updatedAt | date: 'medium' }}
+    </p>
+  </section>
+
+  @if (actionError(); as message) {
+    <div class="mb-4">
+      <app-inline-banner tone="error" [message]="message" />
+    </div>
+  }
+  @if (store.error(); as message) {
+    <div class="mb-4">
+      <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="store.reload()" />
+    </div>
+  }
+
+  <h2 class="ds-h3 section-title">Payslips</h2>
+
+  @if (run.status === 'DRAFT') {
+    <app-empty-state
+      [icon]="icons.receiptLong"
+      title="No payslips yet"
+      description="Processing the run generates a payslip for every active employee."
+    />
+  } @else {
+    <div class="mb-2 flex flex-wrap items-start gap-2">
+      <div class="employee-field">
+        <app-employee-picker [formControl]="employeeFilter" label="Employee" />
+      </div>
+    </div>
+    @if (directory.error()) {
+      <div class="mb-4">
+        <app-inline-banner
+          tone="warning"
+          message="Employees could not be loaded, so the employee filter is unavailable. The payslips below are unaffected."
+          [showRetry]="true"
+          (retry)="reloadDirectory()"
+        />
+      </div>
+    }
+
+    @if (store.payslipsError(); as message) {
+      <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="store.reload()" />
+    } @else if (!store.payslipsLoading() && store.payslips().length === 0) {
+      <app-empty-state
+        [icon]="icons.receiptLong"
+        [title]="employeeFilter.value ? 'No payslip for this employee' : 'No payslips in this run'"
+        [description]="
+          employeeFilter.value
+            ? 'They were not an active employee when the run was processed.'
+            : 'There were no active employees when the run was processed.'
+        "
+      />
+    } @else {
+      <app-run-payslip-table
+        [runId]="run.id"
+        [rows]="store.payslips()"
+        [loading]="store.payslipsLoading()"
+        [pagination]="store.payslipPagination()"
+        (pageChange)="onPageChange($event)"
+        (sortChange)="onSortChange($event)"
+      />
+    }
+  }
+}

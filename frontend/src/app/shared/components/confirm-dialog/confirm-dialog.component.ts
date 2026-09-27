@@ -2,6 +2,8 @@ import { Component, inject } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 
+import { InlineBannerComponent } from '../inline-banner/inline-banner.component';
+
 export interface ConfirmDialogData {
   title: string;
   message: string;
@@ -9,6 +11,11 @@ export interface ConfirmDialogData {
   cancelLabel?: string;
   /** The confirm button's colour; `warn` (the default) suits a destructive action, `primary` a constructive one (e.g. approving). */
   tone?: 'warn' | 'primary';
+  /**
+   * An optional warning shown under the message as a warning banner - for a consequence the user
+   * must not miss (Payroll: processing a month that has not ended). Absent = the dialog is unchanged.
+   */
+  warning?: string;
 }
 
 /**
@@ -19,7 +26,7 @@ export interface ConfirmDialogData {
  */
 @Component({
   selector: 'app-confirm-dialog',
-  imports: [MatDialogModule, MatButtonModule],
+  imports: [MatDialogModule, MatButtonModule, InlineBannerComponent],
   templateUrl: './confirm-dialog.component.html',
   styleUrl: './confirm-dialog.component.scss',
 })

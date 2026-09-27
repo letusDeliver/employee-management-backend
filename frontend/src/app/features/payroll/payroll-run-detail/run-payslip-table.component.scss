@@ -1,0 +1,26 @@
+:host {
+  display: block;
+}
+
+.employee-name {
+  display: block;
+}
+
+.no-name {
+  font-style: italic;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.role-line {
+  display: block;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.amount {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.net {
+  font-weight: 600;
+}

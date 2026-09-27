@@ -1,0 +1,68 @@
+:host {
+  display: block;
+}
+
+.back-link {
+  margin: 0 0 12px -8px;
+}
+
+.summary {
+  margin-bottom: 24px;
+}
+
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.step-current {
+  color: var(--mat-sys-primary);
+  font-weight: 600;
+}
+
+.step-done {
+  color: var(--mat-sys-on-surface);
+}
+
+.step-icon {
+  font-size: 20px;
+  width: 20px;
+  height: 20px;
+}
+
+.hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+}
+
+.meta {
+  margin: 0;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.section-title {
+  margin: 0 0 12px;
+}
+
+.employee-field {
+  width: 280px;
+  max-width: 100%;
+}
+
+.busy {
+  white-space: nowrap;
+}

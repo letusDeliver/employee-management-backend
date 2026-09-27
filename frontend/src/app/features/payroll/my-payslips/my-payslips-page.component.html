@@ -1,0 +1,39 @@
+<app-page-header title="My payslips" description="What you were paid each month, and how it was worked out." />
+
+@if (ownerError(); as message) {
+  <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="resolveOwner()" />
+} @else if (store.notLinked()) {
+  <app-empty-state
+    [icon]="icons.receiptLong"
+    title="Your account isn't linked to an employee record"
+    description="Payslips belong to employee records. Ask an administrator to link your account to yours."
+  />
+} @else if (store.error(); as message) {
+  <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="store.load()" />
+} @else if (!store.loaded()) {
+  <div class="flex items-center gap-2">
+    <mat-progress-spinner diameter="24" mode="indeterminate" aria-label="Loading your payslips" />
+    <span>Loading...</span>
+  </div>
+} @else if (store.payslips().length === 0) {
+  <app-empty-state
+    [icon]="icons.receiptLong"
+    title="No payslips yet"
+    description="A payslip appears here once payroll has been processed for a month you were employed."
+  />
+} @else {
+  @if (store.years().length > 1) {
+    <mat-form-field class="year-field" subscriptSizing="dynamic">
+      <mat-label>Year</mat-label>
+      <mat-select [value]="store.selectedYear()" (selectionChange)="onYearChange($event.value)">
+        @for (year of store.years(); track year) {
+          <mat-option [value]="year">{{ year }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+  } @else {
+    <h2 class="ds-h3 year-title">{{ store.selectedYear() }}</h2>
+  }
+
+  <app-my-payslips-table [rows]="store.visiblePayslips()" [loading]="store.loading()" />
+}

@@ -13,6 +13,8 @@ export interface ConfirmDeleteCopy {
   confirmLabel?: string;
   cancelLabel?: string;
   tone?: 'warn' | 'primary';
+  /** Shown as a warning banner in the confirm (see `ConfirmDialogData.warning`). */
+  warning?: string;
 }
 
 /**

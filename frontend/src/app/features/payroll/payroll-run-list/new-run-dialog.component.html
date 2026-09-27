@@ -1,0 +1,38 @@
+<h2 mat-dialog-title>New Payroll Run</h2>
+<form [formGroup]="form" (ngSubmit)="submit()">
+  <mat-dialog-content>
+    <p class="ds-body intro">Choose the month to pay. Nothing is calculated until you process the run.</p>
+
+    <div class="period-fields">
+      <mat-form-field class="month-field">
+        <mat-label>Month</mat-label>
+        <mat-select formControlName="periodMonth">
+          @for (month of months; track month.value) {
+            <mat-option [value]="month.value">{{ month.label }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+
+      <mat-form-field class="year-field">
+        <mat-label>Year</mat-label>
+        <mat-select formControlName="periodYear">
+          @for (year of years; track year) {
+            <mat-option [value]="year">{{ year }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+    </div>
+
+    @if (serverError(); as message) {
+      <app-inline-banner tone="error" [message]="message" />
+    }
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    @if (submitting()) {
+      <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Creating" />
+    }
+    <button mat-button type="button" [disabled]="submitting()" (click)="cancel()">Cancel</button>
+    <button mat-flat-button color="primary" type="submit" [disabled]="submitting()">Create Run</button>
+  </mat-dialog-actions>
+</form>

@@ -1,0 +1,42 @@
+<app-data-table
+  [columns]="columns"
+  [rows]="rows()"
+  [loading]="loading()"
+  [totalCount]="pagination().total"
+  [pageIndex]="pagination().page - 1"
+  [pageSize]="pagination().limit"
+  (pageChange)="pageChange.emit($event)"
+  (sortChange)="sortChange.emit($event)"
+>
+  <ng-template appDataTableCell="employee" let-row>
+    <span class="employee-name" [class.no-name]="!row.employeeName">{{ name(row) }}</span>
+    <span class="ds-caption role-line">{{ roleLine(row) }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="days" let-row>
+    <span class="amount">{{ days(row) }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="grossPay" let-row>
+    <span class="amount">{{ row.grossPay | currency: currencyCode }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="totalDeductions" let-row>
+    <span class="amount">{{ row.totalDeductions | currency: currencyCode }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="netPay" let-row>
+    <span class="amount net">{{ row.netPay | currency: currencyCode }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="actions" let-row>
+    <a
+      mat-icon-button
+      [routerLink]="['/payroll', runId(), 'payslips', row.id]"
+      [attr.aria-label]="'View payslip of ' + name(row)"
+      matTooltip="View payslip"
+    >
+      <mat-icon>{{ icons.receiptLong }}</mat-icon>
+    </a>
+  </ng-template>
+</app-data-table>

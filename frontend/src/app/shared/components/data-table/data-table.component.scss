@@ -1,3 +1,15 @@
 :host {
   display: block;
 }
+
+.cell-end {
+  text-align: right;
+}
+
+// The sort header lays its label out in its own flex container, which `text-align` does not move.
+// An end-aligned column puts the sort arrow BEFORE the label, which Material implements as
+// `flex-direction: row-reverse` - so the RIGHT edge is `flex-start` there (`flex-end` measured as
+// the left edge). Scoped to this component's end-aligned headers only.
+th.cell-end ::ng-deep .mat-sort-header-container {
+  justify-content: flex-start;
+}
