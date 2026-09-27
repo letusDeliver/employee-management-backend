@@ -1,0 +1,63 @@
+<app-page-header title="Performance reviews" description="Reviews you write or oversee. Open one to rate it, submit it or read it.">
+  @if (canCreate()) {
+    <button pageHeaderActions mat-flat-button color="primary" type="button" (click)="openNewReview()">
+      <mat-icon>{{ icons.add }}</mat-icon>
+      New Review
+    </button>
+  }
+</app-page-header>
+
+<div class="mb-4 flex flex-wrap items-start gap-2">
+  <mat-form-field class="cycle-field" subscriptSizing="dynamic">
+    <mat-label>Cycle</mat-label>
+    <mat-select [value]="store.query().reviewCycleId ?? ''" (selectionChange)="onCycleChange($event.value)">
+      <mat-option value="">All</mat-option>
+      @for (cycle of cycles.cycles(); track cycle.id) {
+        <mat-option [value]="cycle.id">{{ cycle.name }}{{ cycle.status === 'CLOSED' ? ' (closed)' : '' }}</mat-option>
+      }
+    </mat-select>
+  </mat-form-field>
+
+  <mat-form-field class="status-field" subscriptSizing="dynamic">
+    <mat-label>Status</mat-label>
+    <mat-select [value]="store.query().status ?? ''" (selectionChange)="onStatusChange($event.value)">
+      <mat-option value="">All</mat-option>
+      @for (option of statusOptions; track option.value) {
+        <mat-option [value]="option.value">{{ option.label }}</mat-option>
+      }
+    </mat-select>
+  </mat-form-field>
+
+  <div class="employee-field">
+    <app-employee-picker [formControl]="employeeFilter" label="Employee" />
+  </div>
+</div>
+
+@if (directory.error() || cycles.error()) {
+  <div class="mb-4">
+    <app-inline-banner
+      tone="warning"
+      message="Names could not all be loaded, so some people or cycles may read 'Unknown'."
+      [showRetry]="true"
+      (retry)="reloadNames()"
+    />
+  </div>
+}
+
+@if (store.error(); as message) {
+  <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="store.load()" />
+} @else if (!store.loading() && store.reviews().length === 0) {
+  <app-empty-state
+    [icon]="icons.factCheck"
+    [title]="hasFilters() ? 'No reviews match your filters' : 'No reviews yet'"
+    [description]="hasFilters() ? 'Change or clear the filters.' : canCreate() ? 'Start a review for someone in an open cycle.' : 'Reviews appear here once they are started.'"
+  />
+} @else {
+  <app-review-ledger-table
+    [rows]="store.reviews()"
+    [loading]="store.loading()"
+    [pagination]="store.pagination()"
+    (pageChange)="onPageChange($event)"
+    (sortChange)="onSortChange($event)"
+  />
+}

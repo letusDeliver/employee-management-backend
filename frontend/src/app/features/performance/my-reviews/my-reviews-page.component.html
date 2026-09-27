@@ -1,0 +1,50 @@
+<app-page-header title="My reviews" description="Your performance reviews: read them, add your self-assessment and acknowledge them." />
+
+@if (ownerError(); as message) {
+  <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="resolveOwner()" />
+} @else if (store.notLinked()) {
+  <app-empty-state
+    [icon]="icons.factCheck"
+    title="Your account isn't linked to an employee record"
+    description="Reviews belong to employee records. Ask an administrator to link your account to yours."
+  />
+} @else if (store.error(); as message) {
+  <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="store.load()" />
+} @else if (!store.loading() && store.reviews().length === 0) {
+  <app-empty-state [icon]="icons.factCheck" title="No reviews yet" description="A review appears here once your reviewer starts one." />
+} @else {
+  <app-data-table
+    [columns]="columns"
+    [rows]="store.reviews()"
+    [loading]="store.loading()"
+    [totalCount]="store.pagination().total"
+    [pageIndex]="store.pagination().page - 1"
+    [pageSize]="store.pagination().limit"
+    (pageChange)="onPageChange($event)"
+  >
+    <ng-template appDataTableCell="cycle" let-row>
+      <a class="cycle-link" [routerLink]="['/my-reviews', row.id]">{{ cycleName(row) }}</a>
+      @if (cycleDates(row); as dates) {
+        <span class="ds-caption cycle-dates">{{ dates }}</span>
+      }
+    </ng-template>
+
+    <ng-template appDataTableCell="status" let-row>
+      <app-status-pill [label]="status(row).label" [tone]="status(row).tone" [icon]="status(row).icon" />
+    </ng-template>
+
+    <ng-template appDataTableCell="rating" let-row>
+      <span class="whitespace-nowrap">{{ rating(row) }}</span>
+    </ng-template>
+
+    <ng-template appDataTableCell="createdAt" let-row>
+      <span class="whitespace-nowrap">{{ row.createdAt | date: 'mediumDate' }}</span>
+    </ng-template>
+
+    <ng-template appDataTableCell="actions" let-row>
+      <a mat-icon-button [routerLink]="['/my-reviews', row.id]" [attr.aria-label]="'Open your ' + cycleName(row) + ' review'" matTooltip="Open review">
+        <mat-icon>{{ icons.visibility }}</mat-icon>
+      </a>
+    </ng-template>
+  </app-data-table>
+}

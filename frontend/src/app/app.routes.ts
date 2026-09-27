@@ -188,6 +188,30 @@ export const routes: Routes = [
         loadChildren: () => import('./features/payroll/payroll.routes').then((m) => m.MY_PAYSLIPS_ROUTES),
         data: { breadcrumb: 'My payslips' },
       },
+      {
+        // Flat: create/edit is a dialog. Every role may READ cycles (reviewCycle:read), but only ADMIN
+        // manages them (docs/domain-performance.md ADR-PF05); others meet cycle names on their reviews.
+        path: 'review-cycles',
+        loadComponent: () =>
+          import('./features/performance/review-cycle-list/review-cycle-list-page.component').then(
+            (m) => m.ReviewCycleListPageComponent,
+          ),
+        canActivate: [permissionGuard],
+        data: { breadcrumb: 'Review cycles', permissions: ['reviewCycle:create'] },
+      },
+      {
+        // The ledger for the people who write reviews (MANAGER: manage:reports, ADMIN: manage:any) and a
+        // review opened from it. A wrapper so the list and the review share the parent crumb.
+        path: 'performance-reviews',
+        loadChildren: () => import('./features/performance/performance.routes').then((m) => m.PERFORMANCE_REVIEW_ROUTES),
+        data: { breadcrumb: 'Performance reviews' },
+      },
+      {
+        // Every role (performanceReview:read:own): the reviews about the caller, and one opened from here.
+        path: 'my-reviews',
+        loadChildren: () => import('./features/performance/performance.routes').then((m) => m.MY_REVIEW_ROUTES),
+        data: { breadcrumb: 'My reviews' },
+      },
     ],
   },
 ];

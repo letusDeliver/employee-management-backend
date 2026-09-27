@@ -1,0 +1,44 @@
+<app-data-table
+  [columns]="columns"
+  [rows]="rows()"
+  [loading]="loading()"
+  [totalCount]="pagination().total"
+  [pageIndex]="pagination().page - 1"
+  [pageSize]="pagination().limit"
+  (pageChange)="pageChange.emit($event)"
+  (sortChange)="sortChange.emit($event)"
+>
+  <ng-template appDataTableCell="employee" let-row>
+    <span class="subject">{{ employee(row) }}</span>
+    @if (aboutYou(row)) {
+      <span class="ds-caption about-you">About you</span>
+    }
+  </ng-template>
+
+  <ng-template appDataTableCell="cycle" let-row>{{ cycle(row) }}</ng-template>
+
+  <ng-template appDataTableCell="reviewer" let-row>{{ reviewer(row) }}</ng-template>
+
+  <ng-template appDataTableCell="status" let-row>
+    <app-status-pill [label]="status(row).label" [tone]="status(row).tone" [icon]="status(row).icon" />
+  </ng-template>
+
+  <ng-template appDataTableCell="rating" let-row>
+    <span class="whitespace-nowrap">{{ rating(row) }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="createdAt" let-row>
+    <span class="whitespace-nowrap">{{ row.createdAt | date: 'mediumDate' }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="actions" let-row>
+    <a
+      mat-icon-button
+      [routerLink]="['/performance-reviews', row.id]"
+      [attr.aria-label]="'Open the review of ' + employee(row) + ', ' + cycle(row)"
+      matTooltip="Open review"
+    >
+      <mat-icon>{{ icons.visibility }}</mat-icon>
+    </a>
+  </ng-template>
+</app-data-table>

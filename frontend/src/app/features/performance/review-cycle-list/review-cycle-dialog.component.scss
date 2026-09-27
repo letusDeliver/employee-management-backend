@@ -1,0 +1,16 @@
+:host {
+  display: block;
+}
+
+// Two dates side by side; each keeps its own full-width field on a phone.
+.dates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  align-items: start;
+  gap: 0 12px;
+}
+
+.server-error {
+  display: block;
+  margin-top: 16px;
+}

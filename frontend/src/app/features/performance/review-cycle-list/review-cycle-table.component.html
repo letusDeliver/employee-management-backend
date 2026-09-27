@@ -1,0 +1,42 @@
+<app-data-table
+  [columns]="columns"
+  [rows]="rows()"
+  [loading]="loading()"
+  [totalCount]="pagination().total"
+  [pageIndex]="pagination().page - 1"
+  [pageSize]="pagination().limit"
+  (pageChange)="pageChange.emit($event)"
+  (sortChange)="sortChange.emit($event)"
+>
+  <ng-template appDataTableCell="startDate" let-row>
+    <span class="whitespace-nowrap">{{ dates(row) }}</span>
+  </ng-template>
+
+  <ng-template appDataTableCell="status" let-row>
+    <app-status-pill [label]="status(row).label" [tone]="status(row).tone" [icon]="status(row).icon" />
+  </ng-template>
+
+  <ng-template appDataTableCell="actions" let-row>
+    @if (canEdit()) {
+      <!-- nowrap: the icons must stay on one line, or every row grows taller. -->
+      <div class="flex flex-nowrap items-center whitespace-nowrap">
+        <button mat-icon-button type="button" [attr.aria-label]="'Edit ' + row.name" matTooltip="Edit" (click)="editRequested.emit(row)">
+          <mat-icon>{{ icons.edit }}</mat-icon>
+        </button>
+        @if (deletingIds().has(row.id)) {
+          <mat-progress-spinner diameter="20" mode="indeterminate" [attr.aria-label]="'Deleting ' + row.name" />
+        } @else {
+          <button
+            mat-icon-button
+            type="button"
+            [attr.aria-label]="'Delete ' + row.name"
+            matTooltip="Delete"
+            (click)="deleteRequested.emit(row)"
+          >
+            <mat-icon>{{ icons.delete }}</mat-icon>
+          </button>
+        }
+      </div>
+    }
+  </ng-template>
+</app-data-table>

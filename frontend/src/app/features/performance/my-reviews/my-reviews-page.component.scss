@@ -1,0 +1,21 @@
+:host {
+  display: block;
+}
+
+.cycle-link {
+  display: block;
+  color: var(--mat-sys-primary);
+  font-weight: 500;
+  text-decoration: none;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration: underline;
+  }
+}
+
+.cycle-dates {
+  display: block;
+  color: var(--mat-sys-on-surface-variant);
+  white-space: nowrap;
+}

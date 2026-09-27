@@ -162,4 +162,28 @@ export const NAV_CONFIG: NavItem[] = [
     description: 'See what you were paid each month.',
     permissions: ['payslip:read:own'],
   },
+  {
+    // reviewCycle:create - ADMIN manages cycles; everyone else only meets cycle names on their reviews.
+    route: '/review-cycles',
+    icon: ICON_NAMES.eventNote,
+    label: 'Review cycles',
+    description: 'Open and close the periods performance is reviewed in.',
+    permissions: ['reviewCycle:create'],
+  },
+  {
+    // The people who write reviews: MANAGER (their reports) and ADMIN (everyone).
+    route: '/performance-reviews',
+    icon: ICON_NAMES.rateReview,
+    label: 'Performance reviews',
+    description: 'Start, write and submit performance reviews.',
+    permissions: ['performanceReview:manage:reports', 'performanceReview:manage:any'],
+  },
+  {
+    // performanceReview:read:own is granted to every role.
+    route: '/my-reviews',
+    icon: ICON_NAMES.grade,
+    label: 'My reviews',
+    description: 'Read your performance reviews and acknowledge them.',
+    permissions: ['performanceReview:read:own'],
+  },
 ];

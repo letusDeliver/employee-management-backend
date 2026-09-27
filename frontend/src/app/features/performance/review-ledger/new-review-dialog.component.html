@@ -1,0 +1,70 @@
+<h2 mat-dialog-title>New Performance Review</h2>
+<form [formGroup]="form" (ngSubmit)="submit()">
+  <mat-dialog-content class="flex flex-col gap-1">
+    @if (cycles.error(); as message) {
+      <app-inline-banner
+        class="block-banner"
+        tone="error"
+        message="Review cycles could not be loaded, so a review can't be started."
+        [showRetry]="true"
+        (retry)="retryCycles()"
+      />
+    } @else if (ownUnknown()) {
+      <app-inline-banner
+        class="block-banner"
+        tone="error"
+        message="Couldn't work out who reports to you, so a review can't be started."
+        [showRetry]="true"
+        (retry)="retryOwn()"
+      />
+    } @else if (!cycles.loading() && cycles.open().length === 0) {
+      <app-inline-banner class="block-banner" tone="warning" message="There is no open review cycle. An administrator has to open one first." />
+    } @else if (hasNoReports()) {
+      <app-inline-banner class="block-banner" tone="warning" message="Nobody reports to you, so there is no one you can review." />
+    } @else {
+      <p class="ds-body intro">The review starts as a draft. You add the rating and comments next.</p>
+
+      <mat-form-field class="w-full">
+        <mat-label>Review cycle</mat-label>
+        <mat-select formControlName="reviewCycleId">
+          @for (cycle of cycles.open(); track cycle.id) {
+            <mat-option [value]="cycle.id">{{ cycle.name }} ({{ dateRange(cycle.startDate, cycle.endDate) }})</mat-option>
+          }
+        </mat-select>
+        @if (form.controls.reviewCycleId.invalid && form.controls.reviewCycleId.touched) {
+          <mat-error>Choose an open cycle.</mat-error>
+        }
+      </mat-form-field>
+
+      <div class="picker">
+        <app-employee-picker formControlName="employeeId" label="Employee" [required]="true" [include]="include" />
+      </div>
+
+      @if (needsReviewer()) {
+        <div class="picker">
+          <app-employee-picker formControlName="reviewerId" label="Reviewer" [required]="true" />
+          <p class="ds-caption hint" role="status">This employee has no manager, so choose who writes the review.</p>
+        </div>
+      }
+    }
+
+    @if (serverError(); as message) {
+      <app-inline-banner class="block-banner" tone="error" [message]="message" />
+    }
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    @if (submitting()) {
+      <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Creating" />
+    }
+    <button mat-button type="button" [disabled]="submitting()" (click)="cancel()">Cancel</button>
+    <button
+      mat-flat-button
+      color="primary"
+      type="submit"
+      [disabled]="submitting() || !!cycles.error() || ownUnknown() || cycles.open().length === 0 || hasNoReports() || (form.invalid && form.touched)"
+    >
+      Create Review
+    </button>
+  </mat-dialog-actions>
+</form>

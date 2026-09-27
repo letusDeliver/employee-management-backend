@@ -1,0 +1,53 @@
+<app-page-header title="Review cycles" description="The periods performance is reviewed in. Reviews can be started only in an open cycle.">
+  @if (canEdit()) {
+    <button pageHeaderActions mat-flat-button color="primary" type="button" (click)="openDialog(null)">
+      <mat-icon>{{ icons.add }}</mat-icon>
+      New Cycle
+    </button>
+  }
+</app-page-header>
+
+<div class="mb-4 flex flex-wrap items-start gap-2">
+  <mat-form-field class="search-field" subscriptSizing="dynamic">
+    <mat-label>Search</mat-label>
+    <mat-icon matIconPrefix>{{ icons.search }}</mat-icon>
+    <input matInput [formControl]="search" />
+  </mat-form-field>
+
+  <mat-form-field class="status-field" subscriptSizing="dynamic">
+    <mat-label>Status</mat-label>
+    <mat-select [value]="store.query().status ?? ''" (selectionChange)="onStatusChange($event.value)">
+      <mat-option value="">All</mat-option>
+      <mat-option value="OPEN">Open</mat-option>
+      <mat-option value="CLOSED">Closed</mat-option>
+    </mat-select>
+  </mat-form-field>
+</div>
+
+@if (deleteError(); as message) {
+  <div class="mb-4">
+    <app-inline-banner tone="error" [message]="message" />
+  </div>
+}
+
+@if (store.error(); as message) {
+  <app-inline-banner tone="error" [message]="message" [showRetry]="true" (retry)="store.load()" />
+} @else if (!store.loading() && store.cycles().length === 0) {
+  <app-empty-state
+    [icon]="icons.event"
+    [title]="hasFilters() ? 'No cycles match your filters' : 'No review cycles yet'"
+    [description]="hasFilters() ? 'Change or clear the filters.' : 'Create a cycle to start reviewing performance.'"
+  />
+} @else {
+  <app-review-cycle-table
+    [rows]="store.cycles()"
+    [loading]="store.loading()"
+    [pagination]="store.pagination()"
+    [canEdit]="canEdit()"
+    [deletingIds]="deletingIds()"
+    (pageChange)="onPageChange($event)"
+    (sortChange)="onSortChange($event)"
+    (editRequested)="openDialog($event)"
+    (deleteRequested)="onDeleteRequested($event)"
+  />
+}

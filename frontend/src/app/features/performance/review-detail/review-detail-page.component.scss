@@ -1,0 +1,93 @@
+:host {
+  display: block;
+}
+
+.back-link {
+  margin: 0 0 12px -8px;
+}
+
+.submit-hint {
+  margin: 0 0 12px;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.sheet {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  max-width: 880px;
+}
+
+.panel {
+  padding: 16px;
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: 12px;
+  background: var(--mat-sys-surface);
+  min-width: 0;
+}
+
+.panel-title {
+  margin: 0 0 12px;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 16px;
+  margin: 0;
+
+  dt {
+    color: var(--mat-sys-on-surface-variant);
+  }
+
+  dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+.recorded {
+  margin: 12px 0 0;
+}
+
+.rating-field {
+  width: 280px;
+  max-width: 100%;
+}
+
+// Comments keep the author's line breaks.
+.text-block {
+  margin: 8px 0 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.notes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.note + .note {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--mat-sys-outline-variant);
+}
+
+.note-meta,
+.note-text {
+  margin: 0;
+}
+
+.note-form {
+  margin-top: 16px;
+}
+
+.busy {
+  white-space: nowrap;
+}

@@ -1,0 +1,190 @@
+@if (store.loading() && !store.review()) {
+  <div class="flex items-center gap-2">
+    <mat-progress-spinner diameter="24" mode="indeterminate" aria-label="Loading review" />
+    <span>Loading...</span>
+  </div>
+} @else if (store.notFound()) {
+  <app-empty-state [icon]="icons.factCheck" title="Review not found" description="It may have been deleted. Go back and pick another." />
+  <div class="mt-4 flex justify-center">
+    <a mat-button [routerLink]="back.link">{{ back.label }}</a>
+  </div>
+} @else if (store.forbidden()) {
+  <app-empty-state
+    [icon]="icons.factCheck"
+    title="You can't view this review"
+    description="Reviews are visible to the employee, their reviewer and administrators."
+  />
+  <div class="mt-4 flex justify-center">
+    <a mat-button [routerLink]="back.link">{{ back.label }}</a>
+  </div>
+} @else if (store.error() && !store.review()) {
+  <app-inline-banner tone="error" [message]="store.error()!" [showRetry]="true" (retry)="store.reload()" />
+} @else if (store.review(); as review) {
+  <app-page-header [title]="'Performance review — ' + cycles.nameOf(review.reviewCycleId)" [description]="statusHint(review.status)">
+    <div pageHeaderActions class="flex flex-wrap items-center gap-2">
+      @if (confirmBusy(); as busyAction) {
+        <span class="busy flex items-center gap-2" role="status">
+          <mat-progress-spinner diameter="20" mode="indeterminate" aria-hidden="true" />
+          {{ busyAction === 'submit' ? 'Submitting…' : busyAction === 'acknowledge' ? 'Acknowledging…' : 'Deleting…' }}
+        </span>
+      } @else {
+        @if (actions().delete) {
+          <button mat-stroked-button type="button" (click)="requestDelete()">
+            <mat-icon>{{ icons.delete }}</mat-icon>
+            Delete draft
+          </button>
+        }
+        @if (actions().submit) {
+          <button mat-flat-button color="primary" type="button" [disabled]="!canSubmitNow() || hasUnsavedAssessment()" (click)="requestSubmit()">
+            Submit review
+          </button>
+        }
+        @if (actions().acknowledge) {
+          <button mat-flat-button color="primary" type="button" (click)="requestAcknowledge()">Acknowledge</button>
+        }
+      }
+    </div>
+  </app-page-header>
+
+  <a mat-button class="back-link" [routerLink]="back.link">
+    <mat-icon>{{ icons.arrowBack }}</mat-icon>
+    {{ back.label }}
+  </a>
+
+  @if (actions().submit && (!canSubmitNow() || hasUnsavedAssessment())) {
+    <p class="ds-caption submit-hint" role="status">
+      {{ hasUnsavedAssessment() ? 'Save your changes before submitting.' : 'Add a rating and comments, and save them, before submitting.' }}
+    </p>
+  }
+
+  @if (actionError(); as message) {
+    <div class="mb-4">
+      <app-inline-banner tone="error" [message]="message" />
+    </div>
+  }
+
+  <div class="sheet">
+    <section class="panel" aria-labelledby="review-about">
+      <h2 id="review-about" class="ds-h3 panel-title">About this review</h2>
+      <dl class="facts">
+        <dt>Status</dt>
+        <dd><app-status-pill [label]="statusMeta(review.status).label" [tone]="statusMeta(review.status).tone" [icon]="statusMeta(review.status).icon" /></dd>
+        <dt>Cycle</dt>
+        <dd>{{ cycleLine(review.reviewCycleId) }}</dd>
+        <dt>Employee</dt>
+        <dd>{{ context.subjectLabel(review, actor()) }}</dd>
+        <dt>Reviewer</dt>
+        <dd>{{ context.reviewerLabel(review, actor()) }}</dd>
+        @if (review.submittedAt) {
+          <dt>Submitted</dt>
+          <dd>{{ review.submittedAt | date: 'medium' }}</dd>
+        }
+        @if (review.acknowledgedAt) {
+          <dt>Acknowledged</dt>
+          <dd>{{ review.acknowledgedAt | date: 'medium' }}</dd>
+        }
+      </dl>
+      @if (review.departmentName) {
+        <p class="ds-caption muted recorded">
+          At submission: {{ review.designationName }} · {{ review.departmentName }}{{ review.branchName ? ' · ' + review.branchName : '' }}
+        </p>
+      }
+    </section>
+
+    <section class="panel" aria-labelledby="review-assessment">
+      <h2 id="review-assessment" class="ds-h3 panel-title">Manager's assessment</h2>
+      @if (actions().edit) {
+        <form [formGroup]="assessment" (ngSubmit)="saveAssessment()" class="flex flex-col gap-1">
+          <mat-form-field class="rating-field">
+            <mat-label>Rating</mat-label>
+            <mat-select formControlName="rating">
+              @for (option of ratings; track option.value) {
+                <mat-option [value]="option.value">{{ option.label }}</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+          <mat-form-field class="w-full">
+            <mat-label>Comments</mat-label>
+            <textarea matInput formControlName="managerComments" rows="5"></textarea>
+          </mat-form-field>
+          <div class="flex items-center gap-2">
+            <button mat-stroked-button type="submit" [disabled]="busy() === 'save' || !hasUnsavedAssessment()">Save</button>
+            @if (busy() === 'save') {
+              <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Saving" />
+            }
+          </div>
+        </form>
+      } @else if (showContent()) {
+        <dl class="facts">
+          <dt>Rating</dt>
+          <dd>{{ review.rating ? ratingLabel[review.rating] : 'Not rated yet' }}</dd>
+        </dl>
+        <p class="ds-body text-block">{{ review.managerComments || 'No comments yet.' }}</p>
+      } @else {
+        <p class="ds-body muted">Your reviewer is still writing this review. You'll see it once it's submitted.</p>
+      }
+    </section>
+
+    <section class="panel" aria-labelledby="review-self">
+      <h2 id="review-self" class="ds-h3 panel-title">Self-assessment</h2>
+      @if (actions().selfAssess) {
+        <form [formGroup]="selfForm" (ngSubmit)="saveSelfAssessment()" class="flex flex-col gap-1">
+          <mat-form-field class="w-full">
+            <mat-label>Your self-assessment</mat-label>
+            <textarea matInput formControlName="selfComments" rows="4"></textarea>
+            @if (selfForm.controls.selfComments.invalid && selfForm.controls.selfComments.touched) {
+              <mat-error>Write something before saving.</mat-error>
+            } @else {
+              <mat-hint>Optional. You can change it until you acknowledge the review.</mat-hint>
+            }
+          </mat-form-field>
+          <div class="flex items-center gap-2">
+            <button mat-stroked-button type="submit" [disabled]="busy() === 'self'">Save self-assessment</button>
+            @if (busy() === 'self') {
+              <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Saving" />
+            }
+          </div>
+        </form>
+      } @else {
+        <p class="ds-body text-block" [class.muted]="!review.selfComments">{{ review.selfComments || 'No self-assessment.' }}</p>
+      }
+    </section>
+
+    <section class="panel" aria-labelledby="review-notes">
+      <h2 id="review-notes" class="ds-h3 panel-title">Notes</h2>
+      @if (review.addenda.length === 0) {
+        <p class="ds-body muted">No notes.</p>
+      } @else {
+        <ol class="notes">
+          @for (note of review.addenda; track note.id) {
+            <li class="note">
+              <p class="ds-caption muted note-meta">{{ authorLabel(note.authorId) }} · {{ note.createdAt | date: 'medium' }}</p>
+              <p class="ds-body text-block note-text">{{ note.comment }}</p>
+            </li>
+          }
+        </ol>
+      }
+      @if (actions().addNote) {
+        <form [formGroup]="noteForm" #noteFormDirective="ngForm" (ngSubmit)="addNote(noteFormDirective)" class="note-form flex flex-col gap-1">
+          <mat-form-field class="w-full">
+            <mat-label>Add a note</mat-label>
+            <textarea matInput formControlName="comment" rows="3"></textarea>
+            @if (noteForm.controls.comment.invalid && noteForm.controls.comment.touched) {
+              <mat-error>Write a note first.</mat-error>
+            } @else {
+              <mat-hint>Notes can't be edited or deleted once added.</mat-hint>
+            }
+          </mat-form-field>
+          <div class="flex items-center gap-2">
+            <button mat-stroked-button type="submit" [disabled]="busy() === 'note'">Add note</button>
+            @if (busy() === 'note') {
+              <mat-progress-spinner diameter="20" mode="indeterminate" aria-label="Adding note" />
+            }
+          </div>
+        </form>
+      } @else {
+        <p class="ds-caption muted">Notes can be added once the review is submitted.</p>
+      }
+    </section>
+  </div>
+}
